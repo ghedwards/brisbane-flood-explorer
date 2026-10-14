@@ -22,8 +22,15 @@ TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
 echo "Downloading $NAME"
-gh release download "$TAG" --repo opengeos/geolibre-rust \
-  --pattern "$NAME" --pattern "$NAME.sha256" --dir "$TMP"
+for attempt in 1 2 3 4; do
+  if gh release download "$TAG" --repo opengeos/geolibre-rust --clobber \
+      --pattern "$NAME" --pattern "$NAME.sha256" --dir "$TMP"; then
+    break
+  fi
+  [ "$attempt" = 4 ] && { echo "Could not download $NAME" >&2; exit 1; }
+  echo "Download failed; retrying in $((attempt * 15)) s" >&2
+  sleep $((attempt * 15))
+done
 
 expected="$(awk '{print tolower($1)}' "$TMP/$NAME.sha256")"
 actual="$( (sha256sum "$TMP/$NAME" 2>/dev/null || shasum -a 256 "$TMP/$NAME") | awk '{print $1}')"
