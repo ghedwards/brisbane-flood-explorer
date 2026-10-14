@@ -1,0 +1,93 @@
+name: Build terrain and publish viewer
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Test the flood model
+        run: node --test tests/core.test.js
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pipeline/requirements.txt
+
+      - name: Install Python packages
+        run: pip install -r pipeline/requirements.txt
+
+      - name: Install the GeoLibre runner (RustGIS hydrology tools)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          pipeline/install_geolibre.sh "$HOME/.local/bin"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Cache DEM tiles
+        uses: actions/cache@v4
+        with:
+          path: work/brisbane/tiles
+          key: glo30-${{ hashFiles('config/brisbane.json') }}
+
+      - name: Fetch DEM (Copernicus GLO-30)
+        id: dem
+        continue-on-error: true
+        run: python pipeline/fetch_dem.py config/brisbane.json work/brisbane
+
+      - name: Run hydrology with GeoLibre
+        id: hydro
+        if: steps.dem.outcome == 'success'
+        continue-on-error: true
+        run: pipeline/run_hydrology.sh config/brisbane.json work/brisbane
+
+      - name: Assemble site
+        run: |
+          mkdir -p site/data
+          cp viewer/index.html viewer/app.js viewer/flood-core.js site/
+          if [ "${{ steps.hydro.outcome }}" = "success" ]; then
+            python pipeline/export_viewer.py config/brisbane.json work/brisbane site/data
+          else
+            echo "::warning::Brisbane terrain was not built; the site will show the sample terrain only."
+          fi
+          {
+            echo "### Build summary"
+            echo "- DEM download: ${{ steps.dem.outcome }}"
+            echo "- GeoLibre hydrology: ${{ steps.hydro.outcome }}"
+            du -sh site/data/* 2>/dev/null | sed 's/^/- /' || true
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

@@ -1,0 +1,17 @@
+{
+  "id": "brisbane",
+  "name": "Lower Brisbane River (Copernicus 30 m)",
+  "bbox_lonlat": [152.84, -27.62, 153.20, -27.33],
+  "crs": "EPSG:7856",
+  "cell_m": 40,
+  "stream_area_km2": 1.0,
+  "breach_max_dist_cells": 60,
+  "gauge": {
+    "name": "Brisbane City gauge",
+    "lon": 153.0305,
+    "lat": -27.4741,
+    "note": "Approximate position; the viewer snaps it to the nearest mapped river cell."
+  },
+  "brisbane_gauge_events": true,
+  "dem_source": "copernicus-glo30"
+}
