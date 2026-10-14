@@ -464,12 +464,12 @@
 
   // Basemaps offered in the layer switcher. The first is the default.
   const BASEMAPS = [
+    { name: 'Satellite (Esri)', url: () => 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+      opts: { attribution: 'Imagery &copy; Esri, Maxar, Earthstar Geographics and the GIS User Community', maxZoom: 19 } },
     { name: 'Streets', url: () => (isDark() ? TILES.dark : TILES.light),
       opts: { attribution: TILE_ATTR, subdomains: 'abcd', maxZoom: 19 } },
     { name: 'OpenStreetMap', url: () => 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
       opts: { attribution: OSM_ATTR, maxZoom: 19 } },
-    { name: 'Satellite (Esri)', url: () => 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
-      opts: { attribution: 'Imagery &copy; Esri, Maxar, Earthstar Geographics and the GIS User Community', maxZoom: 19 } },
     { name: 'Queensland aerial imagery', url: () => 'https://spatial-img.information.qld.gov.au/arcgis/rest/services/Basemaps/LatestStateProgram_AllUsers/ImageServer/tile/{z}/{y}/{x}',
       opts: { attribution: 'Imagery &copy; Planet Labs Netherlands B.V. under licence from Planet and Geoplex; ' + QLD_ATTR, maxZoom: 20 } },
     { name: 'Queensland topographic', url: () => QLD_GIS + 'QldMap_Topo/MapServer/tile/{z}/{y}/{x}',
@@ -477,7 +477,7 @@
     { name: 'Topographic (OpenTopoMap)', url: () => 'https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png',
       opts: { attribution: OSM_ATTR + ', SRTM | Style &copy; <a href="https://opentopomap.org">OpenTopoMap</a> (CC BY-SA)', subdomains: 'abc', maxZoom: 17 } },
   ];
-  const BASEMAP_KEY = 'bfe.basemap';
+  const BASEMAP_KEY = 'bfe.basemap.v2'; // v2: satellite became the default
   const BLANK = 'data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==';
   const status = (window.__floodStatus = { mode: 'static', overlayUpdates: 0, tilesLoaded: 0, tileErrors: 0, floodPixels: 0 });
 
@@ -536,7 +536,7 @@
       try { saved = localStorage.getItem(BASEMAP_KEY); } catch (e) { /* storage blocked */ }
       const first = layers[saved] ? saved : BASEMAPS[0].name;
       layers[first].addTo(m);
-      state.tiles = layers[BASEMAPS[0].name];
+      state.tiles = layers.Streets; // the one that follows light/dark mode
       status.basemap = first;
       L.control.layers(layers, null, { position: 'topright' }).addTo(m);
       m.on('baselayerchange', (e) => {
