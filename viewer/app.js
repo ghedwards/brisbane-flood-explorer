@@ -1608,8 +1608,18 @@
     setBusy(true, 'Downloading elevation for this area…');
     status.local = { started: true };
     try {
-      const half = o.kind === 'coast' ? 8 : 10;
-      const { grid, bounds } = await fetchDemWindow(lat, lon, half, 30);
+      // 20 km square at ~30 m; if the elevation file can't be read, try once
+      // more at a slightly different size (the service occasionally returns
+      // a file the reader rejects)
+      let got = null, lastErr = null;
+      for (const [half, cell] of [[10, 30], [10, 32], [9, 30]]) {
+        try { got = await fetchDemWindow(lat, lon, half, cell); break; } catch (err) {
+          lastErr = err;
+          if (/no land/.test(String(err.message))) break;
+        }
+      }
+      if (!got) throw lastErr || new Error('no elevation data');
+      const { grid, bounds } = got;
       setBusy(true, 'Working out how water flows here…');
       await nextFrame();
       const col = Math.round(((lon - bounds[0]) / (bounds[2] - bounds[0])) * grid.W);
