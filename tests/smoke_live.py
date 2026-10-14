@@ -40,7 +40,7 @@ def main() -> int:
 
         s1 = status()
         fhs = s1.get("floodhub") or {}
-        fh_text = page.inner_text("#floodhubBody").strip().replace("\n", " ")
+        fh_text = (page.text_content("#floodhubBody") or "").strip().replace("\n", " ")
         note("notice", f"Flood Hub panel ({json.dumps(fhs)}): {fh_text[:200]}")
         if not fhs.get("loaded"):
             failures.append("the Flood Hub forecast file did not load")
@@ -49,7 +49,7 @@ def main() -> int:
 
         if s1.get("mode") == "map":
             box = page.locator("#lmap").bounding_box()
-            page.mouse.click(box["x"] + box["width"] * 0.3, box["y"] + box["height"] * 0.3)
+            page.mouse.click(box["x"] + box["width"] * 0.6, box["y"] + box["height"] * 0.55)
             try:
                 page.wait_for_selector(".leaflet-popup-content", timeout=5_000)
                 popup = page.inner_text(".leaflet-popup-content")
@@ -69,14 +69,16 @@ def main() -> int:
             if after.get("floodPixels", 0) <= before.get("floodPixels", 0):
                 failures.append(f"1893 should flood more than 2011: {before.get('floodPixels')} -> {after.get('floodPixels')}")
             # moving the gauge onto a small creek must not be possible
+            page.evaluate("window.__floodOpenPanel('panel-layers')")
             page.check("#moveGauge")
-            page.mouse.click(box["x"] + box["width"] * 0.3, box["y"] + box["height"] * 0.3)
+            page.mouse.click(box["x"] + box["width"] * 0.6, box["y"] + box["height"] * 0.55)
             page.wait_for_timeout(500)
             moved = page.inner_text("#readout")
             note("notice", f"Tap with gauge moving on: {moved}")
             if "Gauge moved" in moved and "dry" in moved:
                 failures.append(f"gauge moved onto dry ground: {moved}")
             page.uncheck("#moveGauge")
+            page.evaluate("window.__floodOpenPanel('panel-scenario')")
 
             # every basemap in the switcher should load tiles at Brisbane
             names = page.evaluate("Object.keys(window.__floodStatus.basemaps || {})")

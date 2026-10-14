@@ -9,11 +9,14 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,400..800&family=IBM+Plex+Mono:wght@400;500&display=swap">
 <style>
-/* Layout: one working screen. Map and river profile on the left, scenario
-   controls in a side rail on the right; stacks to a single column on phones. */
+/* Layout: the map fills the screen. A title bar floats top-left, a tool
+   rail sits on the right (a bottom bar on phones), and each tool opens a
+   floating panel: scenario on the left, everything else on the right. On
+   phones every panel is a bottom sheet and only one is open at a time. */
 :root {
   --bg: #eef2f4;
   --surface: #ffffff;
+  --surface-2: #f4f7f9;
   --ink: #12202a;
   --muted: #586874;
   --line: #d3dce2;
@@ -22,88 +25,118 @@
   --gauge: #b8661a;
   --warn-bg: #fff4e2;
   --warn-ink: #6b3f0b;
-  --map-ground: #dde4e8;
+  --alert: #c62828;
+  --map-ground: #cfd8de;
+  --shadow: 0 6px 24px rgba(10, 30, 45, 0.18), 0 1px 3px rgba(10, 30, 45, 0.12);
   --font-display: "Archivo", "Helvetica Neue", Arial, sans-serif;
   --font-body: "Archivo", "Helvetica Neue", Arial, sans-serif;
   --font-data: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+  --gap: 12px;
+  --rail: 64px;
+  --bar: 64px;
   color-scheme: light;
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --bg: #0d1418; --surface: #152029; --ink: #e2eaef; --muted: #91a3af; --line: #26343f;
+    --bg: #0d1418; --surface: #152029; --surface-2: #1b2832; --ink: #e2eaef; --muted: #91a3af; --line: #2a3945;
     --accent: #5eb2e4; --accent-ink: #062033; --gauge: #e8a24f; --warn-bg: #2b2112; --warn-ink: #f1cf9c;
-    --map-ground: #1b252d; color-scheme: dark;
+    --alert: #ef5350; --map-ground: #1b252d; --shadow: 0 6px 24px rgba(0, 0, 0, 0.5), 0 1px 3px rgba(0, 0, 0, 0.4);
+    color-scheme: dark;
   }
 }
 :root[data-theme="dark"] {
-  --bg: #0d1418; --surface: #152029; --ink: #e2eaef; --muted: #91a3af; --line: #26343f;
+  --bg: #0d1418; --surface: #152029; --surface-2: #1b2832; --ink: #e2eaef; --muted: #91a3af; --line: #2a3945;
   --accent: #5eb2e4; --accent-ink: #062033; --gauge: #e8a24f; --warn-bg: #2b2112; --warn-ink: #f1cf9c;
-  --map-ground: #1b252d; color-scheme: dark;
+  --alert: #ef5350; --map-ground: #1b252d; --shadow: 0 6px 24px rgba(0, 0, 0, 0.5), 0 1px 3px rgba(0, 0, 0, 0.4);
+  color-scheme: dark;
 }
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
-html, body { margin: 0; }
+html, body { margin: 0; height: 100%; }
 body {
-  background: var(--bg); color: var(--ink);
+  background: var(--map-ground); color: var(--ink);
   font: 400 15px/1.5 var(--font-body);
-  padding-left: max(16px, env(safe-area-inset-left, 0px));
-  padding-right: max(16px, env(safe-area-inset-right, 0px));
-  padding-block: 16px 32px;
+  overflow: hidden;
+  /* the map is full-bleed; floating UI uses these insets */
+  --top: calc(env(safe-area-inset-top, 0px) + var(--gap));
+  --left: max(var(--gap), env(safe-area-inset-left, 0px));
+  --right: max(var(--gap), env(safe-area-inset-right, 0px));
+  --bottom: calc(env(safe-area-inset-bottom, 0px) + var(--gap));
 }
-.shell { max-width: 1320px; margin: 0 auto; display: grid; gap: 16px; }
-header.top { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 8px 24px; }
+
+/* ---------- map */
+.map-stage { position: fixed; inset: 0; display: grid; place-items: center; background: var(--map-ground); }
+#map { display: block; cursor: crosshair; touch-action: manipulation; max-width: 100%; max-height: 100%; }
+#lmap { position: absolute; inset: 0; background: var(--map-ground); font: 13px/1.4 var(--font-body); }
+.flood-layer { image-rendering: pixelated; }
+.busy {
+  position: absolute; inset: 0; display: grid; place-items: center; z-index: 900;
+  background: color-mix(in srgb, var(--map-ground) 70%, transparent); font: 500 14px var(--font-data);
+}
+.leaflet-popup-content { font: 13px/1.45 var(--font-body); }
+
+/* ---------- floating chrome */
+.float { background: var(--surface); color: var(--ink); border-radius: 12px; box-shadow: var(--shadow); }
+.topbar {
+  position: fixed; z-index: 1000; top: var(--top); left: var(--left);
+  max-width: calc(100vw - var(--left) - var(--right) - var(--rail) - var(--gap));
+  display: flex; flex-wrap: nowrap; align-items: center; gap: 6px 12px; padding: 8px 10px 8px 14px;
+}
+.topbar select { flex: 0 1 280px; min-width: 0; }
+.topbar .pill { flex: none; }
 h1 {
-  font: 760 clamp(1.5rem, 1.1rem + 1.6vw, 2.2rem)/1.05 var(--font-display);
-  font-stretch: 78%; letter-spacing: -0.01em; margin: 0; text-wrap: balance;
+  font: 760 1.15rem/1.1 var(--font-display); font-stretch: 80%; letter-spacing: -0.005em; margin: 0; white-space: nowrap;
 }
 h1 span { color: var(--accent); }
-.subtitle { color: var(--muted); margin: 4px 0 0; max-width: 62ch; }
-.area-pick { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.topbar select {
+  font: 500 13.5px var(--font-body); background: var(--surface-2); color: var(--ink); border: 1px solid var(--line);
+  border-radius: 7px; padding: 4px 8px; min-height: 32px; max-width: 100%;
+}
+.pill {
+  border: 0; cursor: pointer; border-radius: 999px; padding: 3px 10px; font: 600 12px/1.4 var(--font-body);
+  background: var(--warn-bg); color: var(--warn-ink);
+}
+
+.rail {
+  position: fixed; z-index: 1000; top: var(--top); right: var(--right);
+  display: flex; flex-direction: column; gap: 4px; padding: 6px; width: var(--rail);
+}
+.tool {
+  position: relative; display: grid; justify-items: center; gap: 2px; padding: 7px 2px 5px; border: 0; border-radius: 9px;
+  background: transparent; color: var(--ink); cursor: pointer; font: 600 10.5px/1.1 var(--font-body);
+}
+.tool svg { width: 22px; height: 22px; stroke: currentColor; fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.tool:hover { background: var(--surface-2); }
+.tool[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); }
+.tool .badge {
+  position: absolute; top: 4px; right: 9px; width: 9px; height: 9px; border-radius: 50%;
+  background: var(--alert); box-shadow: 0 0 0 2px var(--surface);
+}
+
+/* ---------- panels */
+.sheet {
+  position: fixed; z-index: 1001; display: flex; flex-direction: column; overflow: hidden;
+  top: var(--top); bottom: var(--bottom); width: 360px; max-width: calc(100vw - 2 * var(--gap));
+}
+.sheet[data-side="left"] { left: var(--left); top: calc(var(--top) + 64px); }
+.sheet[data-side="right"] { right: calc(var(--right) + var(--rail) + var(--gap)); width: 340px; }
+.sheet-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding: 12px 12px 10px 16px; border-bottom: 1px solid var(--line);
+}
+.sheet-head h2 { margin: 0; font: 700 1rem/1.2 var(--font-display); font-stretch: 85%; }
+.close {
+  border: 0; background: var(--surface-2); color: var(--ink); width: 32px; height: 32px; border-radius: 8px; cursor: pointer;
+  font: 600 18px/1 var(--font-body);
+}
+.sheet-body { padding: 14px 16px 18px; overflow-y: auto; display: grid; grid-auto-rows: max-content; gap: 18px; align-content: start; overscroll-behavior: contain; flex: 1 1 auto; min-height: 0; }
+
 label.small, .label {
   font: 600 11px/1.2 var(--font-body); text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted);
 }
-select, button, input[type="file"] { font: inherit; }
-select {
-  background: var(--surface); color: var(--ink); border: 1px solid var(--line); border-radius: 6px;
-  padding: 6px 10px; min-height: 36px; max-width: 100%;
-}
-.notice {
-  background: var(--warn-bg); color: var(--warn-ink); border-radius: 8px; padding: 10px 14px;
-  font-size: 13.5px; line-height: 1.45;
-}
-.notice strong { font-weight: 650; }
-.workspace { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 16px; align-items: start; }
-@media (max-width: 900px) { .workspace { grid-template-columns: minmax(0, 1fr); } }
-.panel { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; }
-.map-panel { padding: 10px; display: grid; gap: 10px; min-width: 0; }
-.map-wrap { position: relative; background: var(--map-ground); border-radius: 6px; overflow: hidden; margin: 0 auto; width: 100%; }
-#map { display: block; width: 100%; height: auto; cursor: crosshair; touch-action: manipulation; }
-#lmap { width: 100%; height: min(68vh, 680px); min-height: 340px; background: var(--map-ground); }
-#lmap .leaflet-container, #lmap { font: 13px/1.4 var(--font-body); }
-.flood-layer { image-rendering: pixelated; }
-.geo-controls { display: flex; flex-wrap: wrap; gap: 10px 18px; align-items: center; }
-.geo-controls .slider { flex: 1 1 200px; min-width: 0; }
-.check { display: inline-flex; gap: 6px; align-items: center; font-size: 13.5px; cursor: pointer; }
-.check input { accent-color: var(--accent); width: 16px; height: 16px; }
-.busy {
-  position: absolute; inset: 0; display: grid; place-items: center; background: color-mix(in srgb, var(--bg) 70%, transparent);
-  font: 500 14px var(--font-data); color: var(--ink);
-}
-.readout { font: 400 12.5px/1.4 var(--font-data); color: var(--muted); min-height: 1.4em; font-variant-numeric: tabular-nums; }
-.legend { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; font-size: 12.5px; color: var(--muted); }
-.legend i { display: inline-block; width: 14px; height: 10px; border-radius: 2px; vertical-align: -1px; margin-right: 5px; }
-.stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1px; background: var(--line); border-radius: 8px; overflow: hidden; }
-@media (max-width: 560px) { .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
-.stat { background: var(--surface); padding: 10px 12px; min-width: 0; }
-.stat .v { font: 500 1.35rem/1.15 var(--font-data); font-variant-numeric: tabular-nums; }
-.stat .v small { font-size: 0.7em; color: var(--muted); margin-left: 2px; }
-.profile-head { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; align-items: baseline; }
-.profile-wrap { overflow-x: auto; }
-#profile { display: block; width: 100%; height: 190px; }
-aside.controls { padding: 16px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 18px; min-width: 0; }
-aside.controls select { width: 100%; }
 fieldset { border: 0; margin: 0; padding: 0; display: grid; gap: 8px; min-width: 0; }
 legend { padding: 0; margin-bottom: 6px; }
+select { font: inherit; background: var(--surface); color: var(--ink); border: 1px solid var(--line); border-radius: 6px; padding: 6px 10px; min-height: 36px; width: 100%; }
 .events { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
 .chip {
   border: 1px solid var(--line); background: var(--surface); color: var(--ink); border-radius: 7px;
@@ -123,119 +156,169 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
 .hint { font-size: 12.5px; color: var(--muted); margin: 0; }
 details summary { cursor: pointer; font-weight: 600; }
 details[open] summary { margin-bottom: 10px; }
+details > div { display: grid; gap: 14px; }
+.check { display: flex; gap: 8px; align-items: center; font-size: 14px; cursor: pointer; }
+.check input { accent-color: var(--accent); width: 17px; height: 17px; flex: none; margin: 0; }
+.optlist { display: grid; gap: 7px; }
 .btn {
   display: inline-flex; align-items: center; justify-content: center; gap: 6px; border-radius: 7px; cursor: pointer;
   border: 1px solid var(--accent); background: transparent; color: var(--accent); padding: 7px 12px; font-weight: 600;
 }
+
+.stats { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1px; background: var(--line); border-radius: 8px; overflow: hidden; }
+.stat { background: var(--surface-2); padding: 8px 10px; min-width: 0; }
+.stat .v { font: 500 1.2rem/1.15 var(--font-data); font-variant-numeric: tabular-nums; }
+.stat .v small { font-size: 0.7em; color: var(--muted); margin-left: 2px; }
+
+.notice { background: var(--warn-bg); color: var(--warn-ink); border-radius: 8px; padding: 10px 12px; font-size: 13.5px; line-height: 1.45; }
+.notice strong { font-weight: 650; }
+.sources, .about-text { font-size: 13px; color: var(--muted); }
+.sources a, .about-text a, .hint a { color: var(--accent); }
+.downloads { display: flex; flex-wrap: wrap; gap: 6px 12px; font-size: 13px; }
+.downloads a { color: var(--accent); }
 .file-row { display: grid; gap: 6px; }
 .file-row label { font-size: 13.5px; line-height: 1.4; }
 .file-row input { font-size: 13px; color: var(--muted); max-width: 100%; }
-.sources { font-size: 12.5px; color: var(--muted); }
-.floodhub { display: grid; gap: 8px; border-top: 1px solid var(--line); padding-top: 14px; }
-.floodhub h2 { margin: 0; }
+
+#profile { display: block; width: 100%; height: 220px; }
+
 .fh-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
 .fh-list li { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 2px 10px; align-items: baseline; font-size: 13.5px; }
 .fh-list .where { font-weight: 600; min-width: 0; overflow-wrap: anywhere; }
 .fh-list .detail { grid-column: 2; color: var(--muted); font: 400 12px/1.4 var(--font-data); font-variant-numeric: tabular-nums; }
 .sev { display: inline-block; padding: 1px 7px; border-radius: 999px; font: 600 11px/1.5 var(--font-body); color: #fff; white-space: nowrap; }
 .fh-meta { font-size: 12px; color: var(--muted); margin: 4px 0 0; }
-.sources a { color: var(--accent); }
-.downloads { display: flex; flex-wrap: wrap; gap: 6px 12px; font-size: 13px; }
-.downloads a { color: var(--accent); }
-footer { font-size: 12.5px; color: var(--muted); max-width: 90ch; }
-footer a { color: var(--accent); }
+#floodhubBody { display: grid; gap: 10px; }
+#floodhubBody p { margin: 0; }
+
+/* ---------- legend + readout */
+.legend-card {
+  position: fixed; z-index: 999; left: 50%; transform: translateX(-50%); bottom: calc(var(--bottom) + 18px);
+  max-width: min(360px, calc(100vw - 2 * var(--gap))); padding: 10px 12px; display: grid; gap: 6px;
+}
+.summary { font: 500 12.5px/1.35 var(--font-data); font-variant-numeric: tabular-nums; }
+.summary b { font-family: var(--font-body); font-weight: 700; }
+.legend { display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: center; font-size: 12px; color: var(--muted); }
+.legend i { display: inline-block; width: 14px; height: 10px; border-radius: 2px; vertical-align: -1px; margin-right: 5px; }
+.legend-toggle { border: 0; background: none; color: var(--accent); font: 600 12px var(--font-body); cursor: pointer; padding: 0; justify-self: start; }
+.readout {
+  position: fixed; z-index: 1002; left: 50%; transform: translateX(-50%); top: calc(var(--top) + 60px);
+  max-width: min(520px, calc(100vw - 2 * var(--gap))); padding: 8px 12px; font: 400 12.5px/1.4 var(--font-data);
+  font-variant-numeric: tabular-nums; pointer-events: none; text-align: center;
+}
+.leaflet-bottom.leaflet-left { display: none; }
+
+/* ---------- phones: bottom tool bar, bottom sheets */
+@media (max-width: 760px) {
+  .topbar { right: var(--right); max-width: none; padding: 7px 8px 7px 12px; flex-wrap: wrap; }
+  .topbar select { flex: 1 1 200px; }
+  h1 { font-size: 1.02rem; }
+  .rail {
+    top: auto; bottom: 0; left: 0; right: 0; width: auto; flex-direction: row; justify-content: space-around;
+    border-radius: 14px 14px 0 0; padding: 4px max(6px, env(safe-area-inset-right, 0px)) calc(4px + env(safe-area-inset-bottom, 0px)) max(6px, env(safe-area-inset-left, 0px));
+  }
+  .tool { flex: 1; }
+  .sheet, .sheet[data-side="left"], .sheet[data-side="right"] {
+    left: 0; right: 0; width: auto; max-width: none; top: auto;
+    bottom: calc(var(--bar) + env(safe-area-inset-bottom, 0px)); max-height: min(68vh, calc(100vh - 140px));
+    border-radius: 14px 14px 0 0;
+  }
+  .sheet-body { padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+  .legend-card { left: var(--left); transform: none; bottom: calc(var(--bar) + env(safe-area-inset-bottom, 0px) + 10px); }
+  .readout { top: calc(var(--top) + 96px); }
+  body.sheet-open .legend-card { display: none; }
+  .leaflet-bottom.leaflet-right { bottom: calc(var(--bar) + env(safe-area-inset-bottom, 0px)); }
+}
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
 </style>
 </head>
 <body>
-<div class="shell">
-  <header class="top">
-    <div>
-      <h1>Brisbane <span>Flood</span> Explorer</h1>
-      <p class="subtitle">Set a river level at the gauge and a bay level, and see which land sits below the water surface and connects to the river.</p>
-    </div>
-    <div class="area-pick">
-      <label class="small" for="area">Terrain</label>
-      <select id="area"></select>
-    </div>
-  </header>
+<div class="map-stage" id="mapWrap">
+  <canvas id="map" width="800" height="600" aria-label="Map of modelled flood extent and depth"></canvas>
+  <div id="lmap" hidden aria-label="Street map with modelled flood depths"></div>
+  <div class="busy" id="busy" hidden>Working…</div>
+</div>
 
-  <div class="notice" id="notice"></div>
+<header class="topbar float">
+  <h1>Brisbane <span>Flood</span> Explorer</h1>
+  <label class="small" for="area" hidden>Terrain</label>
+  <select id="area" aria-label="Terrain"></select>
+  <button type="button" class="pill" id="noticePill" data-open="panel-about">Screening only</button>
+</header>
 
-  <div class="workspace">
-    <section class="panel map-panel" aria-label="Flood map">
-      <div class="map-wrap" id="mapWrap">
-        <canvas id="map" width="800" height="600" aria-label="Map of modelled flood extent and depth"></canvas>
-        <div id="lmap" hidden aria-label="Street map with modelled flood depths"></div>
-        <div class="busy" id="busy" hidden>Working…</div>
+<nav class="rail float" aria-label="Map tools">
+  <button type="button" class="tool" data-open="panel-scenario" aria-pressed="false">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M20 18h0"/><circle cx="16" cy="6" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="18" r="2"/></svg>
+    Scenario
+  </button>
+  <button type="button" class="tool" data-open="panel-layers" aria-pressed="false">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 3 8l9 5 9-5-9-5Z"/><path d="m3 13 9 5 9-5"/><path d="m3 17.5 9 4.5 9-4.5" opacity=".5"/></svg>
+    Layers
+  </button>
+  <button type="button" class="tool" data-open="panel-profile" aria-pressed="false">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 20h18"/><path d="M3 16c3-1 4-6 7-6s4 4 7 3 3-5 4-6"/><path d="M3 10h18" stroke-dasharray="2 3"/></svg>
+    Profile
+  </button>
+  <button type="button" class="tool" data-open="panel-forecast" aria-pressed="false">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 15a4 4 0 0 1-.6-8A5.5 5.5 0 0 1 17 7.5a3.8 3.8 0 0 1 .5 7.5H7Z"/><path d="m8 18-1 2M12 18l-1 2M16 18l-1 2"/></svg>
+    Forecast
+    <span class="badge" id="forecastBadge" hidden></span>
+  </button>
+  <button type="button" class="tool" id="locate">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg>
+    Locate
+  </button>
+  <button type="button" class="tool" data-open="panel-about" aria-pressed="false">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.5v.5"/></svg>
+    About
+  </button>
+</nav>
+
+<!-- Scenario -->
+<aside class="sheet float" id="panel-scenario" data-panel data-side="left" aria-labelledby="h-scenario" hidden>
+  <div class="sheet-head"><h2 id="h-scenario">Flood scenario</h2><button type="button" class="close" data-close aria-label="Close">×</button></div>
+  <div class="sheet-body">
+    <div class="stats" id="stats"></div>
+
+    <fieldset id="eventsSet">
+      <legend class="label">Historic peaks at the gauge</legend>
+      <div class="events" id="events"></div>
+      <p class="hint" id="eventsNote"></p>
+    </fieldset>
+
+    <fieldset>
+      <legend class="label">River and bay</legend>
+      <div class="slider">
+        <div class="row"><label for="gaugeLevel">Peak level at gauge</label><output id="gaugeLevelOut"></output></div>
+        <input type="range" id="gaugeLevel" min="0" max="10" step="0.01">
       </div>
-      <div class="geo-controls" id="geoControls" hidden>
-        <div class="slider">
-          <div class="row"><label for="floodOpacity">Flood layer</label><output id="floodOpacityOut">80%</output></div>
-          <input type="range" id="floodOpacity" min="20" max="100" step="5" value="80">
-        </div>
-        <label class="check"><input type="checkbox" id="showRelief"> Terrain shading</label>
-        <label class="check"><input type="checkbox" id="moveGauge"> Move gauge by tapping the river</label>
-        <button type="button" class="btn" id="locate">My location</button>
+      <div class="slider">
+        <div class="row"><label for="bayLevel">Bay level during the event</label><output id="bayLevelOut"></output></div>
+        <input type="range" id="bayLevel" min="0" max="2.5" step="0.05">
+        <p class="hint">Tide plus storm surge at the river mouth.</p>
       </div>
-      <div class="readout" id="readout">Tap the map for elevation and depth. Tap the river to move the gauge.</div>
-      <div class="legend" aria-label="Map legend">
-        <span><i style="background:#c9e7f7"></i>&lt; 0.5 m</span>
-        <span><i style="background:#79bfe8"></i>0.5–1 m</span>
-        <span><i style="background:#3786c9"></i>1–2 m</span>
-        <span><i style="background:#1d5ea3"></i>2–4 m</span>
-        <span><i style="background:#0c3470"></i>&gt; 4 m</span>
-        <span><i style="background:#6d93ad"></i>Normal water and sea</span>
-        <span><i style="background:#c66f1d;border-radius:50%"></i>Gauge</span>
+    </fieldset>
+
+    <fieldset>
+      <legend class="label">Future climate</legend>
+      <label for="slr">Sea-level rise</label>
+      <select id="slr">
+        <option value="0">None (today)</option>
+        <option value="0.3">+0.3 m</option>
+        <option value="0.5">+0.5 m</option>
+        <option value="0.8">+0.8 m (Queensland planning allowance to 2100)</option>
+        <option value="1.1">+1.1 m (high-end scenario)</option>
+      </select>
+      <div class="slider">
+        <div class="row"><label for="extra">Extra river peak</label><output id="extraOut"></output></div>
+        <input type="range" id="extra" min="0" max="2" step="0.05">
+        <p class="hint">Your allowance for heavier rainfall. The model does not convert rainfall to river level.</p>
       </div>
-      <div class="legend" id="overlayLegend" hidden aria-label="Council flood layers legend"></div>
-      <div class="stats" id="stats"></div>
-      <div class="profile-head">
-        <span class="label">Water surface along the river</span>
-        <span class="hint" id="profileNote"></span>
-      </div>
-      <div class="profile-wrap"><canvas id="profile" aria-label="River long-section showing bed and flood water level"></canvas></div>
-    </section>
+    </fieldset>
 
-    <aside class="panel controls" aria-label="Scenario controls">
-      <fieldset id="eventsSet">
-        <legend class="label">Historic peaks at the gauge</legend>
-        <div class="events" id="events"></div>
-        <p class="hint" id="eventsNote"></p>
-      </fieldset>
-
-      <fieldset>
-        <legend class="label">River and bay</legend>
-        <div class="slider">
-          <div class="row"><label for="gaugeLevel">Peak level at gauge</label><output id="gaugeLevelOut"></output></div>
-          <input type="range" id="gaugeLevel" min="0" max="10" step="0.01">
-        </div>
-        <div class="slider">
-          <div class="row"><label for="bayLevel">Bay level during the event</label><output id="bayLevelOut"></output></div>
-          <input type="range" id="bayLevel" min="0" max="2.5" step="0.05">
-          <p class="hint">Tide plus storm surge at the river mouth.</p>
-        </div>
-      </fieldset>
-
-      <fieldset>
-        <legend class="label">Future climate</legend>
-        <label for="slr">Sea-level rise</label>
-        <select id="slr">
-          <option value="0">None (today)</option>
-          <option value="0.3">+0.3 m</option>
-          <option value="0.5">+0.5 m</option>
-          <option value="0.8">+0.8 m (Queensland planning allowance to 2100)</option>
-          <option value="1.1">+1.1 m (high-end scenario)</option>
-        </select>
-        <div class="slider">
-          <div class="row"><label for="extra">Extra river peak</label><output id="extraOut"></output></div>
-          <input type="range" id="extra" min="0" max="2" step="0.05">
-          <p class="hint">Your assumption for heavier rainfall. Set it from a hydrologic study; the model does not convert rainfall to river level.</p>
-        </div>
-      </fieldset>
-
-      <details>
-        <summary>Model settings</summary>
+    <details>
+      <summary>Model settings</summary>
+      <div>
         <div class="slider">
           <div class="row"><label for="grad">Flood slope upstream of gauge</label><output id="gradOut"></output></div>
           <input type="range" id="grad" min="0" max="1.5" step="0.05">
@@ -245,34 +328,92 @@ footer a { color: var(--accent); }
           <input type="range" id="streamArea" min="0" max="100" step="1">
           <p class="hint">Catchment area a channel needs before the model treats it as a stream.</p>
         </div>
-      </details>
-
-      <fieldset>
-        <legend class="label">Your own terrain</legend>
-        <div class="file-row">
-          <label for="files">GeoTIFF or ASCII grid DEM. Add the pipeline's <code>d8.tif</code> too to use its flow directions.</label>
-          <input type="file" id="files" accept=".tif,.tiff,.asc,.txt" multiple>
-        </div>
-        <p class="hint">Files stay in your browser. Free LiDAR DEMs: <a href="https://elevation.fsdf.org.au/" target="_blank" rel="noopener">ELVIS</a>.</p>
-      </fieldset>
-
-      <section class="floodhub" id="floodhub" aria-labelledby="floodhubTitle">
-        <h2 class="label" id="floodhubTitle">Google Flood Hub forecast</h2>
-        <div id="floodhubBody"><p class="hint">Loading…</p></div>
-      </section>
-
-      <div class="sources" id="dataInfo"></div>
-      <div class="downloads" id="downloads"></div>
-    </aside>
+      </div>
+    </details>
   </div>
+</aside>
 
-  <footer>
-    This is a screening tool, not a flood study. It ignores rainfall on the floodplain, stormwater, levees, bridges and how water moves over time.
-    For real flood risk use <a href="https://fam.brisbane.qld.gov.au/" target="_blank" rel="noopener">Brisbane City Council Flood Awareness Maps</a>
-    and <a href="https://www.bom.gov.au/qld/warnings/" target="_blank" rel="noopener">Bureau of Meteorology warnings</a>.
-    Source code: <a href="https://github.com/ghedwards/brisbane-flood-explorer" target="_blank" rel="noopener">github.com/ghedwards/brisbane-flood-explorer</a>.
-  </footer>
+<!-- Layers -->
+<aside class="sheet float" id="panel-layers" data-panel data-side="right" aria-labelledby="h-layers" hidden>
+  <div class="sheet-head"><h2 id="h-layers">Map layers</h2><button type="button" class="close" data-close aria-label="Close">×</button></div>
+  <div class="sheet-body">
+    <p class="hint" id="layersStaticNote">Basemaps and extra layers are available on maps of real places, such as the Lower Brisbane River.</p>
+    <div id="geoControls" hidden>
+      <div class="sheet-body" style="padding:0">
+        <fieldset>
+          <legend class="label">Basemap</legend>
+          <div class="optlist" id="basemapList"></div>
+        </fieldset>
+        <fieldset>
+          <legend class="label">Flood model</legend>
+          <div class="slider">
+            <div class="row"><label for="floodOpacity">Flood layer opacity</label><output id="floodOpacityOut">80%</output></div>
+            <input type="range" id="floodOpacity" min="20" max="100" step="5" value="80">
+          </div>
+          <label class="check"><input type="checkbox" id="showRelief"> Terrain shading under the flood</label>
+          <label class="check"><input type="checkbox" id="moveGauge"> Move the gauge by tapping the river</label>
+        </fieldset>
+        <fieldset id="overlaySet">
+          <legend class="label">More flood information</legend>
+          <div class="optlist" id="overlayList"></div>
+        </fieldset>
+      </div>
+    </div>
+  </div>
+</aside>
+
+<!-- Profile -->
+<aside class="sheet float" id="panel-profile" data-panel data-side="right" aria-labelledby="h-profile" hidden>
+  <div class="sheet-head"><h2 id="h-profile">Water surface along the river</h2><button type="button" class="close" data-close aria-label="Close">×</button></div>
+  <div class="sheet-body">
+    <canvas id="profile" aria-label="River long-section showing bed and flood water level"></canvas>
+    <p class="hint" id="profileNote"></p>
+  </div>
+</aside>
+
+<!-- Forecast -->
+<aside class="sheet float" id="panel-forecast" data-panel data-side="right" aria-labelledby="floodhubTitle" hidden>
+  <div class="sheet-head"><h2 id="floodhubTitle">Google Flood Hub forecast</h2><button type="button" class="close" data-close aria-label="Close">×</button></div>
+  <div class="sheet-body" id="floodhub"><div id="floodhubBody"><p class="hint">Loading…</p></div></div>
+</aside>
+
+<!-- About -->
+<aside class="sheet float" id="panel-about" data-panel data-side="right" aria-labelledby="h-about" hidden>
+  <div class="sheet-head"><h2 id="h-about">About this map</h2><button type="button" class="close" data-close aria-label="Close">×</button></div>
+  <div class="sheet-body">
+    <div class="notice" id="notice"></div>
+    <p class="about-text">Set a river level at the gauge and a bay level, and the map shows land below that water surface that connects to the river. It is a screening tool, not a flood study: it ignores rainfall on the floodplain, stormwater, levees, bridges and how water moves over time.
+      For real flood risk use <a href="https://fam.brisbane.qld.gov.au/" target="_blank" rel="noopener">Brisbane City Council Flood Awareness Maps</a>
+      and <a href="https://www.bom.gov.au/qld/warnings/" target="_blank" rel="noopener">Bureau of Meteorology warnings</a>.</p>
+    <div class="sources" id="dataInfo"></div>
+    <div class="downloads" id="downloads"></div>
+    <fieldset>
+      <legend class="label">Your own terrain</legend>
+      <div class="file-row">
+        <label for="files">GeoTIFF or ASCII grid DEM. Add the pipeline's <code>d8.tif</code> too to use its flow directions.</label>
+        <input type="file" id="files" accept=".tif,.tiff,.asc,.txt" multiple>
+      </div>
+      <p class="hint">Files stay in your browser. Free LiDAR DEMs: <a href="https://elevation.fsdf.org.au/" target="_blank" rel="noopener">ELVIS</a>.</p>
+    </fieldset>
+    <p class="about-text">Source code and method: <a href="https://github.com/ghedwards/brisbane-flood-explorer" target="_blank" rel="noopener">github.com/ghedwards/brisbane-flood-explorer</a></p>
+  </div>
+</aside>
+
+<div class="legend-card float" id="legendCard">
+  <div class="summary" id="summaryLine"></div>
+  <div class="legend" id="depthLegend" aria-label="Water depth legend">
+    <span><i style="background:#c9e7f7"></i>&lt;0.5 m</span>
+    <span><i style="background:#79bfe8"></i>0.5–1</span>
+    <span><i style="background:#3786c9"></i>1–2</span>
+    <span><i style="background:#1d5ea3"></i>2–4</span>
+    <span><i style="background:#0c3470"></i>&gt;4 m</span>
+    <span><i style="background:#c66f1d;border-radius:50%"></i>Gauge</span>
+  </div>
+  <div class="legend" id="overlayLegend" hidden aria-label="Extra layers legend"></div>
+  <button type="button" class="legend-toggle" id="legendToggle" aria-expanded="true">Hide key</button>
 </div>
+
+<div class="readout float" id="readout" role="status" hidden></div>
 
 <script src="flood-core.js"></script>
 <script src="app.js"></script>

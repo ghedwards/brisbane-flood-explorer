@@ -404,10 +404,10 @@
     off.getContext('2d').putImageData(img, 0, 0);
 
     const canvas = $('map');
-    const wrap = $('mapWrap');
-    const maxH = Math.max(260, window.innerHeight * 0.68);
-    const cssW = Math.min(wrap.parentElement.clientWidth - 20, (maxH * a.W) / a.H);
-    wrap.style.maxWidth = cssW + 'px';
+    const stage = $('mapWrap');
+    const cssW = Math.max(200, Math.min(stage.clientWidth, (stage.clientHeight * a.W) / a.H));
+    canvas.style.width = cssW + 'px';
+    canvas.style.height = (cssW * a.H / a.W) + 'px';
     const dpr = Math.min(2, window.devicePixelRatio || 1);
     const pw = Math.round(cssW * dpr), ph = Math.round((cssW * a.H / a.W) * dpr);
     if (canvas.width !== pw || canvas.height !== ph) { canvas.width = pw; canvas.height = ph; }
@@ -529,7 +529,7 @@
       parts.push(`<span><i style="background:transparent;border:2px dashed ${o.color};height:8px"></i>${o.name.replace('Recorded flood: ', 'Recorded ')}</span>`);
     });
     box.innerHTML = parts.join('');
-    box.hidden = !parts.length;
+    box.hidden = !parts.length || $('legendToggle').getAttribute('aria-expanded') === 'false';
   }
   const BLANK = 'data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==';
   const status = (window.__floodStatus = { mode: 'static', overlayUpdates: 0, tilesLoaded: 0, tileErrors: 0, floodPixels: 0, overlays: {} });
@@ -570,7 +570,7 @@
       await loadLeaflet();
     } catch (err) {
       leaveGeoMode();
-      $('readout').textContent = `${err.message} Showing the terrain picture instead.`;
+      say(`${err.message} Showing the terrain picture instead.`);
       return false;
     }
     const L = window.L;
@@ -578,10 +578,11 @@
     $('map').hidden = true;
     $('lmap').hidden = false;
     $('geoControls').hidden = false;
-    $('mapWrap').style.maxWidth = '';
+    $('layersStaticNote').hidden = true;
     const bounds = L.latLngBounds([b[1], b[0]], [b[3], b[2]]);
     if (!state.lmap) {
-      const m = L.map('lmap', { maxBounds: bounds.pad(0.6), minZoom: 9, zoomSnap: 0.5 });
+      const m = L.map('lmap', { maxBounds: bounds.pad(0.6), minZoom: 9, zoomSnap: 0.5, zoomControl: false });
+      if (!finePointer()) { /* pinch to zoom on touch screens */ } else L.control.zoom({ position: 'bottomright' }).addTo(m);
       const layers = {};
       status.basemaps = {};
       for (const bm of BASEMAPS) {
@@ -609,8 +610,9 @@
       const alerting = fh && fh.configured && (((fh.flashFloodEvents || []).length > 0)
         || (fh.gauges || []).some((g) => g.status && sev(g.status.severity).rank >= 2));
       if (alerting) Object.values(fhLayers).forEach((l) => l.addTo(m));
-      L.control.layers(layers, overlays, { position: 'topright' }).addTo(m);
+      buildLayerLists(m, layers, overlays, first);
       m.on('overlayadd overlayremove zoomend', renderOverlayLegend);
+      m.on('layeradd layerremove', syncLayerLists);
       window.__floodTestZoom = (lat, lng, z) => m.setView([lat, lng], z, { animate: false });
       window.__floodSetOverlay = (name, on) => {
         const l = overlays[name];
@@ -624,11 +626,7 @@
         try { localStorage.setItem(BASEMAP_KEY, e.name); } catch (err) { /* storage blocked */ }
       });
       // for the automated browser check
-      window.__floodSetBasemap = (name) => {
-        Object.values(layers).forEach((l) => m.hasLayer(l) && m.removeLayer(l));
-        layers[name].addTo(m);
-        status.basemap = name;
-      };
+      window.__floodSetBasemap = (name) => setBasemap(m, layers, name);
       state.overlay = L.imageOverlay(BLANK, bounds, {
         opacity: parseFloat($('floodOpacity').value) / 100, className: 'flood-layer',
       }).addTo(m);
@@ -640,7 +638,7 @@
       m.on('click', onGeoClick);
       m.on('mousemove', onGeoMove);
       m.on('locationfound', onLocated);
-      m.on('locationerror', (e) => { $('readout').textContent = `Couldn’t get your location: ${e.message}`; });
+      m.on('locationerror', (e) => { say(`Couldn’t get your location: ${e.message}`); });
       state.lmap = m;
     } else {
       state.overlay.setBounds(bounds);
@@ -651,12 +649,76 @@
     return true;
   }
 
+
+  function finePointer() {
+    try { return window.matchMedia('(pointer: fine)').matches; } catch (e) { return true; }
+  }
+
+  // Basemap radios and overlay checkboxes in the Layers panel
+  let layerRegistry = null;
+  function setBasemap(m, layers, name) {
+    if (!layers[name]) return;
+    Object.values(layers).forEach((l) => m.hasLayer(l) && m.removeLayer(l));
+    layers[name].addTo(m);
+    layers[name].bringToBack();
+    status.basemap = name;
+    try { localStorage.setItem(BASEMAP_KEY, name); } catch (err) { /* storage blocked */ }
+    syncLayerLists();
+  }
+
+  function buildLayerLists(m, layers, overlays, first) {
+    layerRegistry = { m, layers, overlays };
+    const bl = $('basemapList');
+    bl.innerHTML = '';
+    Object.keys(layers).forEach((name, i) => {
+      const id = 'bm-' + i;
+      const lab = document.createElement('label');
+      lab.className = 'check';
+      lab.innerHTML = `<input type="radio" name="basemap" id="${id}"> ${escapeHtml(name)}`;
+      const input = lab.querySelector('input');
+      input.checked = name === first;
+      input.addEventListener('change', () => input.checked && setBasemap(m, layers, name));
+      bl.appendChild(lab);
+    });
+    const ol = $('overlayList');
+    ol.innerHTML = '';
+    const names = Object.keys(overlays);
+    $('overlaySet').hidden = !names.length;
+    names.forEach((name, i) => {
+      const id = 'ov-' + i;
+      const lab = document.createElement('label');
+      lab.className = 'check';
+      lab.innerHTML = `<input type="checkbox" id="${id}"> ${escapeHtml(name)}`;
+      const input = lab.querySelector('input');
+      input.dataset.layer = name;
+      input.checked = m.hasLayer(overlays[name]);
+      input.addEventListener('change', () => {
+        if (input.checked) overlays[name].addTo(m); else m.removeLayer(overlays[name]);
+        renderOverlayLegend();
+      });
+      ol.appendChild(lab);
+    });
+  }
+
+  function syncLayerLists() {
+    if (!layerRegistry) return;
+    const { m, overlays } = layerRegistry;
+    document.querySelectorAll('#overlayList input').forEach((inp) => {
+      const l = overlays[inp.dataset.layer];
+      if (l) inp.checked = m.hasLayer(l);
+    });
+    document.querySelectorAll('#basemapList input').forEach((inp, i) => {
+      inp.checked = Object.keys(layerRegistry.layers)[i] === status.basemap;
+    });
+  }
+
   function leaveGeoMode() {
     state.geo = null;
     status.mode = 'static';
     $('map').hidden = false;
     $('lmap').hidden = true;
     $('geoControls').hidden = true;
+    $('layersStaticNote').hidden = false;
   }
 
   function cellLatLng(i) {
@@ -713,14 +775,14 @@
     } else {
       text = describe(c.i);
     }
-    $('readout').textContent = text;
+    say(text);
     window.L.popup({ closeButton: false, autoPanPadding: [24, 24] })
       .setLatLng(e.latlng).setContent(escapeHtml(text)).openOn(state.lmap);
   }
 
   function onGeoMove(e) {
     const c = latLngCell(e.latlng);
-    if (c) $('readout').textContent = describe(c.i);
+    if (c) say(describe(c.i));
   }
 
   function onLocated(e) {
@@ -730,9 +792,9 @@
       radius: 7, color: '#ffffff', weight: 2, fillColor: '#1a73e8', fillOpacity: 1,
     }).addTo(state.lmap);
     const c = latLngCell(e.latlng);
-    $('readout').textContent = c
+    say(c
       ? `Your location: ${describe(c.i)}`
-      : 'Your location is outside the modelled area.';
+      : 'Your location is outside the modelled area.');
   }
 
   $('floodOpacity').addEventListener('input', (e) => {
@@ -741,8 +803,8 @@
   });
   $('showRelief').addEventListener('change', () => { if (state.geo) drawGeoMap(); });
   $('locate').addEventListener('click', () => {
-    if (!state.lmap) return;
-    $('readout').textContent = 'Finding your location…';
+    if (!state.lmap || !state.geo) { say('Your location can be shown on maps of real places, such as the Lower Brisbane River.'); return; }
+    say('Finding your location…');
     state.lmap.locate({ setView: true, maxZoom: 15 });
   });
 
@@ -763,6 +825,9 @@
       ['Deepest water', fmt(st.maxDepth, 1), 'm'],
       ['Level at gauge', fmt(s.gaugeLevel, 2), 'm'],
     ];
+    const ev = state.eventsApply && state.events.find((e) => Math.abs(e.level - parseFloat(ctl.gaugeLevel.value)) < 0.001);
+    $('summaryLine').innerHTML = `<b>${ev ? ev.label + ' peak' : 'Gauge'}</b> ${fmt(s.gaugeLevel, 2)} m · ` +
+      `${fmt(st.floodedKm2, 1)} km² newly flooded` + (parseFloat(ctl.slr.value) ? ` · +${ctl.slr.value} m sea level` : '');
     $('stats').innerHTML = cells.map(([k, v, u]) =>
       `<div class="stat"><div class="label">${k}</div><div class="v">${v}<small>${u}</small></div></div>`).join('');
   }
@@ -796,6 +861,7 @@
   function drawProfile(s) {
     const a = state.a, run = state.run, base = state.base;
     const canvas = $('profile');
+    if ($('panel-profile').hidden) return;
     const dpr = Math.min(2, window.devicePixelRatio || 1);
     const cw = canvas.clientWidth, ch = canvas.clientHeight;
     canvas.width = Math.round(cw * dpr); canvas.height = Math.round(ch * dpr);
@@ -952,6 +1018,7 @@
     gauges.sort((a, b) => sev(b.status.severity).rank - sev(a.status.severity).rank);
     const flooding = gauges.filter((g) => sev(g.status.severity).rank >= 2);
     const flash = (fh.flashFloodEvents || []).length;
+    $('forecastBadge').hidden = !(flooding.length || flash);
     let html = '';
     if (!flooding.length && !flash) {
       html += `<p>No flooding forecast at ${gauges.length} Flood Hub gauge${gauges.length === 1 ? '' : 's'} in South East Queensland.</p>`;
@@ -1040,7 +1107,7 @@
   $('map').addEventListener('mousemove', (ev) => {
     if (!state.a) return;
     const c = cellAt(ev);
-    if (c) $('readout').textContent = describe(c.i);
+    if (c) say(describe(c.i));
   });
   $('map').addEventListener('click', (ev) => {
     if (!state.a) return;
@@ -1051,9 +1118,9 @@
       state.gauge = s;
       state.base = null;
       runScenario();
-      $('readout').textContent = `Gauge moved. ${describe(s)}`;
+      say(`Gauge moved. ${describe(s)}`);
     } else {
-      $('readout').textContent = describe(c.i);
+      say(describe(c.i));
     }
   });
 
@@ -1091,6 +1158,7 @@
       html = `<strong>Screening only.</strong> ${escapeHtml(m.source || '')} A surface model includes buildings and trees, so expect errors in built-up areas. Do not use for evacuation or property decisions.`;
     }
     $('notice').innerHTML = html;
+    $('noticePill').textContent = m.synthetic ? 'Illustrative terrain' : m.upload ? 'Your terrain' : 'Screening only';
   }
 
   function renderInfo() {
@@ -1122,6 +1190,69 @@
     $('notice').innerHTML = `<strong>Problem.</strong> ${escapeHtml(msg)}`;
   }
 
+
+  /* --------------------------------------------------------- panels */
+  const isPhone = () => window.matchMedia('(max-width: 760px)').matches;
+
+  function openPanel(id) {
+    const target = $(id);
+    if (!target) return;
+    document.querySelectorAll('[data-panel]').forEach((p) => {
+      if (p === target) return;
+      if (isPhone() || p.dataset.side === target.dataset.side) p.hidden = true;
+    });
+    target.hidden = false;
+    syncPanels();
+    if (id === 'panel-profile' && state.run) drawProfile(scenario());
+  }
+
+  function closePanel(id) {
+    $(id).hidden = true;
+    syncPanels();
+  }
+
+  function syncPanels() {
+    document.querySelectorAll('.tool[data-open]').forEach((b) => {
+      b.setAttribute('aria-pressed', String(!$(b.dataset.open).hidden));
+    });
+    document.body.classList.toggle('sheet-open', !!document.querySelector('[data-panel]:not([hidden])'));
+  }
+
+  document.querySelectorAll('[data-open]').forEach((b) => {
+    b.addEventListener('click', () => {
+      const id = b.dataset.open;
+      if (b.classList.contains('tool') && !$(id).hidden) closePanel(id);
+      else openPanel(id);
+    });
+  });
+  document.querySelectorAll('[data-close]').forEach((b) => {
+    b.addEventListener('click', () => closePanel(b.closest('[data-panel]').id));
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return;
+    const open = Array.from(document.querySelectorAll('[data-panel]:not([hidden])'));
+    const right = open.find((p) => p.dataset.side === 'right');
+    if (right || open[0]) closePanel((right || open[0]).id);
+  });
+  window.__floodOpenPanel = openPanel;
+
+  let sayT = 0;
+  function say(text) {
+    const r = $('readout');
+    r.textContent = text;
+    r.hidden = !text;
+    clearTimeout(sayT);
+    sayT = setTimeout(() => { r.hidden = true; }, 5000);
+  }
+
+  $('legendToggle').addEventListener('click', (e) => {
+    const shown = e.target.getAttribute('aria-expanded') === 'true';
+    $('depthLegend').hidden = shown;
+    if (shown) $('overlayLegend').hidden = true; else renderOverlayLegend();
+    e.target.setAttribute('aria-expanded', String(!shown));
+    e.target.textContent = shown ? 'Show key' : 'Hide key';
+  });
+
   /* -------------------------------------------------------------- start */
 
   (async function start() {
@@ -1130,6 +1261,7 @@
     ctl.extra.value = 0;
     ctl.gaugeLevel.value = 4.46;
     syncOutputs();
+    if (!isPhone()) openPanel('panel-scenario');
     const areas = await listAreas();
     await loadFloodHub();
     await loadArea(areas[0].id);
