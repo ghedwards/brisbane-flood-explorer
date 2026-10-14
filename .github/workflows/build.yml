@@ -111,5 +111,5 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: smoke-screenshot
-          path: smoke.png
+          name: smoke-screenshots
+          path: smoke*.png

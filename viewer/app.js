@@ -457,7 +457,27 @@
     light: 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',
     dark: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
   };
-  const TILE_ATTR = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>';
+  const OSM_ATTR = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors';
+  const TILE_ATTR = OSM_ATTR + ' &copy; <a href="https://carto.com/attributions">CARTO</a>';
+  const QLD_ATTR = '&copy; State of Queensland (Department of Natural Resources and Mines, Manufacturing and Regional and Rural Development), <a href="https://creativecommons.org/licenses/by/4.0/">CC BY 4.0</a>';
+  const QLD_GIS = 'https://spatial-gis.information.qld.gov.au/arcgis/rest/services/Basemaps/';
+
+  // Basemaps offered in the layer switcher. The first is the default.
+  const BASEMAPS = [
+    { name: 'Streets', url: () => (isDark() ? TILES.dark : TILES.light),
+      opts: { attribution: TILE_ATTR, subdomains: 'abcd', maxZoom: 19 } },
+    { name: 'OpenStreetMap', url: () => 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+      opts: { attribution: OSM_ATTR, maxZoom: 19 } },
+    { name: 'Satellite (Esri)', url: () => 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+      opts: { attribution: 'Imagery &copy; Esri, Maxar, Earthstar Geographics and the GIS User Community', maxZoom: 19 } },
+    { name: 'Queensland aerial imagery', url: () => 'https://spatial-img.information.qld.gov.au/arcgis/rest/services/Basemaps/LatestStateProgram_AllUsers/ImageServer/tile/{z}/{y}/{x}',
+      opts: { attribution: 'Imagery &copy; Planet Labs Netherlands B.V. under licence from Planet and Geoplex; ' + QLD_ATTR, maxZoom: 20 } },
+    { name: 'Queensland topographic', url: () => QLD_GIS + 'QldMap_Topo/MapServer/tile/{z}/{y}/{x}',
+      opts: { attribution: QLD_ATTR, maxZoom: 20 } },
+    { name: 'Topographic (OpenTopoMap)', url: () => 'https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png',
+      opts: { attribution: OSM_ATTR + ', SRTM | Style &copy; <a href="https://opentopomap.org">OpenTopoMap</a> (CC BY-SA)', subdomains: 'abc', maxZoom: 17 } },
+  ];
+  const BASEMAP_KEY = 'bfe.basemap';
   const BLANK = 'data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==';
   const status = (window.__floodStatus = { mode: 'static', overlayUpdates: 0, tilesLoaded: 0, tileErrors: 0, floodPixels: 0 });
 
@@ -502,11 +522,33 @@
     const bounds = L.latLngBounds([b[1], b[0]], [b[3], b[2]]);
     if (!state.lmap) {
       const m = L.map('lmap', { maxBounds: bounds.pad(0.6), minZoom: 9, zoomSnap: 0.5 });
-      state.tiles = L.tileLayer(isDark() ? TILES.dark : TILES.light, {
-        attribution: TILE_ATTR, subdomains: 'abcd', maxZoom: 19,
-      }).addTo(m);
-      state.tiles.on('tileload', () => { status.tilesLoaded++; });
-      state.tiles.on('tileerror', () => { status.tileErrors++; });
+      const layers = {};
+      status.basemaps = {};
+      for (const bm of BASEMAPS) {
+        const layer = L.tileLayer(bm.url(), bm.opts);
+        const st = (status.basemaps[bm.name] = { loaded: 0, errors: 0 });
+        layer.on('tileload', () => { st.loaded++; status.tilesLoaded++; });
+        layer.on('tileerror', () => { st.errors++; status.tileErrors++; });
+        layers[bm.name] = layer;
+        bm.layer = layer;
+      }
+      let saved = null;
+      try { saved = localStorage.getItem(BASEMAP_KEY); } catch (e) { /* storage blocked */ }
+      const first = layers[saved] ? saved : BASEMAPS[0].name;
+      layers[first].addTo(m);
+      state.tiles = layers[BASEMAPS[0].name];
+      status.basemap = first;
+      L.control.layers(layers, null, { position: 'topright' }).addTo(m);
+      m.on('baselayerchange', (e) => {
+        status.basemap = e.name;
+        try { localStorage.setItem(BASEMAP_KEY, e.name); } catch (err) { /* storage blocked */ }
+      });
+      // for the automated browser check
+      window.__floodSetBasemap = (name) => {
+        Object.values(layers).forEach((l) => m.hasLayer(l) && m.removeLayer(l));
+        layers[name].addTo(m);
+        status.basemap = name;
+      };
       state.overlay = L.imageOverlay(BLANK, bounds, {
         opacity: parseFloat($('floodOpacity').value) / 100, className: 'flood-layer',
       }).addTo(m);

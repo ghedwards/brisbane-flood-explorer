@@ -2,7 +2,7 @@
 
 A screening tool for river and coastal flooding on the lower Brisbane River. Pick a river level at the Brisbane City gauge, a bay level and a sea-level-rise allowance, and the map shows which land sits below the water surface and connects to the river, with depths.
 
-For the processed Brisbane area the flood layer sits on a pan-and-zoom street map: tap anywhere for ground level and water depth, tap the river to move the gauge, or jump to your location. The illustrative sample terrain is shown as a static picture.
+For the processed Brisbane area the flood layer sits on a pan-and-zoom street map: tap anywhere for ground level and water depth, tap the river to move the gauge, or jump to your location. Switch between street, satellite, Queensland Government aerial and topographic, and other basemaps with the layer button. The illustrative sample terrain is shown as a static picture.
 
 The heavy terrain work is done by the hydrology tools that power [RustGIS](https://github.com/opengeos/RustGIS) (the [GeoLibre](https://github.com/opengeos/geolibre-rust) runner, built on Whitebox). A small browser viewer then runs the flood scenarios instantly.
 
@@ -131,6 +131,11 @@ tests/                       Node tests for the flood model
 - Hydrology tools: [GeoLibre](https://github.com/opengeos/geolibre-rust) and [Whitebox](https://github.com/opengeos/whitebox-wasm), as used by [RustGIS](https://github.com/opengeos/RustGIS).
 - Flood peaks: Bureau of Meteorology.
 - GeoTIFF reading in the browser: [geotiff.js](https://github.com/geotiffjs/geotiff.js).
-- Street map: [Leaflet](https://leafletjs.com/) with basemap tiles © [OpenStreetMap](https://www.openstreetmap.org/copyright) contributors © [CARTO](https://carto.com/attributions).
+- Street map: [Leaflet](https://leafletjs.com/). Basemaps, chosen with the layer button on the map:
+  - Streets: © [OpenStreetMap](https://www.openstreetmap.org/copyright) contributors © [CARTO](https://carto.com/attributions)
+  - OpenStreetMap standard tiles, used under the [OSM tile usage policy](https://operations.osmfoundation.org/policies/tiles/)
+  - Satellite: Esri World Imagery (Esri, Maxar, Earthstar Geographics). Check [Esri's terms](https://www.esri.com/en-us/legal/terms/full-master-agreement) before any commercial use.
+  - Queensland aerial imagery and topographic basemaps: © State of Queensland (Department of Natural Resources and Mines, Manufacturing and Regional and Rural Development), [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/); imagery partly © Planet Labs Netherlands B.V. under licence from Planet and Geoplex
+  - Topographic: © [OpenTopoMap](https://opentopomap.org) (CC BY-SA), map data © OpenStreetMap contributors, SRTM
 
 Released under the MIT licence (see [LICENSE](LICENSE)).

@@ -72,6 +72,20 @@ def main() -> int:
             if "Gauge moved" in moved and "dry" in moved:
                 failures.append(f"gauge moved onto dry ground: {moved}")
             page.uncheck("#moveGauge")
+
+            # every basemap in the switcher should load tiles at Brisbane
+            names = page.evaluate("Object.keys(window.__floodStatus.basemaps || {})")
+            for name in names:
+                page.evaluate("n => window.__floodSetBasemap(n)", name)
+                page.wait_for_timeout(5000)
+                st = page.evaluate("n => window.__floodStatus.basemaps[n]", name)
+                note("notice", f"Basemap {name}: {st['loaded']} tiles loaded, {st['errors']} errors")
+                if st["loaded"] == 0:
+                    failures.append(f"basemap '{name}' loaded no tiles ({st['errors']} errors)")
+                safe = "".join(ch if ch.isalnum() else "-" for ch in name.lower())
+                page.screenshot(path=f"smoke-{safe}.png")
+            if names:
+                page.evaluate("n => window.__floodSetBasemap(n)", names[0])
             page.click("#events .chip:nth-child(3)")  # back to 2011
             page.wait_for_timeout(800)
         else:
