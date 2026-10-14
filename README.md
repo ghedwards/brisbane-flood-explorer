@@ -67,6 +67,22 @@ Peaks at the Brisbane City gauge from the Bureau of Meteorology's [lower Brisban
 
 Sea-level rise options run from 0.3 m to 1.1 m, including Queensland's 0.8 m planning allowance to 2100. The "extra river peak" slider is a manual allowance for heavier rainfall; the model does not turn rainfall into river levels.
 
+## Live forecasts from Google Flood Hub
+
+The site can show Google's [Flood Forecasting API](https://developers.google.com/flood-forecasting) data for South East Queensland: forecast flood severity at river gauges (with trend, forecast peak and warning thresholds), Google's forecast flood areas, and flash flood forecasts. The same forecasts appear on [Flood Hub](https://sites.research.google/floods/). The data is free and CC BY 4.0.
+
+The build fetches the forecasts every three hours ([`pipeline/fetch_floodhub.py`](pipeline/fetch_floodhub.py)) and publishes them with the site, so the API key is never exposed in the page. They show in a "Google Flood Hub forecast" panel and as two map layers, which switch on automatically when anything is forecast above normal.
+
+**To switch it on:**
+
+1. Join the API waitlist from the [Flood Forecasting API page](https://developers.google.com/flood-forecasting), signed in with the Google account you'll use.
+2. When Google approves you, reply to their email with your Google Cloud project number.
+3. In that Google Cloud project, enable the **Flood Forecasting API** and create an **API key**. Restrict the key to the Flood Forecasting API.
+4. In this GitHub repository, open Settings > Secrets and variables > Actions and add a repository secret named `FLOOD_FORECASTING_API_KEY` with the key.
+5. Run the workflow from the Actions tab, or wait for the next three-hourly run.
+
+Until then the panel says the feed isn't connected. Google's forecasts are experimental and are not official warnings; the Bureau of Meteorology remains the authority in Australia.
+
 ## Limitations
 
 - **Surface model, not bare earth.** GLO-30 includes buildings and trees, which wrongly raise ground levels in suburbs and along vegetated banks. A LiDAR DEM from [ELVIS](https://elevation.fsdf.org.au/) fixes most of this.
@@ -111,6 +127,7 @@ python3 -m http.server -d viewer 8000
 
 ```sh
 node --test tests/core.test.js
+python -m unittest tests/test_floodhub.py   # Flood Hub fetcher, with the API mocked
 ```
 
 The tests check routing (every cell drains), monotonic flooding, water levels at the gauge and mouth, connectivity, and that Whitebox D8 pointers from the pipeline reproduce the browser's own routing exactly.
@@ -130,6 +147,7 @@ tests/                       Node tests for the flood model
 - Terrain: Copernicus GLO-30 Digital Elevation Model, © DLR e.V. 2010–2014 and © Airbus Defence and Space GmbH 2014–2018, provided under COPERNICUS by the European Union and ESA; all rights reserved. Accessed through the [AWS Open Data registry](https://registry.opendata.aws/copernicus-dem/).
 - Hydrology tools: [GeoLibre](https://github.com/opengeos/geolibre-rust) and [Whitebox](https://github.com/opengeos/whitebox-wasm), as used by [RustGIS](https://github.com/opengeos/RustGIS).
 - Flood peaks: Bureau of Meteorology.
+- Live forecasts: [Google Flood Hub](https://sites.research.google/floods/) via the Flood Forecasting API, CC BY 4.0.
 - Creek and overland flow likelihood and recorded flood extents: [Brisbane City Council Flood Awareness data](https://data.brisbane.qld.gov.au/), CC BY 4.0, read live from the council's ArcGIS services with [esri-leaflet](https://github.com/Esri/esri-leaflet).
 - GeoTIFF reading in the browser: [geotiff.js](https://github.com/geotiffjs/geotiff.js).
 - Street map: [Leaflet](https://leafletjs.com/). Basemaps, chosen with the layer button on the map:

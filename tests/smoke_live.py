@@ -39,6 +39,11 @@ def main() -> int:
             failures.append(f"street map did not finish loading: {json.dumps(status())}")
 
         s1 = status()
+        fhs = s1.get("floodhub") or {}
+        fh_text = page.inner_text("#floodhubBody").strip().replace("\n", " ")
+        note("notice", f"Flood Hub panel ({json.dumps(fhs)}): {fh_text[:200]}")
+        if not fhs.get("loaded"):
+            failures.append("the Flood Hub forecast file did not load")
         area = page.eval_on_selector("#area", "e => e.options[e.selectedIndex].textContent")
         stats_2011 = page.inner_text("#stats").replace("\n", " ")
 

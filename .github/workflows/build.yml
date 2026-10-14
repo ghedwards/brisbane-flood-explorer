@@ -4,6 +4,9 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+  schedule:
+    # refresh Google Flood Hub forecasts every three hours
+    - cron: "17 */3 * * *"
 
 permissions:
   contents: read
@@ -33,8 +36,20 @@ jobs:
           cache: pip
           cache-dependency-path: pipeline/requirements.txt
 
+      - name: Test the Flood Hub fetcher
+        run: python -m unittest tests/test_floodhub.py
+
       - name: Install Python packages
         run: pip install -r pipeline/requirements.txt
+
+      # Terrain only needs rebuilding when the area or the pipeline changes.
+      - name: Restore built terrain
+        id: terrain
+        uses: actions/cache@v4
+        with:
+          path: |
+            work/brisbane/*.tif
+          key: terrain-${{ hashFiles('config/brisbane.json', 'pipeline/fetch_dem.py', 'pipeline/run_hydrology.sh', 'pipeline/install_geolibre.sh') }}
 
       - name: Install the GeoLibre runner (RustGIS hydrology tools)
         env:
@@ -44,6 +59,7 @@ jobs:
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
       - name: Cache DEM tiles
+        if: steps.terrain.outputs.cache-hit != 'true'
         uses: actions/cache@v4
         with:
           path: work/brisbane/tiles
@@ -51,12 +67,13 @@ jobs:
 
       - name: Fetch DEM (Copernicus GLO-30)
         id: dem
+        if: steps.terrain.outputs.cache-hit != 'true'
         continue-on-error: true
         run: python pipeline/fetch_dem.py config/brisbane.json work/brisbane
 
       - name: Run hydrology with GeoLibre
         id: hydro
-        if: steps.dem.outcome == 'success'
+        if: steps.terrain.outputs.cache-hit != 'true' && steps.dem.outcome == 'success'
         continue-on-error: true
         run: pipeline/run_hydrology.sh config/brisbane.json work/brisbane
 
@@ -64,17 +81,31 @@ jobs:
         run: |
           mkdir -p site/data
           cp viewer/index.html viewer/app.js viewer/flood-core.js site/
-          if [ "${{ steps.hydro.outcome }}" = "success" ]; then
+          if [ -f work/brisbane/dem.tif ] && [ -f work/brisbane/d8.tif ]; then
             python pipeline/export_viewer.py config/brisbane.json work/brisbane site/data
           else
             echo "::warning::Brisbane terrain was not built; the site will show the sample terrain only."
+            rm -f work/brisbane/*.tif  # never cache a partial build
           fi
+
+      - name: Fetch Google Flood Hub forecasts
+        id: floodhub
+        continue-on-error: true
+        env:
+          FLOOD_FORECASTING_API_KEY: ${{ secrets.FLOOD_FORECASTING_API_KEY }}
+        run: python pipeline/fetch_floodhub.py config/brisbane.json site/data | tee floodhub.log
+
+      - name: Build summary
+        run: |
           {
             echo "### Build summary"
-            echo "- DEM download: ${{ steps.dem.outcome }}"
-            echo "- GeoLibre hydrology: ${{ steps.hydro.outcome }}"
+            echo "- Terrain from cache: ${{ steps.terrain.outputs.cache-hit || 'false' }}"
+            echo "- DEM download: ${{ steps.dem.outcome || 'skipped' }}"
+            echo "- GeoLibre hydrology: ${{ steps.hydro.outcome || 'skipped' }}"
+            echo "- Flood Hub: ${{ steps.floodhub.outcome }} — $(tail -n1 floodhub.log 2>/dev/null)"
             du -sh site/data/* 2>/dev/null | sed 's/^/- /' || true
           } >> "$GITHUB_STEP_SUMMARY"
+          echo "::notice::$(tail -n1 floodhub.log 2>/dev/null)"
 
       - uses: actions/configure-pages@v5
 

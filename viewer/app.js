@@ -603,6 +603,12 @@
       if (state.areaMeta && state.areaMeta.brisbaneGauge) {
         for (const o of OVERLAYS) { const l = makeOverlay(o); if (l) overlays[o.name] = l; }
       }
+      const fhLayers = floodHubOverlays(L);
+      Object.assign(overlays, fhLayers);
+      const fh = state.floodhub;
+      const alerting = fh && fh.configured && (((fh.flashFloodEvents || []).length > 0)
+        || (fh.gauges || []).some((g) => g.status && sev(g.status.severity).rank >= 2));
+      if (alerting) Object.values(fhLayers).forEach((l) => l.addTo(m));
       L.control.layers(layers, overlays, { position: 'topright' }).addTo(m);
       m.on('overlayadd overlayremove zoomend', renderOverlayLegend);
       window.__floodTestZoom = (lat, lng, z) => m.setView([lat, lng], z, { animate: false });
@@ -868,6 +874,149 @@
     return (m < 1.5 ? 1 : m < 3.5 ? 2 : m < 7.5 ? 5 : 10) * p;
   }
 
+
+  /* ------------------------------------------------- Google Flood Hub */
+  // Forecasts are fetched by the GitHub build (pipeline/fetch_floodhub.py)
+  // and published as data/floodhub.json and data/floodhub.geojson, so no API
+  // key is exposed in the page.
+
+  const SEVERITY = {
+    EXTREME: { label: 'Extreme', color: '#6a1b9a', rank: 4 },
+    SEVERE: { label: 'Severe', color: '#c62828', rank: 3 },
+    ABOVE_NORMAL: { label: 'Above normal', color: '#e65100', rank: 2 },
+    NO_FLOODING: { label: 'No flooding', color: '#2e7d32', rank: 1 },
+    UNKNOWN: { label: 'Unknown', color: '#607d8b', rank: 0 },
+  };
+  const sev = (k) => SEVERITY[k] || SEVERITY.UNKNOWN;
+  const FH_ATTR = 'Forecasts &copy; <a href="https://sites.research.google/floods/">Google Flood Hub</a>, CC BY 4.0';
+
+  async function loadFloodHub() {
+    status.floodhub = { loaded: false };
+    try {
+      const r = await fetch('data/floodhub.json', { cache: 'no-cache' });
+      if (!r.ok) throw new Error(String(r.status));
+      state.floodhub = await r.json();
+      if (state.floodhub.configured) {
+        const g = await fetch('data/floodhub.geojson', { cache: 'no-cache' });
+        state.floodhubAreas = g.ok ? await g.json() : null;
+      }
+    } catch (e) {
+      state.floodhub = null;
+    }
+    const fh = state.floodhub;
+    status.floodhub = { loaded: !!fh, configured: !!(fh && fh.configured), gauges: fh && fh.gauges ? fh.gauges.length : 0 };
+    renderFloodHub();
+  }
+
+  function ago(iso) {
+    const t = Date.parse(iso);
+    if (!Number.isFinite(t)) return '';
+    const h = (Date.now() - t) / 3.6e6;
+    if (h < 1) return `${Math.max(1, Math.round(h * 60))} min ago`;
+    if (h < 48) return `${Math.round(h)} h ago`;
+    return `${Math.round(h / 24)} days ago`;
+  }
+
+  function unitOf(g) {
+    const u = g.model && g.model.gaugeValueUnit;
+    return u === 'METERS' ? 'm' : u === 'CUBIC_METERS_PER_SECOND' ? 'm³/s' : '';
+  }
+
+  function gaugeLine(g) {
+    const st = g.status || {};
+    const parts = [];
+    const trend = { RISE: 'rising', FALL: 'falling', NO_CHANGE: 'steady' }[st.forecastTrend];
+    if (trend) parts.push(trend);
+    if (g.forecast && g.forecast.values.length) {
+      const peak = Math.max(...g.forecast.values.map((v) => v[1]).filter(Number.isFinite));
+      if (Number.isFinite(peak)) parts.push(`forecast peak ${peak.toFixed(peak < 10 ? 2 : 0)} ${unitOf(g)}`);
+    }
+    const th = g.model && g.model.thresholds;
+    if (th && th.warningLevel != null) parts.push(`warning ${th.warningLevel} ${unitOf(g)}`);
+    if (g.status && g.status.qualityVerified === false) parts.push('unverified model');
+    return parts.join(' · ');
+  }
+
+  function renderFloodHub() {
+    const box = $('floodhubBody');
+    const fh = state.floodhub;
+    if (!fh) {
+      box.innerHTML = '<p class="hint">Forecast data isn’t available right now.</p>';
+      return;
+    }
+    if (!fh.configured) {
+      box.innerHTML = '<p class="hint">Live Google river and flash flood forecasts aren’t switched on for this site yet. See the project README to connect them.</p>';
+      return;
+    }
+    const gauges = (fh.gauges || []).filter((g) => g.status);
+    gauges.sort((a, b) => sev(b.status.severity).rank - sev(a.status.severity).rank);
+    const flooding = gauges.filter((g) => sev(g.status.severity).rank >= 2);
+    const flash = (fh.flashFloodEvents || []).length;
+    let html = '';
+    if (!flooding.length && !flash) {
+      html += `<p>No flooding forecast at ${gauges.length} Flood Hub gauge${gauges.length === 1 ? '' : 's'} in South East Queensland.</p>`;
+    } else {
+      const bits = [];
+      if (flooding.length) bits.push(`${flooding.length} gauge${flooding.length === 1 ? '' : 's'} forecast above normal`);
+      if (flash) bits.push(`${flash} flash flood forecast${flash === 1 ? '' : 's'} nearby`);
+      html += `<p><strong>${escapeHtml(bits.join(' and '))}.</strong> Their locations are shown on the Brisbane street map.</p>`;
+    }
+    const show = gauges.slice(0, 6);
+    if (show.length) {
+      html += '<ul class="fh-list">' + show.map((g) => {
+        const s = sev(g.status.severity);
+        const name = [g.siteName, g.river].filter(Boolean).join(', ') || `Gauge ${g.gaugeId}`;
+        return `<li><span class="sev" style="background:${s.color}">${s.label}</span>` +
+          `<span class="where">${escapeHtml(name)}</span><span class="detail">${escapeHtml(gaugeLine(g))}</span></li>`;
+      }).join('') + '</ul>';
+    }
+    html += `<p class="fh-meta">Updated ${escapeHtml(ago(fh.fetched))} from Google Flood Hub (CC BY 4.0). Google’s forecasts are experimental; follow <a href="https://www.bom.gov.au/qld/warnings/" target="_blank" rel="noopener">Bureau of Meteorology warnings</a>.</p>`;
+    if (fh.errors && fh.errors.length) html += `<p class="fh-meta">Some forecast data could not be fetched on the last update.</p>`;
+    box.innerHTML = html;
+  }
+
+  // Map layers for Flood Hub gauges and forecast / flash-flood areas
+  function floodHubOverlays(L) {
+    const fh = state.floodhub;
+    const out = {};
+    if (!fh || !fh.configured) return out;
+    const gauges = (fh.gauges || []).filter((g) => g.location);
+    if (gauges.length) {
+      const grp = L.layerGroup();
+      gauges.forEach((g) => {
+        const s = sev(g.status && g.status.severity);
+        const name = [g.siteName, g.river].filter(Boolean).join(', ') || `Gauge ${g.gaugeId}`;
+        L.circleMarker([g.location.latitude, g.location.longitude], {
+          radius: 7, color: '#ffffff', weight: 2, fillColor: g.status ? s.color : '#90a4ae', fillOpacity: 1,
+          attribution: FH_ATTR,
+        }).bindPopup(`<strong>${escapeHtml(name)}</strong><br>${g.status ? escapeHtml(s.label) : 'No forecast'}` +
+          `${gaugeLine(g) ? '<br>' + escapeHtml(gaugeLine(g)) : ''}<br><small>Google Flood Hub</small>`).addTo(grp);
+      });
+      grp.getAttribution = () => FH_ATTR;
+      out['Google Flood Hub gauges'] = grp;
+    }
+    const areas = state.floodhubAreas && state.floodhubAreas.features;
+    if (areas && areas.length) {
+      const lvl = { HIGH: 0.55, HIGHLY_LIKELY: 0.55, MEDIUM: 0.4, LOW: 0.25, LIKELY: 0.3 };
+      out['Google Flood Hub flood areas'] = L.geoJSON(state.floodhubAreas, {
+        attribution: FH_ATTR,
+        style: (f) => {
+          const flash = f.properties.kind === 'flash-flood';
+          const c = flash ? '#d81b60' : '#1565c0';
+          return { color: c, weight: 1.5, fillColor: c, fillOpacity: lvl[f.properties.level] || 0.3 };
+        },
+        onEachFeature: (f, layer) => {
+          const p = f.properties;
+          const what = p.kind === 'flash-flood'
+            ? `Flash flood forecast (${(p.level || '').replace('_', ' ').toLowerCase()})${p.hours ? `, next ${p.hours} h` : ''}`
+            : `River flood forecast area, ${String(p.level || '').toLowerCase()} ${p.mapType === 'DEPTH' ? 'depth' : 'likelihood'}`;
+          layer.bindPopup(escapeHtml(what) + '<br><small>Google Flood Hub</small>');
+        },
+      });
+    }
+    return out;
+  }
+
   /* -------------------------------------------------------- interaction */
 
   function cellAt(ev) {
@@ -982,6 +1131,7 @@
     ctl.gaugeLevel.value = 4.46;
     syncOutputs();
     const areas = await listAreas();
+    await loadFloodHub();
     await loadArea(areas[0].id);
   })();
 })();

@@ -131,6 +131,14 @@ details[open] summary { margin-bottom: 10px; }
 .file-row label { font-size: 13.5px; line-height: 1.4; }
 .file-row input { font-size: 13px; color: var(--muted); max-width: 100%; }
 .sources { font-size: 12.5px; color: var(--muted); }
+.floodhub { display: grid; gap: 8px; border-top: 1px solid var(--line); padding-top: 14px; }
+.floodhub h2 { margin: 0; }
+.fh-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.fh-list li { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 2px 10px; align-items: baseline; font-size: 13.5px; }
+.fh-list .where { font-weight: 600; min-width: 0; overflow-wrap: anywhere; }
+.fh-list .detail { grid-column: 2; color: var(--muted); font: 400 12px/1.4 var(--font-data); font-variant-numeric: tabular-nums; }
+.sev { display: inline-block; padding: 1px 7px; border-radius: 999px; font: 600 11px/1.5 var(--font-body); color: #fff; white-space: nowrap; }
+.fh-meta { font-size: 12px; color: var(--muted); margin: 4px 0 0; }
 .sources a { color: var(--accent); }
 .downloads { display: flex; flex-wrap: wrap; gap: 6px 12px; font-size: 13px; }
 .downloads a { color: var(--accent); }
@@ -247,6 +255,11 @@ footer a { color: var(--accent); }
         </div>
         <p class="hint">Files stay in your browser. Free LiDAR DEMs: <a href="https://elevation.fsdf.org.au/" target="_blank" rel="noopener">ELVIS</a>.</p>
       </fieldset>
+
+      <section class="floodhub" id="floodhub" aria-labelledby="floodhubTitle">
+        <h2 class="label" id="floodhubTitle">Google Flood Hub forecast</h2>
+        <div id="floodhubBody"><p class="hint">Loading…</p></div>
+      </section>
 
       <div class="sources" id="dataInfo"></div>
       <div class="downloads" id="downloads"></div>
