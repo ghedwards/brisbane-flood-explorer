@@ -143,7 +143,10 @@ def main() -> int:
             names = page.evaluate("Object.keys(window.__floodStatus.basemaps || {})")
             for name in names:
                 page.evaluate("n => window.__floodSetBasemap(n)", name)
-                page.wait_for_timeout(5000)
+                try:  # DEA's imagery server can take a while to render tiles
+                    page.wait_for_function(f"window.__floodStatus.basemaps[{json.dumps(name)}].loaded > 0", timeout=25_000)
+                except Exception:
+                    pass
                 st = page.evaluate("n => window.__floodStatus.basemaps[n]", name)
                 note("notice", f"Basemap {name}: {st['loaded']} tiles loaded, {st['errors']} errors")
                 if st["loaded"] == 0:

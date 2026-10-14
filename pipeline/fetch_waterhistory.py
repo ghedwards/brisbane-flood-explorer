@@ -31,7 +31,7 @@ LAYER = "DigitalEarthAustraliaWaterbodies_v3"
 UA = {"User-Agent": "brisbane-flood-explorer (github.com/ghedwards/brisbane-flood-explorer)"}
 
 
-def get(url, as_json=True, retries=3):
+def get(url, as_json=True, retries=4):
     last = None
     for attempt in range(retries):
         try:
@@ -40,7 +40,7 @@ def get(url, as_json=True, retries=3):
             return json.loads(data) if as_json else data.decode("utf-8", "replace")
         except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as e:
             last = e
-            time.sleep(3 * (attempt + 1))
+            time.sleep(4 * (attempt + 1))
     raise RuntimeError(f"{url[:100]}: {last}")
 
 
@@ -124,17 +124,31 @@ def main(national_dir: str) -> None:
     d = Path(national_dir)
     storages = json.loads((d / "storages.geojson").read_text())["features"]
     out, misses, errors = {}, 0, []
-    with cf.ThreadPoolExecutor(max_workers=8) as pool:
-        for fut in cf.as_completed([pool.submit(one, f) for f in storages]):
-            try:
-                sid, series, why = fut.result()
-            except Exception as e:
-                errors.append(str(e)[:160])
-                continue
-            if series:
-                out[sid] = series
-            else:
-                misses += 1
+    failed = []
+
+    def run(features, workers):
+        nonlocal misses
+        again = []
+        with cf.ThreadPoolExecutor(max_workers=workers) as pool:
+            futs = {pool.submit(one, f): f for f in features}
+            for fut in cf.as_completed(futs):
+                try:
+                    sid, series, why = fut.result()
+                except Exception as e:
+                    again.append((futs[fut], str(e)[:200]))
+                    continue
+                if series:
+                    out[sid] = series
+                else:
+                    misses += 1
+        return again
+
+    # gentle first pass, then retry failures one at a time after a pause
+    failed = run(storages, 3)
+    if failed:
+        time.sleep(20)
+        retry = run([f for f, _ in failed], 1)
+        errors = [e for _, e in retry]
     (d / "waterhistory.json").write_text(json.dumps(out, separators=(",", ":")))
     print(f"Water history: {len(out)} of {len(storages)} dams, {misses} without a record, {len(errors)} errors")
     for e in errors[:3]:

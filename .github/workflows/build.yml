@@ -110,7 +110,9 @@ jobs:
         continue-on-error: true
         run: |
           python pipeline/fetch_waterhistory.py site/data/national | tee wh.log
-          mkdir -p cache && cp site/data/national/waterhistory.json cache/waterhistory.json
+          got=$(python -c "import json;print(len(json.load(open('site/data/national/waterhistory.json'))))")
+          # only keep a good run for the week; otherwise try again next build
+          if [ "$got" -ge 200 ]; then mkdir -p cache && cp site/data/national/waterhistory.json cache/waterhistory.json; fi
 
       - name: Use cached dam water history
         if: steps.wh.outputs.cache-hit == 'true'
@@ -137,6 +139,7 @@ jobs:
           echo "::notice::$(tail -n1 floodhub.log 2>/dev/null)"
           echo "::notice::$(grep '^National' national.log 2>/dev/null)"
           echo "::notice::$(grep '^Water history' wh.log 2>/dev/null || echo 'Water history: from the weekly cache')"
+          grep '^warning:' wh.log 2>/dev/null | head -2 | sed 's/^warning:/::warning::Water history: /' || true
           grep '^warning:' national.log 2>/dev/null | head -3 | sed 's/^warning:/::warning::National data: /' || true
 
       - uses: actions/configure-pages@v5
