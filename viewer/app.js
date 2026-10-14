@@ -478,8 +478,61 @@
       opts: { attribution: OSM_ATTR + ', SRTM | Style &copy; <a href="https://opentopomap.org">OpenTopoMap</a> (CC BY-SA)', subdomains: 'abc', maxZoom: 17 } },
   ];
   const BASEMAP_KEY = 'bfe.basemap.v2'; // v2: satellite became the default
+
+  // Brisbane City Council Flood Awareness layers (CC BY 4.0), read live from
+  // the council's ArcGIS services. Only offered for the Brisbane area.
+  const BCC = 'https://services2.arcgis.com/dEKgZETqwmDAh1rP/ArcGIS/rest/services/';
+  const BCC_ATTR = 'Flood awareness data &copy; <a href="https://data.brisbane.qld.gov.au/">Brisbane City Council</a>, <a href="https://creativecommons.org/licenses/by/4.0/">CC BY 4.0</a>';
+  const LIKELIHOOD = { High: '#b3261e', Medium: '#e8710a', Low: '#f2c12e', 'Very Low': '#fff3a8' };
+  const OVERLAYS = [
+    { name: 'Creek flooding likelihood (council)', service: 'Flood_Awareness_Creek', kind: 'likelihood', minZoom: 13 },
+    { name: 'Overland flow likelihood (council)', service: 'Flood_Awareness_Overland_Flow', kind: 'likelihood', minZoom: 14 },
+    { name: 'Recorded flood: Feb 2022 (river + creek)', service: 'Flood_Awareness_Historic_Brisbane_River_and_Creek_Floods_Feb2022', kind: 'outline', color: '#ff3d9a' },
+    { name: 'Recorded flood: Jan 2011 (river)', service: 'Flood_Awareness_Historic_Brisbane_River_Floods_Jan2011', kind: 'outline', color: '#ffd400' },
+    { name: 'Recorded flood: Jan 1974 (river)', service: 'Flood_Awareness_Historic_Brisbane_River_Floods_Jan1974', kind: 'outline', color: '#ff7a00' },
+  ];
+
+  function makeOverlay(o) {
+    const esri = window.L && window.L.esri;
+    if (!esri) return null;
+    const st = (status.overlays[o.name] = { features: 0, errors: 0 });
+    const style = o.kind === 'likelihood'
+      ? (f) => ({ color: LIKELIHOOD[f.properties.FLOOD_RISK] || '#999', weight: 0.6,
+          fillColor: LIKELIHOOD[f.properties.FLOOD_RISK] || '#999', fillOpacity: 0.45 })
+      : () => ({ color: o.color, weight: 2.4, dashArray: '6 4', fill: false });
+    const layer = esri.featureLayer({
+      url: BCC + o.service + '/FeatureServer/0',
+      style, minZoom: o.minZoom || 0, simplifyFactor: 0.5, precision: 6,
+      attribution: BCC_ATTR,
+    });
+    layer.on('createfeature', () => { st.features++; });
+    layer.on('requesterror', () => { st.errors++; });
+    if (o.kind === 'likelihood') {
+      layer.bindPopup((l) => escapeHtml(`${o.name.replace(' (council)', '')}: ${l.feature.properties.FLOOD_RISK || 'unknown'} likelihood`));
+    }
+    o.layer = layer;
+    return layer;
+  }
+
+  function renderOverlayLegend() {
+    const box = $('overlayLegend');
+    if (!box || !state.lmap) return;
+    const on = OVERLAYS.filter((o) => o.layer && state.lmap.hasLayer(o.layer));
+    const parts = [];
+    if (on.some((o) => o.kind === 'likelihood')) {
+      parts.push(...Object.entries(LIKELIHOOD).map(([k, c]) => `<span><i style="background:${c}"></i>${k} likelihood</span>`));
+      const z = state.lmap.getZoom();
+      const hidden = on.filter((o) => o.minZoom && z < o.minZoom);
+      if (hidden.length) parts.push(`<span class="hint">Zoom in to see ${hidden.map((o) => o.name.split(' ')[0].toLowerCase()).join(' and ')} layers</span>`);
+    }
+    on.filter((o) => o.kind === 'outline').forEach((o) => {
+      parts.push(`<span><i style="background:transparent;border:2px dashed ${o.color};height:8px"></i>${o.name.replace('Recorded flood: ', 'Recorded ')}</span>`);
+    });
+    box.innerHTML = parts.join('');
+    box.hidden = !parts.length;
+  }
   const BLANK = 'data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==';
-  const status = (window.__floodStatus = { mode: 'static', overlayUpdates: 0, tilesLoaded: 0, tileErrors: 0, floodPixels: 0 });
+  const status = (window.__floodStatus = { mode: 'static', overlayUpdates: 0, tilesLoaded: 0, tileErrors: 0, floodPixels: 0, overlays: {} });
 
   let leafletPromise = null;
   function loadLeaflet() {
@@ -491,7 +544,14 @@
         document.head.appendChild(css);
         const js = document.createElement('script');
         js.src = LEAFLET + 'leaflet.js';
-        js.onload = () => resolve();
+        js.onload = () => {
+          // esri-leaflet reads the council's ArcGIS feature layers; optional
+          const ej = document.createElement('script');
+          ej.src = 'https://unpkg.com/esri-leaflet@3.0.12/dist/esri-leaflet.js';
+          ej.onload = () => resolve();
+          ej.onerror = () => resolve();
+          document.head.appendChild(ej);
+        };
         js.onerror = () => { leafletPromise = null; reject(new Error('The street map could not load.')); };
         document.head.appendChild(js);
       });
@@ -538,7 +598,21 @@
       layers[first].addTo(m);
       state.tiles = layers.Streets; // the one that follows light/dark mode
       status.basemap = first;
-      L.control.layers(layers, null, { position: 'topright' }).addTo(m);
+      status.overlays = {};
+      const overlays = {};
+      if (state.areaMeta && state.areaMeta.brisbaneGauge) {
+        for (const o of OVERLAYS) { const l = makeOverlay(o); if (l) overlays[o.name] = l; }
+      }
+      L.control.layers(layers, overlays, { position: 'topright' }).addTo(m);
+      m.on('overlayadd overlayremove zoomend', renderOverlayLegend);
+      window.__floodTestZoom = (lat, lng, z) => m.setView([lat, lng], z, { animate: false });
+      window.__floodSetOverlay = (name, on) => {
+        const l = overlays[name];
+        if (!l) return false;
+        if (on) l.addTo(m); else m.removeLayer(l);
+        renderOverlayLegend();
+        return true;
+      };
       m.on('baselayerchange', (e) => {
         status.basemap = e.name;
         try { localStorage.setItem(BASEMAP_KEY, e.name); } catch (err) { /* storage blocked */ }

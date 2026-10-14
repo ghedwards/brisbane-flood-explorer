@@ -86,6 +86,23 @@ def main() -> int:
                 page.screenshot(path=f"smoke-{safe}.png")
             if names:
                 page.evaluate("n => window.__floodSetBasemap(n)", names[0])
+
+            # council flood layers: zoom to the city and switch each one on
+            page.evaluate("window.__floodTestZoom && window.__floodTestZoom(-27.47, 153.02, 15)")
+            page.wait_for_timeout(2000)
+            ov = page.evaluate("Object.keys(window.__floodStatus.overlays || {})")
+            if not ov:
+                failures.append("no council flood layers were offered")
+            for name in ov:
+                page.evaluate("([n]) => window.__floodSetOverlay(n, true)", [name])
+                page.wait_for_timeout(8000)
+                st = page.evaluate("n => window.__floodStatus.overlays[n]", name)
+                note("notice", f"Layer {name}: {st['features']} features, {st['errors']} errors")
+                if st["features"] == 0:
+                    failures.append(f"council layer '{name}' drew no features ({st['errors']} errors)")
+                safe = "".join(ch if ch.isalnum() else "-" for ch in name.lower())[:40]
+                page.screenshot(path=f"smoke-layer-{safe}.png")
+                page.evaluate("([n]) => window.__floodSetOverlay(n, false)", [name])
             page.click("#events .chip:nth-child(3)")  # back to 2011
             page.wait_for_timeout(800)
         else:
