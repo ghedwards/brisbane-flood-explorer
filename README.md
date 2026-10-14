@@ -2,6 +2,8 @@
 
 A screening tool for river and coastal flooding on the lower Brisbane River. Pick a river level at the Brisbane City gauge, a bay level and a sea-level-rise allowance, and the map shows which land sits below the water surface and connects to the river, with depths.
 
+For the processed Brisbane area the flood layer sits on a pan-and-zoom street map: tap anywhere for ground level and water depth, tap the river to move the gauge, or jump to your location. The illustrative sample terrain is shown as a static picture.
+
 The heavy terrain work is done by the hydrology tools that power [RustGIS](https://github.com/opengeos/RustGIS) (the [GeoLibre](https://github.com/opengeos/geolibre-rust) runner, built on Whitebox). A small browser viewer then runs the flood scenarios instantly.
 
 **Live site:** https://ghedwards.github.io/brisbane-flood-explorer/ (after GitHub Pages is switched on, see [Setup](#setup)).
@@ -18,7 +20,7 @@ flowchart LR
   D --> E[Browser viewer<br/>scenario sliders, map,<br/>river long-section]
 ```
 
-GitHub Actions runs the whole pipeline on every push to `main` and publishes the viewer and data to GitHub Pages ([`.github/workflows/build.yml`](.github/workflows/build.yml)).
+GitHub Actions runs the whole pipeline on every push to `main`, publishes the viewer and data to GitHub Pages, then loads the live site in a headless browser to check the interactive map works ([`.github/workflows/build.yml`](.github/workflows/build.yml), [`tests/smoke_live.py`](tests/smoke_live.py)). The check's results appear as annotations on the workflow run, with a screenshot attached.
 
 ### 1. Terrain (`pipeline/fetch_dem.py`)
 
@@ -129,5 +131,6 @@ tests/                       Node tests for the flood model
 - Hydrology tools: [GeoLibre](https://github.com/opengeos/geolibre-rust) and [Whitebox](https://github.com/opengeos/whitebox-wasm), as used by [RustGIS](https://github.com/opengeos/RustGIS).
 - Flood peaks: Bureau of Meteorology.
 - GeoTIFF reading in the browser: [geotiff.js](https://github.com/geotiffjs/geotiff.js).
+- Street map: [Leaflet](https://leafletjs.com/) with basemap tiles © [OpenStreetMap](https://www.openstreetmap.org/copyright) contributors © [CARTO](https://carto.com/attributions).
 
 Released under the MIT licence (see [LICENSE](LICENSE)).

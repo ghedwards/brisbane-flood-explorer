@@ -78,6 +78,13 @@ select {
 .map-panel { padding: 10px; display: grid; gap: 10px; min-width: 0; }
 .map-wrap { position: relative; background: var(--map-ground); border-radius: 6px; overflow: hidden; margin: 0 auto; width: 100%; }
 #map { display: block; width: 100%; height: auto; cursor: crosshair; touch-action: manipulation; }
+#lmap { width: 100%; height: min(68vh, 680px); min-height: 340px; background: var(--map-ground); }
+#lmap .leaflet-container, #lmap { font: 13px/1.4 var(--font-body); }
+.flood-layer { image-rendering: pixelated; }
+.geo-controls { display: flex; flex-wrap: wrap; gap: 10px 18px; align-items: center; }
+.geo-controls .slider { flex: 1 1 200px; min-width: 0; }
+.check { display: inline-flex; gap: 6px; align-items: center; font-size: 13.5px; cursor: pointer; }
+.check input { accent-color: var(--accent); width: 16px; height: 16px; }
 .busy {
   position: absolute; inset: 0; display: grid; place-items: center; background: color-mix(in srgb, var(--bg) 70%, transparent);
   font: 500 14px var(--font-data); color: var(--ink);
@@ -151,7 +158,17 @@ footer a { color: var(--accent); }
     <section class="panel map-panel" aria-label="Flood map">
       <div class="map-wrap" id="mapWrap">
         <canvas id="map" width="800" height="600" aria-label="Map of modelled flood extent and depth"></canvas>
+        <div id="lmap" hidden aria-label="Street map with modelled flood depths"></div>
         <div class="busy" id="busy" hidden>Working…</div>
+      </div>
+      <div class="geo-controls" id="geoControls" hidden>
+        <div class="slider">
+          <div class="row"><label for="floodOpacity">Flood layer</label><output id="floodOpacityOut">80%</output></div>
+          <input type="range" id="floodOpacity" min="20" max="100" step="5" value="80">
+        </div>
+        <label class="check"><input type="checkbox" id="showRelief"> Terrain shading</label>
+        <label class="check"><input type="checkbox" id="moveGauge" checked> Tap river to move gauge</label>
+        <button type="button" class="btn" id="locate">My location</button>
       </div>
       <div class="readout" id="readout">Tap the map for elevation and depth. Tap the river to move the gauge.</div>
       <div class="legend" aria-label="Map legend">

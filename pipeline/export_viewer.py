@@ -70,6 +70,17 @@ def main(config_path: str, work_dir: str, data_dir: str) -> None:
             shutil.copy2(work / name, out / name)
             rasters.append({"name": label, "file": name})
 
+    # Corners in lon/lat for the street map. MGA grid north is within a few
+    # hundredths of a degree of true north here, so an axis-aligned box made
+    # from the mean of each edge's corners matches the grid to a few metres.
+    cx = [bounds.left, bounds.right, bounds.right, bounds.left]
+    cy = [bounds.top, bounds.top, bounds.bottom, bounds.bottom]
+    lons, lats = warp_transform(crs, "EPSG:4326", cx, cy)
+    bounds_lonlat = [
+        (lons[0] + lons[3]) / 2, (lats[2] + lats[3]) / 2,
+        (lons[1] + lons[2]) / 2, (lats[0] + lats[1]) / 2,
+    ]
+
     cell = abs(tf.a)
     meta = {
         "id": cfg["id"],
@@ -77,6 +88,7 @@ def main(config_path: str, work_dir: str, data_dir: str) -> None:
         "W": W, "H": H, "cell": cell,
         "crs": crs.to_string(),
         "bounds": [bounds.left, bounds.bottom, bounds.right, bounds.top],
+        "bounds_lonlat": bounds_lonlat,
         "nodata": None,
         "files": {"dem": "dem.f32", "d8": "d8.u8"},
         "gauge": {"name": g["name"], "col": int(col), "row": int(row)},

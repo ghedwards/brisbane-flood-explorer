@@ -174,6 +174,9 @@
     ctl.gaugeLevel.max = Math.max(10, Math.ceil(parseFloat(ctl.gaugeLevel.value) + 6));
     syncOutputs();
     renderInfo();
+    const bl = state.areaMeta && state.areaMeta.bounds_lonlat;
+    if (bl) enterGeoMode(bl).then((ok) => { if (ok && state.run) drawMap(); });
+    else leaveGeoMode();
     runScenario();
   }
 
@@ -358,26 +361,44 @@
     return out;
   }
 
-  function drawMap() {
+  // Pixels for the current scenario. withTerrain: shaded relief underneath
+  // (static map); otherwise transparent except water (overlay on a basemap).
+  function composeImage(withTerrain) {
     const a = state.a, run = state.run, base = state.base;
-    const img = new ImageData(new Uint8ClampedArray(state.terrain), a.W, a.H);
+    const img = withTerrain
+      ? new ImageData(new Uint8ClampedArray(state.terrain), a.W, a.H)
+      : new ImageData(a.W, a.H);
     const d = img.data;
     for (let i = 0; i < a.N; i++) {
       if (!a.valid[i]) continue;
       const o = i * 4;
       let col = null, alpha = 0.88;
-      if (a.ocean[i] || (base && base.wet[i] && run.wet[i] && !isFlood(i))) col = WATER;
+      if (withTerrain && (a.ocean[i] || (base && base.wet[i] && run.wet[i] && !isFlood(i)))) col = WATER;
       if (run.wet[i] && isFlood(i)) {
         const dep = run.depth[i];
         for (const [lim, c] of DEPTH_STOPS) if (dep < lim) { col = c; break; }
       }
-      if (!col && a.stream[i] && a.acc[i] * (a.cell * a.cell) / 1e6 > state.streamAreaKm2 * 3) { col = WATER; alpha = 0.9; }
-      if (col) {
+      if (withTerrain && !col && a.stream[i] && a.acc[i] * (a.cell * a.cell) / 1e6 > state.streamAreaKm2 * 3) { col = WATER; alpha = 0.9; }
+      if (!col) continue;
+      if (withTerrain) {
         d[o] = d[o] * (1 - alpha) + col[0] * alpha;
         d[o + 1] = d[o + 1] * (1 - alpha) + col[1] * alpha;
         d[o + 2] = d[o + 2] * (1 - alpha) + col[2] * alpha;
+      } else {
+        d[o] = col[0]; d[o + 1] = col[1]; d[o + 2] = col[2]; d[o + 3] = 255;
       }
     }
+    return img;
+  }
+
+  function drawMap() {
+    if (state.geo && state.lmap) drawGeoMap();
+    else drawStaticMap();
+  }
+
+  function drawStaticMap() {
+    const a = state.a;
+    const img = composeImage(true);
     const off = state.offscreen;
     off.width = a.W; off.height = a.H;
     off.getContext('2d').putImageData(img, 0, 0);
@@ -423,6 +444,185 @@
     ctx.font = `500 ${11 * dpr}px "IBM Plex Mono", monospace`;
     ctx.fillText(nice >= 1000 ? `${nice / 1000} km` : `${nice} m`, bx + 4 * dpr, by - 7 * dpr);
   }
+
+
+  /* ---------------------------------------------------- interactive map */
+  // Areas with real coordinates (meta.bounds_lonlat) are shown on a pan-and-
+  // zoom street map with the flood depths as an overlay. The grid is in
+  // GDA2020 / MGA56, whose grid north is within 0.02° of true north at
+  // Brisbane, so a lat/lon-aligned overlay lines up to a few metres.
+
+  const LEAFLET = 'https://unpkg.com/leaflet@1.9.4/dist/';
+  const TILES = {
+    light: 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',
+    dark: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
+  };
+  const TILE_ATTR = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>';
+  const BLANK = 'data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==';
+  const status = (window.__floodStatus = { mode: 'static', overlayUpdates: 0, tilesLoaded: 0, tileErrors: 0, floodPixels: 0 });
+
+  let leafletPromise = null;
+  function loadLeaflet() {
+    if (window.L && window.L.map) return Promise.resolve();
+    if (!leafletPromise) {
+      leafletPromise = new Promise((resolve, reject) => {
+        const css = document.createElement('link');
+        css.rel = 'stylesheet'; css.href = LEAFLET + 'leaflet.css';
+        document.head.appendChild(css);
+        const js = document.createElement('script');
+        js.src = LEAFLET + 'leaflet.js';
+        js.onload = () => resolve();
+        js.onerror = () => { leafletPromise = null; reject(new Error('The street map could not load.')); };
+        document.head.appendChild(js);
+      });
+    }
+    return leafletPromise;
+  }
+
+  function isDark() {
+    const t = document.documentElement.getAttribute('data-theme');
+    if (t) return t === 'dark';
+    try { return window.matchMedia('(prefers-color-scheme: dark)').matches; } catch (e) { return false; }
+  }
+
+  async function enterGeoMode(b) {
+    try {
+      await loadLeaflet();
+    } catch (err) {
+      leaveGeoMode();
+      $('readout').textContent = `${err.message} Showing the terrain picture instead.`;
+      return false;
+    }
+    const L = window.L;
+    state.geo = { west: b[0], south: b[1], east: b[2], north: b[3] };
+    $('map').hidden = true;
+    $('lmap').hidden = false;
+    $('geoControls').hidden = false;
+    $('mapWrap').style.maxWidth = '';
+    const bounds = L.latLngBounds([b[1], b[0]], [b[3], b[2]]);
+    if (!state.lmap) {
+      const m = L.map('lmap', { maxBounds: bounds.pad(0.6), minZoom: 9, zoomSnap: 0.5 });
+      state.tiles = L.tileLayer(isDark() ? TILES.dark : TILES.light, {
+        attribution: TILE_ATTR, subdomains: 'abcd', maxZoom: 19,
+      }).addTo(m);
+      state.tiles.on('tileload', () => { status.tilesLoaded++; });
+      state.tiles.on('tileerror', () => { status.tileErrors++; });
+      state.overlay = L.imageOverlay(BLANK, bounds, {
+        opacity: parseFloat($('floodOpacity').value) / 100, className: 'flood-layer',
+      }).addTo(m);
+      state.gaugeMarker = L.circleMarker(bounds.getCenter(), {
+        radius: 8, color: '#ffffff', weight: 2.5, fillColor: '#c66f1d', fillOpacity: 1,
+      }).addTo(m);
+      state.gaugeMarker.bindTooltip('Gauge', { direction: 'top', offset: [0, -8] });
+      L.control.scale({ imperial: false }).addTo(m);
+      m.on('click', onGeoClick);
+      m.on('mousemove', onGeoMove);
+      m.on('locationfound', onLocated);
+      m.on('locationerror', (e) => { $('readout').textContent = `Couldn’t get your location: ${e.message}`; });
+      state.lmap = m;
+    } else {
+      state.overlay.setBounds(bounds);
+    }
+    state.lmap.invalidateSize();
+    state.lmap.fitBounds(bounds);
+    status.mode = 'map';
+    return true;
+  }
+
+  function leaveGeoMode() {
+    state.geo = null;
+    status.mode = 'static';
+    $('map').hidden = false;
+    $('lmap').hidden = true;
+    $('geoControls').hidden = true;
+  }
+
+  function cellLatLng(i) {
+    const a = state.a, g = state.geo;
+    const x = (i % a.W) + 0.5, y = Math.floor(i / a.W) + 0.5;
+    return [g.north - (y / a.H) * (g.north - g.south), g.west + (x / a.W) * (g.east - g.west)];
+  }
+
+  function latLngCell(ll) {
+    const a = state.a, g = state.geo;
+    const x = Math.floor(((ll.lng - g.west) / (g.east - g.west)) * a.W);
+    const y = Math.floor(((g.north - ll.lat) / (g.north - g.south)) * a.H);
+    if (x < 0 || y < 0 || x >= a.W || y >= a.H) return null;
+    return { x, y, i: y * a.W + x };
+  }
+
+  let overlayGen = 0, overlayUrl = null;
+  function drawGeoMap() {
+    const a = state.a;
+    const relief = $('showRelief').checked;
+    const img = composeImage(relief);
+    let n = 0;
+    for (let i = 3; i < img.data.length; i += 4) if (img.data[i]) n++;
+    status.floodPixels = relief ? -1 : n;
+    const off = state.offscreen;
+    off.width = a.W; off.height = a.H;
+    off.getContext('2d').putImageData(img, 0, 0);
+    const gen = ++overlayGen;
+    off.toBlob((blob) => {
+      if (!blob || gen !== overlayGen) return;
+      const url = URL.createObjectURL(blob);
+      const old = overlayUrl;
+      overlayUrl = url;
+      state.overlay.setUrl(url);
+      status.overlayUpdates++;
+      if (old) setTimeout(() => URL.revokeObjectURL(old), 2000);
+    }, 'image/png');
+    if (state.gauge >= 0) {
+      state.gaugeMarker.setLatLng(cellLatLng(state.gauge));
+      state.gaugeMarker.setTooltipContent(state.eventsApply ? 'Brisbane City gauge' : 'Gauge');
+    }
+  }
+
+  function onGeoClick(e) {
+    const c = latLngCell(e.latlng);
+    if (!c) return;
+    const s = F.snapToStream(state.a, c.x, c.y, 6);
+    let text;
+    if (s >= 0 && s !== state.gauge && $('moveGauge').checked) {
+      state.gauge = s;
+      state.base = null;
+      runScenario();
+      text = `Gauge moved here. ${describe(s)}`;
+    } else {
+      text = describe(c.i);
+    }
+    $('readout').textContent = text;
+    window.L.popup({ closeButton: false, autoPanPadding: [24, 24] })
+      .setLatLng(e.latlng).setContent(escapeHtml(text)).openOn(state.lmap);
+  }
+
+  function onGeoMove(e) {
+    const c = latLngCell(e.latlng);
+    if (c) $('readout').textContent = describe(c.i);
+  }
+
+  function onLocated(e) {
+    const L = window.L;
+    if (state.youMarker) state.youMarker.remove();
+    state.youMarker = L.circleMarker(e.latlng, {
+      radius: 7, color: '#ffffff', weight: 2, fillColor: '#1a73e8', fillOpacity: 1,
+    }).addTo(state.lmap);
+    const c = latLngCell(e.latlng);
+    $('readout').textContent = c
+      ? `Your location: ${describe(c.i)}`
+      : 'Your location is outside the modelled area.';
+  }
+
+  $('floodOpacity').addEventListener('input', (e) => {
+    if (state.overlay) state.overlay.setOpacity(parseFloat(e.target.value) / 100);
+    $('floodOpacityOut').textContent = e.target.value + '%';
+  });
+  $('showRelief').addEventListener('change', () => { if (state.geo) drawGeoMap(); });
+  $('locate').addEventListener('click', () => {
+    if (!state.lmap) return;
+    $('readout').textContent = 'Finding your location…';
+    state.lmap.locate({ setView: true, maxZoom: 15 });
+  });
 
   function isFlood(i) { return !(state.base && state.base.wet[i]) && !state.a.ocean[i]; }
 
@@ -588,10 +788,17 @@
   let resizeT = 0;
   window.addEventListener('resize', () => {
     clearTimeout(resizeT);
-    resizeT = setTimeout(() => { if (state.run) { drawMap(); drawProfile(scenario()); } }, 120);
+    resizeT = setTimeout(() => {
+      if (!state.run) return;
+      if (state.geo && state.lmap) state.lmap.invalidateSize(); else drawMap();
+      drawProfile(scenario());
+    }, 120);
   });
   try {
-    window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => state.run && drawProfile(scenario()));
+    window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
+      if (state.tiles) state.tiles.setUrl(isDark() ? TILES.dark : TILES.light);
+      if (state.run) drawProfile(scenario());
+    });
   } catch (e) { /* older browsers */ }
 
   $('area').addEventListener('change', (ev) => {
