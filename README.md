@@ -21,7 +21,7 @@ The app opens on a map of Australia:
 - **Dam reports** also show how much of the dam's surface satellites have seen wet on each clear Landsat pass since 1987, from Digital Earth Australia Waterbodies.
 - **Lower Brisbane River** remains available from the menu as the detailed, pre-processed model with historic flood peaks and council layers.
 
-The build fetches the Bureau's gauges, dams and readings every three hours ([`pipeline/fetch_national.py`](pipeline/fetch_national.py)), because the Bureau's services don't allow requests straight from a web page. Geoscience Australia's elevation service and Digital Earth Australia's layers do, so the page reads those directly.
+The build fetches the Bureau's gauges, dams and readings every three hours ([`pipeline/fetch_national.py`](pipeline/fetch_national.py)), and each dam's satellite water history once a week ([`pipeline/fetch_waterhistory.py`](pipeline/fetch_waterhistory.py)), because those services don't allow requests straight from a web page. Geoscience Australia's elevation service and Digital Earth Australia's layers do, so the page reads those directly.
 
 ## How it works
 

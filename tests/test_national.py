@@ -91,3 +91,39 @@ class NationalTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+import fetch_waterhistory as wh  # noqa: E402
+
+CSV = "date,pc_wet,px_wet\n1987-06-03T00:00:00Z,50.0,100\n1987-06-19T00:00:00Z,60.0,120\n1987-08-01T00:00:00Z,,\n1987-08-21T00:00:00Z,70.5,140\n"
+
+
+def fake_wh(url, as_json=True, retries=3):
+    if url.startswith(wh.WFS):
+        assert "bbox=" in url
+        ring = [[152.5, -27.3], [152.6, -27.3], [152.6, -27.2], [152.5, -27.2], [152.5, -27.3]]
+        far = [[150.0, -27.3], [150.1, -27.3], [150.1, -27.2], [150.0, -27.2], [150.0, -27.3]]
+        return {"features": [
+            {"geometry": {"type": "Polygon", "coordinates": [far]}, "properties": {"uid": "big", "area_m2": 9e9, "timeseries": "x"}},
+            {"geometry": {"type": "Polygon", "coordinates": [ring]}, "properties": {"uid": "r7hk", "area_m2": 1e8, "timeseries": "https://ts/r7hk.csv"}},
+        ]}
+    if url == "https://ts/r7hk.csv":
+        return CSV
+    raise AssertionError(url)
+
+
+class WaterHistoryTests(unittest.TestCase):
+    def test_monthly_series(self):
+        s = wh.monthly_series(CSV)
+        self.assertEqual(s["start"], "1987-06")
+        self.assertEqual(s["monthly"], [55, None, 70])  # July had no pass
+        self.assertEqual(s["last"], ["1987-08-21", 70.5])
+        self.assertEqual(s["passes"], 3)
+
+    def test_picks_waterbody_containing_the_dam(self):
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(wh, "get", fake_wh):
+            (Path(d) / "storages.geojson").write_text(json.dumps({"features": [
+                {"geometry": {"type": "Point", "coordinates": [152.55, -27.25]}, "properties": {"id": "7"}}]}))
+            wh.main(d)
+            out = json.loads((Path(d) / "waterhistory.json").read_text())
+        self.assertEqual(out["7"]["uid"], "r7hk")

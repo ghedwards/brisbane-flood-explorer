@@ -1589,7 +1589,7 @@
         syncLayerLists(); renderOverlayLegend();
       }
     });
-    if (p.kind === 'storage') addWaterHistory(lat, lon, $('waterHistory'));
+    if (p.kind === 'storage') addWaterHistory(p.id, $('waterHistory'));
     openPanel('panel-report');
     status.report = { name: p.name, kind: p.kind };
   }
@@ -1624,69 +1624,28 @@
   /* ---------- satellite water history for dams (DEA Waterbodies) */
   // Digital Earth Australia maps every waterbody seen by Landsat since 1987
   // and publishes, for each one, the percentage of its area seen wet on
-  // every clear pass. That is a good proxy for how full a dam has been.
-  const DEA_WFS = 'https://geoserver.dea.ga.gov.au/geoserver/wfs';
-  const WB_LAYERS = ['DigitalEarthAustraliaWaterbodies_v3', 'DigitalEarthAustraliaWaterbodies'];
+  // every clear pass. The build fetches these for every BoM dam weekly
+  // (pipeline/fetch_waterhistory.py), because DEA's files block browsers.
   status.waterbodies = {};
 
-  async function findWaterbody(lat, lon) {
-    const d = 0.02; // ~2 km search box
-    const w = lon - d, e = lon + d, s = lat - d, n = lat + d;
-    const variants = [];
-    for (const layer of WB_LAYERS) {
-      variants.push(['1.1.0 latlon', `version=1.1.0&typeName=${layer}&bbox=${s},${w},${n},${e},EPSG:4326`]);
-      variants.push(['1.1.0 lonlat', `version=1.1.0&typeName=${layer}&bbox=${w},${s},${e},${n},EPSG:4326`]);
-      variants.push(['2.0.0 urn', `version=2.0.0&typeNames=${layer}&bbox=${s},${w},${n},${e},urn:ogc:def:crs:EPSG::4326`]);
+  let historyPromise = null;
+  function loadWaterHistory() {
+    if (!historyPromise) {
+      historyPromise = fetch('data/national/waterhistory.json', { cache: 'no-cache' })
+        .then((r) => (r.ok ? r.json() : {}))
+        .catch(() => ({}));
     }
-    const tried = [];
-    for (const [label, q] of variants) {
-      try {
-        const r = await fetch(`${DEA_WFS}?service=WFS&request=GetFeature&outputFormat=application/json&srsName=EPSG:4326&${q}`);
-        if (!r.ok) { tried.push(`${label}:${r.status}`); continue; }
-        const gj = await r.json();
-        const feats = (gj.features || []).filter((f) => f.geometry);
-        tried.push(`${label}:${feats.length}`);
-        if (!feats.length) continue;
-        // prefer the waterbody containing the dam point, else the largest
-        const inside = feats.find((f) => pointInGeom([lon, lat], f.geometry));
-        const pick = inside || feats.slice().sort((a, b) => (b.properties.area_m2 || 0) - (a.properties.area_m2 || 0))[0];
-        status.waterbodies.query = label;
-        return pick;
-      } catch (err) {
-        tried.push(`${label}:error`);
-      }
-    }
-    status.waterbodies.tried = tried;
-    return null;
+    return historyPromise;
   }
 
-  function pointInRing(pt, ring) {
-    let inside = false;
-    for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
-      const [xi, yi] = ring[i], [xj, yj] = ring[j];
-      if (((yi > pt[1]) !== (yj > pt[1])) && pt[0] < ((xj - xi) * (pt[1] - yi)) / (yj - yi) + xi) inside = !inside;
-    }
-    return inside;
-  }
-  function pointInGeom(pt, g) {
-    const polys = g.type === 'Polygon' ? [g.coordinates] : g.type === 'MultiPolygon' ? g.coordinates : [];
-    return polys.some((p) => pointInRing(pt, p[0]) && !p.slice(1).some((h) => pointInRing(pt, h)));
-  }
-
-  async function waterHistory(feature) {
-    const p = feature.properties || {};
-    const url = p.timeseries || p.timeseries_url;
-    if (!url) throw new Error('no time series is published for this waterbody');
-    const r = await fetch(url);
-    if (!r.ok) throw new Error(`time series returned ${r.status}`);
-    const rows = (await r.text()).trim().split(/\r?\n/).slice(1);
+  // monthly series -> [[time, pc], ...] without empty months
+  function expandMonthly(h) {
+    const [y0, m0] = h.start.split('-').map(Number);
     const out = [];
-    for (const line of rows) {
-      const [date, pc] = line.split(',');
-      const t = Date.parse(date), v = parseFloat(pc);
-      if (Number.isFinite(t) && Number.isFinite(v)) out.push([t, v]);
-    }
-    if (!out.length) throw new Error('the time series is empty');
+    h.monthly.forEach((v, i) => {
+      if (v == null) return;
+      out.push([Date.UTC(y0, m0 - 1 + i, 15), v]);
+    });
     return out;
   }
 
@@ -1710,28 +1669,26 @@
     </svg>`;
   }
 
-  async function addWaterHistory(lat, lon, box) {
+  async function addWaterHistory(storageId, box) {
     box.innerHTML = '<p class="hint">Looking up satellite records for this dam…</p>';
-    try {
-      const wb = await findWaterbody(lat, lon);
-      if (!wb) { box.innerHTML = '<p class="hint">No satellite water record was found for this dam.</p>'; status.waterbodies.ok = false; return; }
-      const series = await waterHistory(wb);
-      const last = series[series.length - 1];
-      const recent = series.filter(([t]) => t > Date.now() - 5 * 365 * 864e5).map(([, v]) => v);
-      const lo = recent.length ? Math.min(...recent) : NaN, hi = recent.length ? Math.max(...recent) : NaN;
-      box.innerHTML = `<div class="reading"><span class="label">Water seen by satellite</span>
-        <div class="big">${Math.round(last[1])}<small>% of surface wet</small></div>
-        <span class="hint">On ${escapeHtml(fmtDate(new Date(last[0]).toISOString()))}. Over the last 5 years it ranged ${Math.round(lo)}–${Math.round(hi)}%. ${series.length.toLocaleString('en-AU')} clear satellite passes since ${new Date(series[0][0]).getFullYear()}.</span>
-        ${historyChart(series)}
-        <span class="hint">Digital Earth Australia Waterbodies (Geoscience Australia, Landsat), CC BY 4.0. Surface area, not volume.</span></div>`;
-      status.waterbodies.ok = true;
-      status.waterbodies.points = series.length;
-    } catch (err) {
-      box.innerHTML = `<p class="hint">Satellite water history isn’t available: ${escapeHtml(err.message || String(err))}.</p>`;
-      status.waterbodies.ok = false;
-      status.waterbodies.error = String(err.message || err);
+    const all = await loadWaterHistory();
+    const h = all[storageId];
+    if (!h) {
+      box.innerHTML = '<p class="hint">No satellite water record is available for this dam.</p>';
+      status.waterbodies = { ok: false, error: 'no record' };
+      return;
     }
+    const series = expandMonthly(h);
+    const recent = series.filter(([t]) => t > Date.now() - 5 * 365 * 864e5).map(([, v]) => v);
+    const lo = recent.length ? Math.min(...recent) : NaN, hi = recent.length ? Math.max(...recent) : NaN;
+    box.innerHTML = `<div class="reading"><span class="label">Water seen by satellite</span>
+      <div class="big">${Math.round(h.last[1])}<small>% of surface wet</small></div>
+      <span class="hint">On ${escapeHtml(fmtDate(h.last[0]))}.${recent.length ? ` Over the last 5 years the monthly average ranged ${Math.round(lo)}–${Math.round(hi)}%.` : ''} ${h.passes.toLocaleString('en-AU')} clear Landsat passes since ${h.start.slice(0, 4)}.</span>
+      ${historyChart(series)}
+      <span class="hint">Monthly averages. Digital Earth Australia Waterbodies (Geoscience Australia), CC BY 4.0. Surface area, not volume.</span></div>`;
+    status.waterbodies = { ok: true, points: series.length };
   }
+
   window.__floodOpenDam = (name) => {
     const f = nat.data && nat.data.storages.find((x) => !name || (x.properties.name || '').includes(name));
     if (f) openReport(f);

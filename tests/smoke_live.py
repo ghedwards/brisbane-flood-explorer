@@ -49,12 +49,14 @@ def main() -> int:
         if page.evaluate("window.__floodOpenDam ? window.__floodOpenDam('Wivenhoe') : false"):
             try:
                 page.wait_for_function("window.__floodStatus.waterbodies && window.__floodStatus.waterbodies.ok !== undefined",
-                                       timeout=60_000)
+                                       timeout=30_000)
             except Exception:
                 pass
             wb = status().get("waterbodies", {})
             dam = (page.text_content("#reportBody") or "").strip().replace("\n", " ")
-            note("notice" if wb.get("ok") else "warning", f"Dam report water history {json.dumps(wb)}: {dam[:300]}")
+            note("notice" if wb.get("ok") else "error", f"Dam report water history {json.dumps(wb)}: {dam[:300]}")
+            if not wb.get("ok"):
+                failures.append(f"dam report has no water history: {wb}")
             page.screenshot(path="smoke-dam.png")
         # NSW flood planning layer over Sydney's Parramatta River
         page.evaluate("window.__floodTestZoom && window.__floodTestZoom(-33.815, 151.0, 14)")

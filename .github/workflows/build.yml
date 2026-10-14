@@ -93,6 +93,29 @@ jobs:
         continue-on-error: true
         run: python pipeline/fetch_national.py site/data/national | tee national.log
 
+      - name: Week number for the water-history cache
+        id: week
+        run: echo "week=$(date -u +%G-W%V)" >> "$GITHUB_OUTPUT"
+
+      - name: Restore dam water history
+        id: wh
+        uses: actions/cache@v4
+        with:
+          path: cache/waterhistory.json
+          key: waterhistory-${{ steps.week.outputs.week }}-${{ hashFiles('pipeline/fetch_waterhistory.py') }}
+
+      - name: Fetch dam water history (weekly)
+        id: whfetch
+        if: steps.national.outcome == 'success' && steps.wh.outputs.cache-hit != 'true'
+        continue-on-error: true
+        run: |
+          python pipeline/fetch_waterhistory.py site/data/national | tee wh.log
+          mkdir -p cache && cp site/data/national/waterhistory.json cache/waterhistory.json
+
+      - name: Use cached dam water history
+        if: steps.wh.outputs.cache-hit == 'true'
+        run: cp cache/waterhistory.json site/data/national/waterhistory.json
+
       - name: Fetch Google Flood Hub forecasts
         id: floodhub
         continue-on-error: true
@@ -113,6 +136,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
           echo "::notice::$(tail -n1 floodhub.log 2>/dev/null)"
           echo "::notice::$(grep '^National' national.log 2>/dev/null)"
+          echo "::notice::$(grep '^Water history' wh.log 2>/dev/null || echo 'Water history: from the weekly cache')"
           grep '^warning:' national.log 2>/dev/null | head -3 | sed 's/^warning:/::warning::National data: /' || true
 
       - uses: actions/configure-pages@v5
