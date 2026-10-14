@@ -663,10 +663,88 @@
     return grid;
   }
 
+
+  /**
+   * Read a single-band, uncompressed 32-bit float GeoTIFF (tiled or
+   * stripped), as Geoscience Australia's elevation service returns. Tiles
+   * with no data are often left out entirely (offset or byte count 0,
+   * "sparse" tiles); they are filled with the no-data value.
+   * Returns { W, H, data: Float32Array, nodata, bounds: [w, s, e, n] | null }
+   * or throws if the file uses a layout this reader doesn't handle.
+   */
+  function parseSimpleTiff(buffer) {
+    const dv = new DataView(buffer);
+    const bo = dv.getUint16(0);
+    if (bo !== 0x4949 && bo !== 0x4d4d) throw new Error('not a TIFF file');
+    const le = bo === 0x4949;
+    if (dv.getUint16(2, le) !== 42) throw new Error('BigTIFF is not supported');
+    const ifd = dv.getUint32(4, le);
+    const n = dv.getUint16(ifd, le);
+    const SIZE = { 1: 1, 2: 1, 3: 2, 4: 4, 5: 8, 11: 4, 12: 8, 16: 8 };
+    const tags = {};
+    for (let i = 0; i < n; i++) {
+      const e = ifd + 2 + i * 12;
+      const tag = dv.getUint16(e, le), type = dv.getUint16(e + 2, le), count = dv.getUint32(e + 4, le);
+      const bytes = (SIZE[type] || 1) * count;
+      const at = bytes <= 4 ? e + 8 : dv.getUint32(e + 8, le);
+      const vals = [];
+      if (type === 2) {
+        let str = '';
+        for (let k = 0; k < count; k++) { const c = dv.getUint8(at + k); if (c) str += String.fromCharCode(c); }
+        tags[tag] = str;
+        continue;
+      }
+      for (let k = 0; k < count; k++) {
+        const o = at + k * (SIZE[type] || 1);
+        if (type === 3) vals.push(dv.getUint16(o, le));
+        else if (type === 4 || type === 16) vals.push(dv.getUint32(o, le));
+        else if (type === 11) vals.push(dv.getFloat32(o, le));
+        else if (type === 12) vals.push(dv.getFloat64(o, le));
+        else vals.push(dv.getUint8(o));
+      }
+      tags[tag] = vals;
+    }
+    const W = tags[256][0], H = tags[257][0];
+    const bits = (tags[258] || [32])[0], fmt = (tags[339] || [1])[0], comp = (tags[259] || [1])[0];
+    const spp = (tags[277] || [1])[0];
+    if (comp !== 1 || bits !== 32 || fmt !== 3 || spp !== 1) throw new Error('unsupported TIFF layout');
+    const nodata = tags[42113] != null ? parseFloat(tags[42113]) : NaN; // GDAL_NODATA
+    const fill = Number.isFinite(nodata) ? nodata : NaN;
+    const data = new Float32Array(W * H).fill(fill);
+    const read = (off, count, w, h, x0, y0, bw) => {
+      if (!off || !count || off + count > buffer.byteLength) return; // sparse or truncated: leave no data
+      for (let r = 0; r < h; r++) {
+        const y = y0 + r;
+        if (y >= H) break;
+        for (let c = 0; c < w; c++) {
+          const x = x0 + c;
+          if (x >= W) break;
+          data[y * W + x] = dv.getFloat32(off + (r * bw + c) * 4, le);
+        }
+      }
+    };
+    if (tags[322]) {
+      const tw = tags[322][0], th = tags[323][0];
+      const offs = tags[324], cnts = tags[325];
+      const across = Math.ceil(W / tw);
+      offs.forEach((off, t) => read(off, cnts[t], tw, th, (t % across) * tw, Math.floor(t / across) * th, tw));
+    } else {
+      const rps = (tags[278] || [H])[0];
+      tags[273].forEach((off, k) => read(off, tags[279][k], W, rps, 0, k * rps, W));
+    }
+    let bounds = null;
+    if (tags[33550] && tags[33922]) {
+      const [sx, sy] = tags[33550], tp = tags[33922];
+      const west = tp[3] - tp[0] * sx, north = tp[4] + tp[1] * sy;
+      bounds = [west, north - H * sy, west + W * sx, north];
+    }
+    return { W, H, data, nodata, bounds };
+  }
+
   return {
     syntheticTerrain, analyse, mainStem, snapToStream, encodeWhiteboxD8,
     streamSurface, inundate, stats,
-    parseAsciiGrid, downsample, cleanNodata,
+    parseAsciiGrid, downsample, cleanNodata, parseSimpleTiff,
     // exposed for tests
     _internal: { MinHeap, chamferDistance, mulberry32 },
   };

@@ -1580,24 +1580,33 @@
     if (!r.ok) throw new Error(`the elevation service returned ${r.status}`);
     const type = r.headers.get('content-type') || '';
     if (!/tiff/i.test(type)) throw new Error('the elevation service did not return elevation data for this place');
-    await loadGeoTiffLib();
-    const tiff = await window.GeoTIFF.fromArrayBuffer(await r.arrayBuffer());
-    const img = await tiff.getImage();
-    const iw = img.getWidth(), ih = img.getHeight();
-    const data = (await img.readRasters({ samples: [0] }))[0];
-    const nd = img.getGDALNoData();
+    const buf = await r.arrayBuffer();
+    let iw, ih, data, nd, tiffBounds = null;
+    try {
+      // GA's service leaves all-sea tiles out ("sparse" tiles); this reader
+      // handles that, unlike the general GeoTIFF library
+      const t = F.parseSimpleTiff(buf);
+      iw = t.W; ih = t.H; data = t.data; nd = t.nodata; tiffBounds = t.bounds;
+    } catch (err) {
+      await loadGeoTiffLib();
+      const img = await (await window.GeoTIFF.fromArrayBuffer(buf)).getImage();
+      iw = img.getWidth(); ih = img.getHeight();
+      data = (await img.readRasters({ samples: [0] }))[0];
+      nd = img.getGDALNoData();
+      try { tiffBounds = img.getBoundingBox(); } catch (e2) { tiffBounds = null; }
+    }
     const dem = new Float32Array(iw * ih), valid = new Uint8Array(iw * ih);
     let land = 0;
     for (let i = 0; i < iw * ih; i++) {
       let v = data[i];
       // DEM-H marks the sea as no data; treat it as water just below sea level
-      if (!Number.isFinite(v) || v === nd || v < -1000 || v > 9000) v = -1.5;
+      if (!Number.isFinite(v) || v === nd || v < -1000 || v > 9000) v = -1.5; // sea or no data
       else land++;
       dem[i] = v; valid[i] = 1;
     }
     if (land < iw * ih * 0.05) throw new Error('there is almost no land in the elevation data here');
     let bounds = [w, s, e, n];
-    try { const bb = img.getBoundingBox(); if (bb && bb.length === 4 && Math.abs(bb[0] - w) < 0.05) bounds = bb; } catch (err) { /* use request box */ }
+    if (tiffBounds && tiffBounds.length === 4 && Math.abs(tiffBounds[0] - w) < 0.05 && Math.abs(tiffBounds[3] - n) < 0.05) bounds = tiffBounds;
     const cell = ((bounds[2] - bounds[0]) * 111320 * Math.cos((lat * Math.PI) / 180)) / iw;
     return { grid: { W: iw, H: ih, cell, dem, valid }, bounds };
   }

@@ -97,3 +97,60 @@ test('downsample keeps the longest side under the limit', () => {
   assert.ok(Math.max(d.W, d.H) <= 100);
   assert.ok(d.cell > grid.cell);
 });
+
+// Build a little-endian, tiled, float32 GeoTIFF; tiles listed in `sparse`
+// get offset 0 and byte count 0, like GA's elevation service writes for sea.
+function buildTiff(W, H, tile, value, sparse) {
+  const across = Math.ceil(W / tile), down = Math.ceil(H / tile), nt = across * down;
+  const tileBytes = tile * tile * 4;
+  const entries = [
+    [256, 3, 1, [W]], [257, 3, 1, [H]], [258, 3, 1, [32]], [259, 3, 1, [1]], [262, 3, 1, [1]],
+    [277, 3, 1, [1]], [322, 3, 1, [tile]], [323, 3, 1, [tile]], [324, 4, nt, null], [325, 4, nt, null],
+    [339, 3, 1, [3]], [33550, 12, 3, [0.001, 0.001, 0]], [33922, 12, 6, [0, 0, 0, 153, -27, 0]],
+    [42113, 2, 6, '-9999'],
+  ];
+  const ifdAt = 8, ifdSize = 2 + entries.length * 12 + 4;
+  let extra = ifdAt + ifdSize;
+  const extras = [];
+  const place = (bytes) => { const at = extra; extra += bytes; if (extra % 2) extra++; return at; };
+  const offsAt = place(nt * 4), cntsAt = place(nt * 4), scaleAt = place(24), tieAt = place(48), ndAt = place(8);
+  const dataAt = extra;
+  const total = dataAt + nt * tileBytes;
+  const buf = new ArrayBuffer(total), dv = new DataView(buf);
+  dv.setUint16(0, 0x4949); dv.setUint16(2, 42, true); dv.setUint32(4, ifdAt, true);
+  dv.setUint16(ifdAt, entries.length, true);
+  let k = 0;
+  for (let t = 0; t < nt; t++) {
+    const off = sparse.includes(t) ? 0 : dataAt + (k++) * tileBytes;
+    dv.setUint32(offsAt + t * 4, off, true);
+    dv.setUint32(cntsAt + t * 4, off ? tileBytes : 0, true);
+    if (off) for (let i = 0; i < tile * tile; i++) dv.setFloat32(off + i * 4, value + t, true);
+  }
+  [0.001, 0.001, 0].forEach((v, i) => dv.setFloat64(scaleAt + i * 8, v, true));
+  [0, 0, 0, 153, -27, 0].forEach((v, i) => dv.setFloat64(tieAt + i * 8, v, true));
+  '-9999\0'.split('').forEach((c, i) => dv.setUint8(ndAt + i, c.charCodeAt(0)));
+  entries.forEach(([tag, type, count, vals], i) => {
+    const e = ifdAt + 2 + i * 12;
+    dv.setUint16(e, tag, true); dv.setUint16(e + 2, type, true); dv.setUint32(e + 4, count, true);
+    if (tag === 324) dv.setUint32(e + 8, offsAt, true);
+    else if (tag === 325) dv.setUint32(e + 8, cntsAt, true);
+    else if (tag === 33550) dv.setUint32(e + 8, scaleAt, true);
+    else if (tag === 33922) dv.setUint32(e + 8, tieAt, true);
+    else if (tag === 42113) dv.setUint32(e + 8, ndAt, true);
+    else if (type === 3) dv.setUint16(e + 8, vals[0], true);
+    else dv.setUint32(e + 8, vals[0], true);
+  });
+  return buf;
+}
+
+test('GeoTIFF reader handles sparse tiles from the elevation service', () => {
+  const buf = buildTiff(200, 150, 128, 10, [3]);
+  const t = F.parseSimpleTiff(buf);
+  assert.equal(t.W, 200); assert.equal(t.H, 150);
+  assert.equal(t.nodata, -9999);
+  assert.equal(t.data[0], 10);                    // tile 0
+  assert.equal(t.data[130], 11);                  // tile 1 (x >= 128)
+  assert.equal(t.data[130 * 200 + 5], 12);        // tile 2 (y >= 128)
+  assert.equal(t.data[140 * 200 + 150], -9999);   // tile 3 is sparse
+  assert.deepEqual(t.bounds.map((v) => +v.toFixed(3)), [153, -27.15, 153.2, -27]);
+});
