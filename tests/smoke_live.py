@@ -29,9 +29,46 @@ def main() -> int:
         page.goto(URL, wait_until="networkidle", timeout=90_000)
 
         status = lambda: page.evaluate("window.__floodStatus || {}")
+
+        # ---- Australia-wide view (the default)
+        try:
+            page.wait_for_function("window.__floodStatus && window.__floodStatus.national"
+                                   " && window.__floodStatus.national.loaded && window.__floodStatus.mode === 'map'",
+                                   timeout=60_000)
+            nat = status().get("national", {})
+            note("notice", f"National view: {json.dumps(nat)}")
+            if not nat.get("gauges"):
+                failures.append("the national view has no gauges")
+        except Exception:
+            failures.append(f"the national view did not load: {json.dumps(status())}")
+        if page.evaluate("window.__floodOpenReport ? window.__floodOpenReport(0) : false"):
+            page.wait_for_timeout(500)
+            rep = (page.text_content("#reportBody") or "").strip().replace("\n", " ")
+            note("notice", f"Report: {rep[:260]}")
+        page.screenshot(path="smoke-national.png")
+        for label, args in [("river", [-27.4741, 153.0305, {"kind": "river", "name": "Brisbane City"}]),
+                            ("coast", [-27.37, 153.17, {"kind": "coast", "name": "Brisbane Bar"}])]:
+            before_updates = status().get("overlayUpdates", 0)
+            page.evaluate("([la, lo, o]) => { window.__floodModelHere(la, lo, o); }", args)
+            try:
+                page.wait_for_function("window.__floodStatus.local && (window.__floodStatus.local.ok === true"
+                                       " || window.__floodStatus.local.ok === false)", timeout=120_000)
+                page.wait_for_function(f"window.__floodStatus.overlayUpdates > {before_updates}", timeout=20_000)
+            except Exception:
+                pass
+            loc = status().get("local", {})
+            stats = page.inner_text("#stats").replace("\n", " ")
+            note("notice" if loc.get("ok") else "error", f"Model {label}: {json.dumps(loc)} | {stats[:160]}")
+            if not loc.get("ok"):
+                failures.append(f"on-demand {label} model failed: {loc}")
+            page.screenshot(path=f"smoke-model-{label}.png")
+
+        # ---- detailed Brisbane model
+        page.select_option("#area", "brisbane")
+        page.evaluate("window.__floodOpenPanel('panel-scenario')")
         try:
             page.wait_for_function(
-                "window.__floodStatus && window.__floodStatus.mode === 'map'"
+                "window.__floodStatus && window.__floodStatus.area === 'brisbane' && window.__floodStatus.mode === 'map'"
                 " && window.__floodStatus.overlayUpdates > 0 && window.__floodStatus.tilesLoaded > 4",
                 timeout=60_000,
             )

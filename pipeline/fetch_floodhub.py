@@ -132,8 +132,12 @@ def main(config_path: str, data_dir: str) -> None:
     out = Path(data_dir)
     out.mkdir(parents=True, exist_ok=True)
     now = dt.datetime.now(dt.timezone.utc).replace(microsecond=0).isoformat()
-    region = cfg.get("floodhub_bbox_lonlat", cfg["bbox_lonlat"])
-    summary = {"configured": False, "fetched": now, "region": region, "attribution": ATTRIBUTION}
+    region_code = cfg.get("floodhub_region")          # e.g. "AU": the whole country
+    region = cfg.get("floodhub_bbox_lonlat")           # or a [w, s, e, n] box
+    if not region_code and not region:
+        region = cfg["bbox_lonlat"]
+    summary = {"configured": False, "fetched": now, "regionCode": region_code, "region": region,
+               "attribution": ATTRIBUTION}
 
     key = os.environ.get("FLOOD_FORECASTING_API_KEY", "").strip()
     if not key:
@@ -144,7 +148,7 @@ def main(config_path: str, data_dir: str) -> None:
 
     api = Api(key)
     summary["configured"] = True
-    loop = region_loop(region)
+    area = {"regionCode": region_code} if region_code else {"loop": region_loop(region)}
     features, polys, errors = [], {}, []
 
     def attempt(label, fn, default):
@@ -155,19 +159,20 @@ def main(config_path: str, data_dir: str) -> None:
             print(f"warning: {label}: {exc}")
             return default
 
-    gauges = attempt("gauges", lambda: api.paged("gauges:searchGaugesByArea", {
-        "loop": loop, "includeNonQualityVerified": True, "includeGaugesWithoutHydroModel": True,
-    }, "gauges"), [])
-    statuses = attempt("flood status", lambda: api.paged("floodStatus:searchLatestFloodStatusByArea", {
-        "loop": loop, "includeNonQualityVerified": True,
-    }, "floodStatuses"), [])
+    gauges = attempt("gauges", lambda: api.paged("gauges:searchGaugesByArea", dict(
+        area, includeNonQualityVerified=True, includeGaugesWithoutHydroModel=False), "gauges"), [])
+    statuses = attempt("flood status", lambda: api.paged("floodStatus:searchLatestFloodStatusByArea", dict(
+        area, includeNonQualityVerified=True), "floodStatuses"), [])
     by_id = {g["gaugeId"]: dict(g) for g in gauges}
     for st in statuses:
         by_id.setdefault(st["gaugeId"], {"gaugeId": st["gaugeId"], "location": st.get("gaugeLocation")})
         by_id[st["gaugeId"]]["status"] = st
 
     modelled = [gid for gid, g in by_id.items() if g.get("hasModel") or g.get("status")]
-    for gid in modelled:
+    # thresholds only where something is happening, to keep the call count low
+    flagged = [gid for gid in modelled
+               if ((by_id[gid].get("status") or {}).get("severity") in ("ABOVE_NORMAL", "SEVERE", "EXTREME"))]
+    for gid in (flagged if region_code else modelled):
         m = attempt(f"model {gid}", lambda gid=gid: api.get(f"gaugeModels/{gid}"), None)
         if m:
             by_id[gid]["model"] = {k: m.get(k) for k in ("gaugeModelId", "thresholds", "gaugeValueUnit", "qualityVerified")}
@@ -187,6 +192,8 @@ def main(config_path: str, data_dir: str) -> None:
     # forecast flood areas from gauges that have them
     for gid, g in by_id.items():
         st = g.get("status") or {}
+        if region_code and gid not in flagged:
+            continue
         ims = (st.get("inundationMapSet") or {})
         for im in ims.get("inundationMaps", []):
             f = attempt(f"area {gid}", lambda im=im: polygon_feature(api, im.get("serializedPolygonId"), {
@@ -206,7 +213,7 @@ def main(config_path: str, data_dir: str) -> None:
                 "kind": "flash-flood", "level": level, "issued": ev.get("forecastIssueTime"),
                 "hours": ev.get("forecastPeriodHours"),
             }, polys), None)
-            if f and overlaps(geometry_bbox(f["geometry"]), region):
+            if f and (not region or overlaps(geometry_bbox(f["geometry"]), region)):
                 features.append(f)
                 kept.append(ev)
 

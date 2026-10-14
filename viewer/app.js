@@ -104,6 +104,7 @@
   async function listAreas() {
     const sel = $('area');
     const opts = [{ id: 'sample', name: 'Sample terrain (illustrative)' }];
+    const national = { id: 'australia', name: 'Australia: tap a river, dam or coast' };
     try {
       const r = await fetch('data/areas.json', { cache: 'no-cache' });
       if (r.ok) {
@@ -111,6 +112,7 @@
         list.forEach((x) => opts.unshift({ id: x.id, name: x.name }));
       }
     } catch (e) { /* no processed areas published yet */ }
+    opts.unshift(national);
     sel.innerHTML = '';
     for (const o of opts) {
       const op = document.createElement('option');
@@ -121,10 +123,18 @@
   }
 
   async function loadArea(id) {
+    if (id === 'australia') {
+      setBusy(true, 'Loading the Australia-wide map…');
+      try { await enterNational(); } finally { setBusy(false); }
+      return;
+    }
     setBusy(true, 'Loading terrain…');
     await nextFrame();
     try {
-      if (id === 'sample') {
+      if (id === 'local' && state.localGrid) {
+        state.areaMeta = state.localGrid.meta;
+        useGrid(state.localGrid.grid, 'local', { events: false });
+      } else if (id === 'sample') {
         const g = F.syntheticTerrain();
         state.areaMeta = { id: 'sample', name: 'Sample terrain', synthetic: true, streamAreaKm2: 4 };
         useGrid(g, 'sample', { events: true });
@@ -161,7 +171,10 @@
   function useGrid(grid, id, opts) {
     state.grid = grid;
     state.areaId = id;
+    status.area = id;
     state.eventsApply = !!opts.events;
+    if (id === 'local') state.localGrid = { grid, meta: state.areaMeta };
+    if (state.gaugeMarker) state.gaugeMarker.setStyle({ opacity: 1, fillOpacity: 1 });
     const areaKm2 = (grid.W * grid.H * grid.cell * grid.cell) / 1e6;
     state.streamAreaKm2 = (state.areaMeta && state.areaMeta.streamAreaKm2)
       || Math.min(4, Math.max(0.05, areaKm2 * 0.01));
@@ -169,9 +182,18 @@
     renderEvents();
     reanalyse(true);
     // default levels
+    ctl.gaugeLevel.min = 0;
+    $('levelHint').hidden = true;
     if (state.eventsApply) ctl.gaugeLevel.value = 4.46;
-    else if (state.gauge >= 0) ctl.gaugeLevel.value = Math.max(0, Math.round((grid.dem[state.gauge] + 3) * 20) / 20);
-    ctl.gaugeLevel.max = Math.max(10, Math.ceil(parseFloat(ctl.gaugeLevel.value) + 6));
+    else if (state.gauge >= 0) {
+      const surface = state.a.dem[state.gauge];
+      ctl.gaugeLevel.min = Math.max(0, Math.floor(surface - 2));
+      ctl.gaugeLevel.value = Math.round((surface + 3) * 20) / 20;
+      $('levelHint').hidden = false;
+      $('levelHint').textContent = `Heights are metres above sea level. The river surface at the gauge is about ${surface.toFixed(1)} m in the elevation model; the default is 3 m above that.`;
+    }
+    ctl.gaugeLevel.max = Math.max(10, Math.ceil(parseFloat(ctl.gaugeLevel.value) + 8));
+    showScenarioEmpty(false);
     syncOutputs();
     renderInfo();
     const bl = state.areaMeta && state.areaMeta.bounds_lonlat;
@@ -299,7 +321,12 @@
     const a = state.a;
     if (!a) return;
     const s = scenario();
-    if (!state.base) state.base = F.inundate(a, Object.assign({}, s, BASELINE, { upstreamGradient: s.upstreamGradient }));
+    if (!state.base) {
+      const base = state.eventsApply || state.gauge < 0
+        ? BASELINE
+        : { gaugeLevel: a.dem[state.gauge] + 0.3, bayLevel: 0 };
+      state.base = F.inundate(a, Object.assign({}, s, base, { upstreamGradient: s.upstreamGradient }));
+    }
     state.run = F.inundate(a, s);
     drawMap();
     drawStats(s);
@@ -612,7 +639,7 @@
     $('layersStaticNote').hidden = true;
     const bounds = L.latLngBounds([b[1], b[0]], [b[3], b[2]]);
     if (!state.lmap) {
-      const m = L.map('lmap', { maxBounds: bounds.pad(0.6), minZoom: 9, zoomSnap: 0.5, zoomControl: false });
+      const m = L.map('lmap', { minZoom: 4, zoomSnap: 0.5, zoomControl: false, preferCanvas: false });
       if (!finePointer()) { /* pinch to zoom on touch screens */ } else L.control.zoom({ position: 'bottomright' }).addTo(m);
       const layers = {};
       status.basemaps = {};
@@ -633,9 +660,6 @@
       status.overlays = {};
       const overlays = {};
       for (const o of NATIONAL_OVERLAYS) overlays[o.name] = makeWmsOverlay(L, o);
-      if (state.areaMeta && state.areaMeta.brisbaneGauge) {
-        for (const o of OVERLAYS) { const l = makeOverlay(o); if (l) overlays[o.name] = l; }
-      }
       const fhLayers = floodHubOverlays(L);
       Object.assign(overlays, fhLayers);
       const fh = state.floodhub;
@@ -647,7 +671,7 @@
       m.on('layeradd layerremove', syncLayerLists);
       window.__floodTestZoom = (lat, lng, z) => m.setView([lat, lng], z, { animate: false });
       window.__floodSetOverlay = (name, on) => {
-        const l = overlays[name];
+        const l = layerRegistry.overlays[name];
         if (!l) return false;
         if (on) l.addTo(m); else m.removeLayer(l);
         renderOverlayLegend();
@@ -675,6 +699,14 @@
     } else {
       state.overlay.setBounds(bounds);
     }
+    // area-specific layers: Brisbane City Council's, once per session
+    if (state.areaMeta && state.areaMeta.brisbaneGauge && !state.councilAdded) {
+      for (const o of OVERLAYS) { const l = makeOverlay(o); if (l) registerOverlay(o.name, l); }
+      state.councilAdded = true;
+    }
+    if (state.areaMeta && !state.areaMeta.national && nat.data) addNationalLayers(state.lmap);
+    state.overlay.setBounds(bounds);
+    state.gaugeMarker.setStyle({ opacity: 1, fillOpacity: 1 });
     state.lmap.invalidateSize();
     state.lmap.fitBounds(bounds);
     status.mode = 'map';
@@ -725,11 +757,18 @@
       input.dataset.layer = name;
       input.checked = m.hasLayer(overlays[name]);
       input.addEventListener('change', () => {
+        overlays[name].userOn = input.checked;
         if (input.checked) overlays[name].addTo(m); else m.removeLayer(overlays[name]);
         renderOverlayLegend();
       });
       ol.appendChild(lab);
     });
+  }
+
+  function registerOverlay(name, layer) {
+    if (!layerRegistry || layerRegistry.overlays[name] === layer) return;
+    layerRegistry.overlays[name] = layer;
+    buildLayerLists(layerRegistry.m, layerRegistry.layers, layerRegistry.overlays, status.basemap);
   }
 
   function syncLayerLists() {
@@ -795,6 +834,7 @@
   }
 
   function onGeoClick(e) {
+    if (!state.a) { onNationalClick(e); return; }
     const c = latLngCell(e.latlng);
     if (!c) return;
     const s = $('moveGauge').checked ? F.snapToStream(state.a, c.x, c.y, 6, gaugeFloor()) : -1;
@@ -813,6 +853,7 @@
   }
 
   function onGeoMove(e) {
+    if (!state.a) return;
     const c = latLngCell(e.latlng);
     if (c) say(describe(c.i));
   }
@@ -823,7 +864,7 @@
     state.youMarker = L.circleMarker(e.latlng, {
       radius: 7, color: '#ffffff', weight: 2, fillColor: '#1a73e8', fillOpacity: 1,
     }).addTo(state.lmap);
-    const c = latLngCell(e.latlng);
+    const c = state.a ? latLngCell(e.latlng) : null;
     say(c
       ? `Your location: ${describe(c.i)}`
       : 'Your location is outside the modelled area.');
@@ -1053,7 +1094,7 @@
     $('forecastBadge').hidden = !(flooding.length || flash);
     let html = '';
     if (!flooding.length && !flash) {
-      html += `<p>No flooding forecast at ${gauges.length} Flood Hub gauge${gauges.length === 1 ? '' : 's'} in South East Queensland.</p>`;
+      html += `<p>No flooding forecast at ${gauges.length} Flood Hub gauge${gauges.length === 1 ? '' : 's'} in Australia.</p>`;
     } else {
       const bits = [];
       if (flooding.length) bits.push(`${flooding.length} gauge${flooding.length === 1 ? '' : 's'} forecast above normal`);
@@ -1173,7 +1214,7 @@
   } catch (e) { /* older browsers */ }
 
   $('area').addEventListener('change', (ev) => {
-    if (ev.target.value === 'upload') return;
+    if (ev.target.value === 'upload' || (ev.target.value === 'local' && !state.localGrid)) return;
     loadArea(ev.target.value);
   });
 
@@ -1182,7 +1223,13 @@
   function renderNotice() {
     const m = state.areaMeta || {};
     let html;
-    if (m.synthetic) {
+    if (m.national) {
+      const nm = nat.data && nat.data.meta;
+      html = '<strong>Australia-wide.</strong> Tap a flood gauge, tide gauge or dam for a report, or tap anywhere to model flooding there from the national elevation model. Gauges, dams and readings: Bureau of Meteorology'
+        + (nm && nm.fetched ? `, updated ${escapeHtml(ago(nm.fetched))}` : '') + '. Not official warnings.';
+    } else if (m.local) {
+      html = `<strong>Screening only.</strong> ${escapeHtml(m.source || '')} It includes buildings and trees in some places and misses levees and drains. Do not use for evacuation or property decisions.`;
+    } else if (m.synthetic) {
       html = '<strong>Illustrative terrain.</strong> This sample is generated, not real Brisbane elevation. It shows how the model behaves. Pick a processed area or load a DEM for real ground levels.';
     } else if (m.upload) {
       html = `<strong>Your terrain.</strong> ${m.routedBy === 'pointers' ? 'Flow directions come from your d8.tif.' : 'Flow directions were computed in your browser.'} Set the gauge level for your river; the historic Brisbane peaks don’t apply here.`;
@@ -1190,12 +1237,19 @@
       html = `<strong>Screening only.</strong> ${escapeHtml(m.source || '')} A surface model includes buildings and trees, so expect errors in built-up areas. Do not use for evacuation or property decisions.`;
     }
     $('notice').innerHTML = html;
-    $('noticePill').textContent = m.synthetic ? 'Illustrative terrain' : m.upload ? 'Your terrain' : 'Screening only';
+    $('noticePill').textContent = m.national ? 'About this map' : m.synthetic ? 'Illustrative terrain' : m.upload ? 'Your terrain' : 'Screening only';
   }
 
   function renderInfo() {
     const m = state.areaMeta || {}, a = state.a;
     const lines = [];
+    if (!a) {
+      const nm = (nat.data && nat.data.meta) || {};
+      lines.push(`<span class="label">Data</span><br>${(nm.gauges || 0).toLocaleString('en-AU')} gauges and ${(nm.storages || 0).toLocaleString('en-AU')} dams from the Bureau of Meteorology${nm.fetched ? `, fetched ${escapeHtml(ago(nm.fetched))}` : ''}. On-demand terrain: Geoscience Australia DEM-H (about 30 m).`);
+      $('dataInfo').innerHTML = lines.join(' ');
+      $('downloads').innerHTML = '';
+      return;
+    }
     lines.push(`<span class="label">Terrain</span><br>${a.W} × ${a.H} cells at ${fmt(a.cell, 0)} m.`);
     if (m.synthetic) lines.push('Flow routing computed in the browser (priority-flood and D8).');
     else if (m.processedWith) lines.push(`Flow directions from ${escapeHtml(m.processedWith)}, run ${escapeHtml(m.generated || '')}.`);
@@ -1222,6 +1276,374 @@
     $('notice').innerHTML = `<strong>Problem.</strong> ${escapeHtml(msg)}`;
   }
 
+
+
+  /* ------------------------------------------------------- Australia-wide */
+  // The national view: BoM gauges, tide gauges and dams (fetched by the
+  // build, see pipeline/fetch_national.py), a report for whatever is tapped,
+  // and on-demand flood modelling from Geoscience Australia's 1-second
+  // hydrologically enforced elevation model (DEM-H), read straight from GA.
+
+  const AUS_BOUNDS = [112.5, -44, 154, -10];
+  const DEMH_WCS = 'https://services.ga.gov.au/gis/services/DEM_SRTM_1Second_Hydro_Enforced_2024/MapServer/WCSServer';
+  const BOM_ATTR = 'Gauges and storages &copy; Commonwealth of Australia (Bureau of Meteorology), CC BY 4.0';
+  const GAUGE_STYLE = {
+    forecast: { label: 'Flood forecast gauge', color: '#1565c0', radius: 5.5, minZoom: 0 },
+    information: { label: 'Flood information gauge', color: '#5c6bc0', radius: 4.5, minZoom: 6 },
+    river: { label: 'River gauge', color: '#78909c', radius: 3.5, minZoom: 8 },
+    tide: { label: 'Tide gauge', color: '#00897b', radius: 5.5, minZoom: 0 },
+    storage: { label: 'Dam or water storage', color: '#6d4c41', radius: 6, minZoom: 0 },
+  };
+  status.national = { loaded: false };
+  status.local = {};
+  const nat = { data: null, readings: null, layers: {}, picked: null };
+
+  async function loadNationalData() {
+    if (nat.data) return nat.data;
+    const get = async (f) => {
+      const r = await fetch(`data/national/${f}`, { cache: 'no-cache' });
+      if (!r.ok) throw new Error(`${f}: ${r.status}`);
+      return r.json();
+    };
+    try {
+      const [gauges, storages, readings, meta] = await Promise.all([
+        get('gauges.geojson'), get('storages.geojson'), get('readings.json'), get('meta.json')]);
+      nat.data = { gauges: gauges.features || [], storages: storages.features || [], meta };
+      nat.readings = readings;
+    } catch (e) {
+      nat.data = { gauges: [], storages: [], meta: { errors: [String(e)] } };
+      nat.readings = { level: {}, storage: {} };
+    }
+    status.national = {
+      loaded: true, gauges: nat.data.gauges.length, storages: nat.data.storages.length,
+      levelReadings: Object.keys(nat.readings.level || {}).length,
+      storageReadings: Object.keys(nat.readings.storage || {}).length,
+    };
+    return nat.data;
+  }
+
+  function storageFill(p) {
+    const r = nat.readings && nat.readings.storage && nat.readings.storage[p.station];
+    if (!r || !p.capacity_ml) return null;
+    return r.latest[1] / p.capacity_ml;
+  }
+
+  function storageColor(p) {
+    const f = storageFill(p);
+    if (f == null) return GAUGE_STYLE.storage.color;
+    if (f >= 1) return '#6a1b9a';     // spilling or above full supply
+    if (f >= 0.8) return '#1565c0';
+    if (f >= 0.5) return '#43a047';
+    if (f >= 0.25) return '#f9a825';
+    return '#c62828';
+  }
+
+  function buildNationalLayers(L, m) {
+    if (Object.keys(nat.layers).length) return nat.layers;
+    const renderer = L.canvas({ padding: 0.3 });
+    const groups = {
+      'Flood forecast gauges (BoM)': ['forecast'],
+      'Tide gauges (BoM)': ['tide'],
+      'Flood information gauges (BoM)': ['information'],
+      'Other river gauges (BoM)': ['river'],
+    };
+    for (const [name, kinds] of Object.entries(groups)) {
+      const feats = nat.data.gauges.filter((f) => kinds.includes(f.properties.kind));
+      if (!feats.length) continue;
+      const st = GAUGE_STYLE[kinds[0]];
+      nat.layers[name] = L.geoJSON({ type: 'FeatureCollection', features: feats }, {
+        attribution: BOM_ATTR,
+        pointToLayer: (f, ll) => L.circleMarker(ll, {
+          renderer, radius: st.radius, color: '#ffffff', weight: 1.5, fillColor: st.color, fillOpacity: 0.95,
+        }),
+        onEachFeature: (f, layer) => {
+          layer.bindTooltip(f.properties.name || 'Gauge', { direction: 'top', offset: [0, -4] });
+          layer.on('click', (e) => { L.DomEvent.stop(e); openReport(f); });
+        },
+      });
+      nat.layers[name].minZoom = st.minZoom;
+    }
+    if (nat.data.storages.length) {
+      nat.layers['Dams and water storages (BoM)'] = L.geoJSON({ type: 'FeatureCollection', features: nat.data.storages }, {
+        attribution: BOM_ATTR,
+        pointToLayer: (f, ll) => L.circleMarker(ll, {
+          renderer, radius: GAUGE_STYLE.storage.radius, color: '#ffffff', weight: 2,
+          fillColor: storageColor(f.properties), fillOpacity: 0.95,
+        }),
+        onEachFeature: (f, layer) => {
+          layer.bindTooltip(f.properties.name || 'Storage', { direction: 'top', offset: [0, -4] });
+          layer.on('click', (e) => { L.DomEvent.stop(e); openReport(f); });
+        },
+      });
+    }
+    // show detailed layers only when zoomed in enough
+    const applyZoom = () => {
+      for (const l of Object.values(nat.layers)) {
+        if (!l.minZoom) continue;
+        const want = l.userOn !== false && m.getZoom() >= l.minZoom;
+        if (want && !m.hasLayer(l) && l.userOn) l.addTo(m);
+        if (!want && m.hasLayer(l)) { m.removeLayer(l); }
+      }
+    };
+    m.on('zoomend', applyZoom);
+    return nat.layers;
+  }
+
+  function addNationalLayers(m) {
+    const L = window.L;
+    buildNationalLayers(L, m);
+    const defaultsOn = ['Flood forecast gauges (BoM)', 'Tide gauges (BoM)', 'Dams and water storages (BoM)'];
+    for (const [name, layer] of Object.entries(nat.layers)) {
+      registerOverlay(name, layer);
+      if (nat.defaultsApplied) continue;   // respect what the viewer has switched since
+      if (defaultsOn.includes(name)) { layer.userOn = true; layer.addTo(m); } else layer.userOn = false;
+    }
+    nat.defaultsApplied = true;
+    syncLayerLists();
+  }
+
+  async function enterNational() {
+    state.areaId = 'australia';
+    status.area = 'australia';
+    state.areaMeta = { id: 'australia', name: 'Australia', national: true };
+    state.grid = null; state.a = null; state.run = null; state.base = null; state.gauge = -1;
+    showScenarioEmpty(true);
+    const ok = await enterGeoMode(AUS_BOUNDS);
+    if (!ok) {
+      $('area').value = 'sample';
+      await loadArea('sample');
+      say('The street map could not load, so the Australia-wide view is unavailable. Showing the sample terrain.');
+      return;
+    }
+    state.overlay.setUrl(BLANK);
+    state.gaugeMarker.setStyle({ opacity: 0, fillOpacity: 0 });
+    await loadNationalData();
+    addNationalLayers(state.lmap);
+    renderNotice();
+    renderInfo();
+    $('summaryLine').innerHTML = '<b>Australia</b> · tap a gauge, dam or tide gauge, or tap anywhere to model flooding';
+  }
+
+  function showScenarioEmpty(empty) {
+    $('scenarioEmpty').hidden = !empty;
+    Array.from($('scenarioEmpty').parentElement.children).forEach((el) => {
+      if (el.id !== 'scenarioEmpty') el.hidden = empty || (el.id === 'eventsSet' && !state.eventsApply);
+    });
+    if (empty) $('stats').innerHTML = '';
+  }
+
+  /* ---------- reports */
+
+  function fmtDate(iso) {
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return iso || '';
+    return d.toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' });
+  }
+
+  function sparkline(series) {
+    const vals = series.map((s) => s[1]).filter(Number.isFinite);
+    if (vals.length < 2) return '';
+    const lo = Math.min(...vals), hi = Math.max(...vals), span = hi - lo || 1;
+    const pts = vals.map((v, i) => `${(i / (vals.length - 1)) * 100},${40 - ((v - lo) / span) * 34 - 3}`).join(' ');
+    const last = pts.split(' ').pop().split(',');
+    return `<svg class="spark" viewBox="0 0 100 40" preserveAspectRatio="none" aria-hidden="true">
+      <polyline points="${pts}" fill="none" stroke="var(--accent)" stroke-width="1.6" vector-effect="non-scaling-stroke"/>
+      <circle cx="${last[0]}" cy="${last[1]}" r="1.8" fill="var(--accent)"/></svg>`;
+  }
+
+  function nearestFloodHubGauge(lat, lon, km) {
+    const fh = state.floodhub;
+    if (!fh || !fh.configured || !fh.gauges) return null;
+    let best = null, bd = km;
+    for (const g of fh.gauges) {
+      if (!g.location) continue;
+      const d = distKm(lat, lon, g.location.latitude, g.location.longitude);
+      if (d < bd) { bd = d; best = g; }
+    }
+    return best;
+  }
+
+  function distKm(a, b, c, d) {
+    const r = Math.PI / 180;
+    const x = (d - b) * r * Math.cos(((a + c) / 2) * r), y = (c - a) * r;
+    return Math.hypot(x, y) * 6371;
+  }
+
+  function openReport(f) {
+    nat.picked = f;
+    const p = f.properties;
+    const [lon, lat] = f.geometry.coordinates;
+    const st = GAUGE_STYLE[p.kind] || GAUGE_STYLE.river;
+    let html = `<div><span class="kind">${escapeHtml(st.label)}</span><h3 style="margin:2px 0 0;font:700 1.15rem/1.2 var(--font-display);font-stretch:85%">${escapeHtml(p.name || 'Unnamed')}</h3></div>`;
+    const facts = [];
+    if (p.kind === 'storage') {
+      if (p.river) facts.push(['River', p.river]);
+      if (p.capacity_ml) facts.push(['Capacity', `${Math.round(p.capacity_ml).toLocaleString('en-AU')} ML`]);
+      if (p.year) facts.push(['Completed', p.year]);
+      if (p.owner) facts.push(['Data owner', p.owner]);
+    } else {
+      if (p.basin) facts.push(['Basin', p.basin]);
+      if (p.station) facts.push(['Station', p.station]);
+      if (p.agency) facts.push(['Operated by', p.agency]);
+    }
+    if (p.state) facts.push(['State', p.state]);
+    facts.push(['Location', `${lat.toFixed(4)}, ${lon.toFixed(4)}`]);
+    html += `<dl class="facts">${facts.map(([k, v]) => `<dt>${escapeHtml(k)}</dt><dd>${escapeHtml(String(v))}</dd>`).join('')}</dl>`;
+
+    // latest reading
+    if (p.kind === 'storage') {
+      const r = nat.readings.storage && nat.readings.storage[p.station];
+      if (r) {
+        const fill = storageFill(p);
+        html += `<div class="reading"><span class="label">Storage volume</span>
+          <div class="big">${fill != null ? Math.round(fill * 100) + '<small>% full</small>' : Math.round(r.latest[1]).toLocaleString('en-AU') + '<small>ML</small>'}</div>
+          ${fill != null ? `<div class="bar"><span style="width:${Math.min(100, fill * 100)}%;background:${storageColor(p)}"></span></div>` : ''}
+          <span class="hint">${Math.round(r.latest[1]).toLocaleString('en-AU')} ML, daily average for ${escapeHtml(fmtDate(r.latest[0]))}</span>
+          ${sparkline(r.series)}</div>`;
+        if (fill != null && fill >= 1) html += '<p class="hint"><strong>At or above full supply.</strong> Dams at full supply may be releasing or spilling water downstream.</p>';
+      } else {
+        html += '<p class="hint">No recent storage reading is published for this dam.</p>';
+      }
+    } else {
+      const r = nat.readings.level && nat.readings.level[p.station];
+      if (r) {
+        html += `<div class="reading"><span class="label">${p.kind === 'tide' ? 'Water level' : 'River level'}</span>
+          <div class="big">${r.latest[1].toFixed(2)}<small>m</small></div>
+          <span class="hint">Daily average for ${escapeHtml(fmtDate(r.latest[0]))}, on the gauge's own datum. Last ${r.series.length} days:</span>
+          ${sparkline(r.series)}</div>`;
+      } else {
+        html += '<p class="hint">No recent reading is published for this gauge on Water Data Online.</p>';
+      }
+    }
+
+    // Google Flood Hub near this point
+    const fhg = p.kind !== 'storage' ? nearestFloodHubGauge(lat, lon, 15) : null;
+    if (fhg && fhg.status) {
+      const s = sev(fhg.status.severity);
+      html += `<div class="reading"><span class="label">Google Flood Hub forecast nearby</span>
+        <div><span class="sev" style="background:${s.color}">${s.label}</span> ${escapeHtml([fhg.siteName, fhg.river].filter(Boolean).join(', '))}</div>
+        <span class="hint">${escapeHtml(gaugeLine(fhg))}</span></div>`;
+    }
+
+    // what can be done here
+    const kind = p.kind === 'tide' ? 'coast' : 'river';
+    html += `<div class="actions">
+      <button type="button" class="btn primary" id="reportModel">${kind === 'coast' ? 'Model coastal flooding here' : 'Model flooding here'}</button>
+      ${p.kind !== 'tide' && p.kind !== 'storage' ? '' : ''}
+      <button type="button" class="btn" id="reportZoom">Zoom to</button>
+    </div>`;
+    const links = [];
+    if (p.url) links.push(`<a href="${escapeHtml(p.url)}" target="_blank" rel="noopener">BoM water storage page</a>`);
+    links.push('<a href="https://www.bom.gov.au/water/data/" target="_blank" rel="noopener">Water Data Online</a>');
+    if (p.kind !== 'storage') links.push(`<a href="https://www.bom.gov.au/australia/flood/" target="_blank" rel="noopener">BoM flood warnings</a>`);
+    html += `<p class="hint">${links.join(' · ')}</p>`;
+    html += '<p class="hint">Readings: Water Data Online (Bureau of Meteorology and data owners). Not an official warning.</p>';
+
+    $('reportBody').innerHTML = html;
+    $('h-report').textContent = p.kind === 'storage' ? 'Dam report' : p.kind === 'tide' ? 'Tide gauge report' : 'River gauge report';
+    $('reportModel').addEventListener('click', () => modelHere(lat, lon, { kind, name: p.name }));
+    $('reportZoom').addEventListener('click', () => state.lmap && state.lmap.setView([lat, lon], 13));
+    openPanel('panel-report');
+    status.report = { name: p.name, kind: p.kind };
+  }
+  window.__floodOpenReport = (index) => {
+    const f = nat.data && nat.data.gauges.filter((g) => g.properties.kind === 'forecast')[index || 0];
+    if (f) openReport(f);
+    return !!f;
+  };
+
+  // A tap on empty map in the national view
+  function onNationalClick(e) {
+    const L = window.L;
+    const { lat, lng } = e.latlng;
+    const div = document.createElement('div');
+    div.innerHTML = `<strong>${lat.toFixed(4)}, ${lng.toFixed(4)}</strong><div class="popup-actions">
+      <button type="button" data-k="river">Model river flooding here</button>
+      <button type="button" data-k="coast">Model coastal flooding here</button></div>`;
+    div.querySelectorAll('button').forEach((b) => b.addEventListener('click', () => {
+      state.lmap.closePopup();
+      modelHere(lat, lng, { kind: b.dataset.k, name: b.dataset.k === 'coast' ? 'Coast near here' : 'River near here' });
+    }));
+    L.popup({ closeButton: true }).setLatLng(e.latlng).setContent(div).openOn(state.lmap);
+  }
+
+  /* ---------- on-demand flood modelling */
+
+  async function fetchDemWindow(lat, lon, halfKm, cellM) {
+    const dLat = (halfKm * 1000) / 110574;
+    const dLon = (halfKm * 1000) / (111320 * Math.cos((lat * Math.PI) / 180));
+    const w = lon - dLon, e = lon + dLon, s = lat - dLat, n = lat + dLat;
+    const W = Math.round((2 * halfKm * 1000) / cellM), H = W;
+    const url = `${DEMH_WCS}?service=WCS&version=1.0.0&request=GetCoverage&coverage=1&crs=EPSG:4326`
+      + `&bbox=${w.toFixed(6)},${s.toFixed(6)},${e.toFixed(6)},${n.toFixed(6)}&width=${W}&height=${H}&format=GeoTIFF`;
+    const r = await fetch(url);
+    if (!r.ok) throw new Error(`the elevation service returned ${r.status}`);
+    const type = r.headers.get('content-type') || '';
+    if (!/tiff/i.test(type)) throw new Error('the elevation service did not return elevation data for this place');
+    await loadGeoTiffLib();
+    const tiff = await window.GeoTIFF.fromArrayBuffer(await r.arrayBuffer());
+    const img = await tiff.getImage();
+    const iw = img.getWidth(), ih = img.getHeight();
+    const data = (await img.readRasters({ samples: [0] }))[0];
+    const nd = img.getGDALNoData();
+    const dem = new Float32Array(iw * ih), valid = new Uint8Array(iw * ih);
+    let land = 0;
+    for (let i = 0; i < iw * ih; i++) {
+      let v = data[i];
+      // DEM-H marks the sea as no data; treat it as water just below sea level
+      if (!Number.isFinite(v) || v === nd || v < -1000 || v > 9000) v = -1.5;
+      else land++;
+      dem[i] = v; valid[i] = 1;
+    }
+    if (land < iw * ih * 0.05) throw new Error('there is almost no land in the elevation data here');
+    let bounds = [w, s, e, n];
+    try { const bb = img.getBoundingBox(); if (bb && bb.length === 4 && Math.abs(bb[0] - w) < 0.05) bounds = bb; } catch (err) { /* use request box */ }
+    const cell = ((bounds[2] - bounds[0]) * 111320 * Math.cos((lat * Math.PI) / 180)) / iw;
+    return { grid: { W: iw, H: ih, cell, dem, valid }, bounds };
+  }
+
+  async function modelHere(lat, lon, opts) {
+    const o = Object.assign({ kind: 'river', name: 'This area' }, opts || {});
+    const t0 = performance.now();
+    setBusy(true, 'Downloading elevation for this area…');
+    status.local = { started: true };
+    try {
+      const half = o.kind === 'coast' ? 8 : 10;
+      const { grid, bounds } = await fetchDemWindow(lat, lon, half, 30);
+      setBusy(true, 'Working out how water flows here…');
+      await nextFrame();
+      const col = Math.round(((lon - bounds[0]) / (bounds[2] - bounds[0])) * grid.W);
+      const row = Math.round(((bounds[3] - lat) / (bounds[3] - bounds[1])) * grid.H);
+      state.areaMeta = {
+        id: 'local', local: true, kind: o.kind, name: o.name, bounds_lonlat: bounds,
+        gauge: { col, row }, streamAreaKm2: Math.max(0.5, Math.min(4, (grid.W * grid.H * grid.cell * grid.cell) / 1e6 * 0.004)),
+        source: 'Terrain: Geoscience Australia 1-second (about 30 m) hydrologically enforced elevation model (DEM-H), CC BY 4.0, read live from GA.',
+      };
+      let op = $('area').querySelector('option[value="local"]');
+      if (!op) { op = document.createElement('option'); op.value = 'local'; $('area').insertBefore(op, $('area').children[1] || null); }
+      op.textContent = `Modelled: ${o.name}`;
+      $('area').value = 'local';
+      useGrid(grid, 'local', { events: false });
+      if (o.kind === 'coast') {
+        ctl.bayLevel.value = 1.5;
+        if (state.gauge >= 0) ctl.gaugeLevel.value = Math.max(parseFloat(ctl.gaugeLevel.min), Math.round((state.a.dem[state.gauge] + 0.5) * 20) / 20);
+        state.base = null;
+        syncOutputs();
+        runScenario();
+      }
+      status.local = { ok: true, W: grid.W, H: grid.H, cell: Math.round(grid.cell), ms: Math.round(performance.now() - t0), kind: o.kind };
+      openPanel('panel-scenario');
+      say(o.kind === 'coast'
+        ? 'Coastal model ready. Set the bay level and sea-level rise in Scenario.'
+        : 'River model ready. Set the peak level at the gauge in Scenario.');
+    } catch (err) {
+      status.local = { ok: false, error: String(err.message || err) };
+      say(`Couldn’t model this area: ${err.message || err}.`);
+    } finally {
+      setBusy(false);
+    }
+  }
+  window.__floodModelHere = modelHere;
 
   /* --------------------------------------------------------- panels */
   const isPhone = () => window.matchMedia('(max-width: 760px)').matches;

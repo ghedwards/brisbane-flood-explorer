@@ -31,7 +31,7 @@ def fake(method, path, params=None, body=None):
             {"gaugeId": "g2", "siteName": "No model", "hasModel": False,
              "location": {"latitude": -27.6, "longitude": 152.9}}]}
     if path == "floodStatus:searchLatestFloodStatusByArea":
-        assert len(body["loop"]["vertices"]) == 4
+        assert body.get("regionCode") == "AU" or len(body["loop"]["vertices"]) == 4
         return {"floodStatuses": [{
             "gaugeId": "g1", "severity": "SEVERE", "forecastTrend": "RISE",
             "issuedTime": "2026-10-14T00:00:00Z",
@@ -56,6 +56,15 @@ def fake(method, path, params=None, body=None):
     raise AssertionError(f"unexpected call {method} {path}")
 
 
+def box_config(tmp):
+    cfg = json.loads(Path(CONFIG).read_text())
+    cfg.pop("floodhub_region", None)
+    cfg["floodhub_bbox_lonlat"] = [151.9, -28.4, 153.6, -26.4]
+    p = Path(tmp) / "cfg.json"
+    p.write_text(json.dumps(cfg))
+    return str(p)
+
+
 class FloodHubTests(unittest.TestCase):
     def test_kml_polygon(self):
         g = fh.kml_to_geometry(KML)
@@ -74,11 +83,20 @@ class FloodHubTests(unittest.TestCase):
             s = json.loads((Path(d) / "floodhub.json").read_text())
             self.assertFalse(s["configured"])
 
-    def test_full_fetch_with_mocked_api(self):
+    def test_national_fetch_keeps_all_australian_flash_floods(self):
         with tempfile.TemporaryDirectory() as d, \
                 mock.patch.dict(os.environ, {"FLOOD_FORECASTING_API_KEY": "test"}), \
                 mock.patch.object(fh.Api, "_req", lambda self, m, p, params=None, body=None: fake(m, p, params, body)):
             fh.main(CONFIG, d)
+            s = json.loads((Path(d) / "floodhub.json").read_text())
+        self.assertEqual(s["regionCode"], "AU")
+        self.assertEqual(len(s["flashFloodEvents"]), 2)
+
+    def test_full_fetch_with_mocked_api(self):
+        with tempfile.TemporaryDirectory() as d, \
+                mock.patch.dict(os.environ, {"FLOOD_FORECASTING_API_KEY": "test"}), \
+                mock.patch.object(fh.Api, "_req", lambda self, m, p, params=None, body=None: fake(m, p, params, body)):
+            fh.main(box_config(d), d)
             s = json.loads((Path(d) / "floodhub.json").read_text())
             gj = json.loads((Path(d) / "floodhub.geojson").read_text())
         self.assertTrue(s["configured"])

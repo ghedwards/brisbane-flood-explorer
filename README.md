@@ -10,6 +10,17 @@ The heavy terrain work is done by the hydrology tools that power [RustGIS](https
 
 > **Not for emergency or property decisions.** This is a screening model built on a 30 m surface model. Use [Brisbane City Council Flood Awareness Maps](https://fam.brisbane.qld.gov.au/) and [Bureau of Meteorology warnings](https://www.bom.gov.au/qld/warnings/) for real flood risk.
 
+## Australia-wide view
+
+The app opens on a map of Australia:
+
+- **Bureau of Meteorology flood forecast gauges, tide gauges and dams**, with flood information and other river gauges appearing as you zoom in. Dams are coloured by how full they are.
+- **Tap any of them for a report:** location, basin or river, operator, the latest daily reading from Water Data Online with a 10-day trend, percentage full for dams, and Google Flood Hub's forecast for a nearby gauge when that feed is connected.
+- **Model flooding here:** from a report, or by tapping anywhere on the map. The app downloads Geoscience Australia's 1-second (about 30 m) hydrologically enforced elevation model (DEM-H) for a 20 km square around the point. It works out how water flows across it in the browser, then runs the same flood model used for Brisbane. River models start with the water 3 m above the river surface at that point. Coastal models start with the bay at 1.5 m, and sea-level rise can be added. Heights are metres above sea level, not the gauge's own datum.
+- **Lower Brisbane River** remains available from the menu as the detailed, pre-processed model with historic flood peaks and council layers.
+
+The build fetches the Bureau's gauges, dams and readings every three hours ([`pipeline/fetch_national.py`](pipeline/fetch_national.py)), because the Bureau's services don't allow requests straight from a web page. Geoscience Australia's elevation service and Digital Earth Australia's layers do, so the page reads those directly.
+
 ## How it works
 
 ```mermaid
@@ -127,7 +138,7 @@ python3 -m http.server -d viewer 8000
 
 ```sh
 node --test tests/core.test.js
-python -m unittest tests/test_floodhub.py   # Flood Hub fetcher, with the API mocked
+python -m unittest tests/test_floodhub.py tests/test_national.py   # data fetchers, with the services mocked
 ```
 
 The tests check routing (every cell drains), monotonic flooding, water levels at the gauge and mouth, connectivity, and that Whitebox D8 pointers from the pipeline reproduce the browser's own routing exactly.
@@ -147,6 +158,8 @@ tests/                       Node tests for the flood model
 - Terrain: Copernicus GLO-30 Digital Elevation Model, © DLR e.V. 2010–2014 and © Airbus Defence and Space GmbH 2014–2018, provided under COPERNICUS by the European Union and ESA; all rights reserved. Accessed through the [AWS Open Data registry](https://registry.opendata.aws/copernicus-dem/).
 - Hydrology tools: [GeoLibre](https://github.com/opengeos/geolibre-rust) and [Whitebox](https://github.com/opengeos/whitebox-wasm), as used by [RustGIS](https://github.com/opengeos/RustGIS).
 - Flood peaks: Bureau of Meteorology.
+- National gauges, dams and readings: © Commonwealth of Australia (Bureau of Meteorology): the [National Flood Gauge Network](https://data.gov.au/data/dataset/national-flood-gauge-network) (CC BY 4.0), Australian water storages, and [Water Data Online](http://www.bom.gov.au/waterdata/) (CC BY; some data owners set their own terms).
+- On-demand terrain: [Geoscience Australia DEM-H](https://data.gov.au/data/dataset/66c4df82-b8bb-48b9-9649-3ac082625c9f), 1-second SRTM-derived hydrologically enforced DEM, CC BY 4.0.
 - Live forecasts: [Google Flood Hub](https://sites.research.google/floods/) via the Flood Forecasting API, CC BY 4.0.
 - Creek and overland flow likelihood and recorded flood extents: [Brisbane City Council Flood Awareness data](https://data.brisbane.qld.gov.au/), CC BY 4.0, read live from the council's ArcGIS services with [esri-leaflet](https://github.com/Esri/esri-leaflet).
 - GeoTIFF reading in the browser: [geotiff.js](https://github.com/geotiffjs/geotiff.js).

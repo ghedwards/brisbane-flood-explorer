@@ -36,8 +36,8 @@ jobs:
           cache: pip
           cache-dependency-path: pipeline/requirements.txt
 
-      - name: Test the Flood Hub fetcher
-        run: python -m unittest tests/test_floodhub.py
+      - name: Test the data fetchers
+        run: python -m unittest tests/test_floodhub.py tests/test_national.py
 
       - name: Install Python packages
         run: pip install -r pipeline/requirements.txt
@@ -88,6 +88,11 @@ jobs:
             rm -f work/brisbane/*.tif  # never cache a partial build
           fi
 
+      - name: Fetch national BoM gauges, dams and readings
+        id: national
+        continue-on-error: true
+        run: python pipeline/fetch_national.py site/data/national | tee national.log
+
       - name: Fetch Google Flood Hub forecasts
         id: floodhub
         continue-on-error: true
@@ -102,10 +107,13 @@ jobs:
             echo "- Terrain from cache: ${{ steps.terrain.outputs.cache-hit || 'false' }}"
             echo "- DEM download: ${{ steps.dem.outcome || 'skipped' }}"
             echo "- GeoLibre hydrology: ${{ steps.hydro.outcome || 'skipped' }}"
+            echo "- National BoM data: ${{ steps.national.outcome }} — $(grep '^National' national.log 2>/dev/null)"
             echo "- Flood Hub: ${{ steps.floodhub.outcome }} — $(tail -n1 floodhub.log 2>/dev/null)"
             du -sh site/data/* 2>/dev/null | sed 's/^/- /' || true
           } >> "$GITHUB_STEP_SUMMARY"
           echo "::notice::$(tail -n1 floodhub.log 2>/dev/null)"
+          echo "::notice::$(grep '^National' national.log 2>/dev/null)"
+          grep '^warning:' national.log 2>/dev/null | head -3 | sed 's/^warning:/::warning::National data: /' || true
 
       - uses: actions/configure-pages@v5
 
