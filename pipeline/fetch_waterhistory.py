@@ -42,6 +42,12 @@ def get(url, as_json=True, retries=2):
             with urllib.request.urlopen(urllib.request.Request(url, headers=UA), timeout=30) as r:
                 data = r.read()
             return json.loads(data) if as_json else data.decode("utf-8", "replace")
+        except urllib.error.HTTPError as e:
+            if e.code in (403, 404):  # DEA's store answers 403 for files that don't exist
+                raise FileNotFoundError(url) from None
+            last = e
+            time.sleep(3)
+            continue
         except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as e:
             last = e
             time.sleep(3)
@@ -117,7 +123,11 @@ def one(feature):
     url = wb["properties"].get("timeseries")
     if not url:
         return p["id"], None, "no time series"
-    series = monthly_series(get(url, as_json=False))
+    try:
+        text = get(url, as_json=False)
+    except FileNotFoundError:
+        return p["id"], None, "no time series file"
+    series = monthly_series(text)
     if not series:
         return p["id"], None, "empty time series"
     series.update({"uid": wb["properties"].get("uid"), "area_m2": wb["properties"].get("area_m2")})
@@ -173,12 +183,16 @@ def main(national_dir: str, previous: str = "") -> None:
                         done += 1
                     else:
                         misses += 1
+                        if sid not in out or out[sid].get("missing"):
+                            # remember the miss so it isn't retried for a week
+                            out[sid] = {"missing": why, "fetched": today.isoformat()}
                 except Exception as e:
                     errors.append(str(e)[:200])
                 submit()
     (d / "waterhistory.json").write_text(json.dumps(out, separators=(",", ":")))
     left = sum(1 for f in storages if not fresh(f["properties"]["id"]))
-    print(f"Water history: {len(out)} of {len(storages)} dams on record ({done} updated this run, "
+    have = sum(1 for h in out.values() if not h.get("missing"))
+    print(f"Water history: {have} of {len(storages)} dams on record ({done} updated this run, "
           f"{misses} without a record, {len(errors)} errors, {left} still to fetch)")
     for e in errors[:3]:
         print("warning:", e)

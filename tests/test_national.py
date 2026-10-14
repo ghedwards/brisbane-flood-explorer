@@ -141,3 +141,18 @@ class WaterHistoryTests(unittest.TestCase):
             out = json.loads((Path(d) / "waterhistory.json").read_text())
         self.assertEqual(out["7"]["uid"], "kept")   # fresh: not refetched
         self.assertEqual(out["8"]["uid"], "r7hk")   # missing: fetched
+
+
+class MissingFileTests(unittest.TestCase):
+    def test_forbidden_file_is_recorded_as_missing(self):
+        import urllib.error
+        def fake(url, as_json=True, retries=2):
+            if url.startswith(wh.WFS):
+                return fake_wh(url)
+            raise FileNotFoundError(url)
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(wh, "get", fake):
+            (Path(d) / "storages.geojson").write_text(json.dumps({"features": [
+                {"geometry": {"type": "Point", "coordinates": [152.55, -27.25]}, "properties": {"id": "9"}}]}))
+            wh.main(d)
+            out = json.loads((Path(d) / "waterhistory.json").read_text())
+        self.assertEqual(out["9"]["missing"], "no time series file")

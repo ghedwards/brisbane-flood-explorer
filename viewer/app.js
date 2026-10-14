@@ -1673,7 +1673,7 @@
     box.innerHTML = '<p class="hint">Looking up satellite records for this dam…</p>';
     const all = await loadWaterHistory();
     const h = all[storageId];
-    if (!h) {
+    if (!h || h.missing || !h.monthly) {
       box.innerHTML = '<p class="hint">No satellite water record is available for this dam.</p>';
       status.waterbodies = { ok: false, error: 'no record' };
       return;
