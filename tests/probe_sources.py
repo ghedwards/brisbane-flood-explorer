@@ -49,11 +49,39 @@ JS = """async ([url, range]) => {
 }"""
 
 
+TIFF_JS = """async (url) => {
+  const r = await fetch(url);
+  const buf = await r.arrayBuffer();
+  const dv = new DataView(buf);
+  const le = dv.getUint16(0) === 0x4949;
+  const u16 = (o) => dv.getUint16(o, le), u32 = (o) => dv.getUint32(o, le);
+  const out = { status: r.status, type: r.headers.get('content-type'), bytes: buf.byteLength, magic: u16(2) };
+  try {
+    let ifd = u32(4), n = 0; out.ifds = [];
+    while (ifd && n < 4 && ifd < buf.byteLength) {
+      const count = u16(ifd); const tags = {};
+      for (let i = 0; i < count; i++) {
+        const e = ifd + 2 + i * 12;
+        const tag = u16(e), type = u16(e + 2), cnt = u32(e + 4), val = type === 3 && cnt === 1 ? u16(e + 8) : u32(e + 8);
+        tags[tag] = [type, cnt, val];
+      }
+      out.ifds.push(tags);
+      ifd = u32(ifd + 2 + count * 12); n++;
+    }
+  } catch (e) { out.parseError = String(e); }
+  return out;
+}"""
+
+
 def main() -> int:
     with sync_playwright() as p:
         browser = p.chromium.launch()
         page = browser.new_page()
         page.goto(URL, wait_until="domcontentloaded", timeout=90_000)
+        wcs = PROBES["GA DEM-H elevation (WCS GeoTIFF)"].split("&bbox=")[0]
+        for label, bbox in [("land", "152.92,-27.56,153.14,-27.38"), ("coast", "153.06,-27.46,153.28,-27.28")]:
+            res = page.evaluate(TIFF_JS, wcs + "&bbox=" + bbox + "&width=667&height=667&format=GeoTIFF")
+            print(f"::notice::TIFF {label}: {json.dumps(res)[:900]}")
         for name, url in PROBES.items():
             res = page.evaluate(JS, [url, "S3 COG" in name])
             level = "notice" if res.get("ok") else "warning"
