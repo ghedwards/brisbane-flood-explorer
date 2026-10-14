@@ -461,11 +461,23 @@
   const TILE_ATTR = OSM_ATTR + ' &copy; <a href="https://carto.com/attributions">CARTO</a>';
   const QLD_ATTR = '&copy; State of Queensland (Department of Natural Resources and Mines, Manufacturing and Regional and Rural Development), <a href="https://creativecommons.org/licenses/by/4.0/">CC BY 4.0</a>';
   const QLD_GIS = 'https://spatial-gis.information.qld.gov.au/arcgis/rest/services/Basemaps/';
+  // Digital Earth Australia (Geoscience Australia) map services, CC BY 4.0
+  const DEA_OWS = 'https://ows.dea.ga.gov.au/';
+  const DEA_ATTR = 'Satellite data &copy; <a href="https://www.dea.ga.gov.au/">Digital Earth Australia</a> (Geoscience Australia; Landsat, Copernicus Sentinel-2), CC BY 4.0';
+  function deaWms(L, params, opts) {
+    return L.tileLayer.wms(DEA_OWS, Object.assign({
+      format: 'image/png', transparent: true, version: '1.3.0', tileSize: 512, zoomOffset: 0,
+    }, params, opts));
+  }
 
   // Basemaps offered in the layer switcher. The first is the default.
   const BASEMAPS = [
     { name: 'Satellite (Esri)', url: () => 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
       opts: { attribution: 'Imagery &copy; Esri, Maxar, Earthstar Geographics and the GIS User Community', maxZoom: 19 } },
+    { name: 'Latest satellite, infrared (DEA)', wms: { layers: 's2_ls_combined', styles: 'false_colour' },
+      opts: { attribution: DEA_ATTR, maxZoom: 19, maxNativeZoom: 16, minZoom: 7 } },
+    { name: 'Latest satellite, true colour (DEA)', wms: { layers: 's2_ls_combined', styles: 'true_colour' },
+      opts: { attribution: DEA_ATTR, maxZoom: 19, maxNativeZoom: 16, minZoom: 7 } },
     { name: 'Streets', url: () => (isDark() ? TILES.dark : TILES.light),
       opts: { attribution: TILE_ATTR, subdomains: 'abcd', maxZoom: 19 } },
     { name: 'OpenStreetMap', url: () => 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
@@ -491,6 +503,22 @@
     { name: 'Recorded flood: Jan 2011 (river)', service: 'Flood_Awareness_Historic_Brisbane_River_Floods_Jan2011', kind: 'outline', color: '#ffd400' },
     { name: 'Recorded flood: Jan 1974 (river)', service: 'Flood_Awareness_Historic_Brisbane_River_Floods_Jan1974', kind: 'outline', color: '#ff7a00' },
   ];
+
+  // Available on every real-place map, anywhere in Australia
+  const NATIONAL_OVERLAYS = [
+    { name: 'Water seen by satellite since 1987 (DEA)', layers: 'ga_ls_wo_fq_myear_3', styles: 'mysummary_wofs_frequency_3',
+      legend: 'How often satellites have seen water there: pale = rarely (floods), dark blue = usually (rivers, lakes)' },
+  ];
+
+  function makeWmsOverlay(L, o) {
+    const st = (status.overlays[o.name] = { features: 0, errors: 0 });
+    const layer = deaWms(L, { layers: o.layers, styles: o.styles }, { attribution: DEA_ATTR, opacity: 0.75, maxZoom: 19, maxNativeZoom: 16, zIndex: 5 });
+    layer.on('tileload', () => { st.features++; });
+    layer.on('tileerror', () => { st.errors++; });
+    o.layer = layer;
+    o.kind = 'wms';
+    return layer;
+  }
 
   function makeOverlay(o) {
     const esri = window.L && window.L.esri;
@@ -525,6 +553,9 @@
       const hidden = on.filter((o) => o.minZoom && z < o.minZoom);
       if (hidden.length) parts.push(`<span class="hint">Zoom in to see ${hidden.map((o) => o.name.split(' ')[0].toLowerCase()).join(' and ')} layers</span>`);
     }
+    NATIONAL_OVERLAYS.filter((o) => o.layer && state.lmap.hasLayer(o.layer)).forEach((o) => {
+      parts.push(`<span><i style="background:linear-gradient(90deg,#e6f3fb,#5aa9d6,#08306b)"></i>${escapeHtml(o.legend)}</span>`);
+    });
     on.filter((o) => o.kind === 'outline').forEach((o) => {
       parts.push(`<span><i style="background:transparent;border:2px dashed ${o.color};height:8px"></i>${o.name.replace('Recorded flood: ', 'Recorded ')}</span>`);
     });
@@ -586,7 +617,7 @@
       const layers = {};
       status.basemaps = {};
       for (const bm of BASEMAPS) {
-        const layer = L.tileLayer(bm.url(), bm.opts);
+        const layer = bm.wms ? deaWms(L, bm.wms, bm.opts) : L.tileLayer(bm.url(), bm.opts);
         const st = (status.basemaps[bm.name] = { loaded: 0, errors: 0 });
         layer.on('tileload', () => { st.loaded++; status.tilesLoaded++; });
         layer.on('tileerror', () => { st.errors++; status.tileErrors++; });
@@ -601,6 +632,7 @@
       status.basemap = first;
       status.overlays = {};
       const overlays = {};
+      for (const o of NATIONAL_OVERLAYS) overlays[o.name] = makeWmsOverlay(L, o);
       if (state.areaMeta && state.areaMeta.brisbaneGauge) {
         for (const o of OVERLAYS) { const l = makeOverlay(o); if (l) overlays[o.name] = l; }
       }
