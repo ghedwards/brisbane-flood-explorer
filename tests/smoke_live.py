@@ -63,6 +63,15 @@ def main() -> int:
             after = status()
             if after.get("floodPixels", 0) <= before.get("floodPixels", 0):
                 failures.append(f"1893 should flood more than 2011: {before.get('floodPixels')} -> {after.get('floodPixels')}")
+            # moving the gauge onto a small creek must not be possible
+            page.check("#moveGauge")
+            page.mouse.click(box["x"] + box["width"] * 0.3, box["y"] + box["height"] * 0.3)
+            page.wait_for_timeout(500)
+            moved = page.inner_text("#readout")
+            note("notice", f"Tap with gauge moving on: {moved}")
+            if "Gauge moved" in moved and "dry" in moved:
+                failures.append(f"gauge moved onto dry ground: {moved}")
+            page.uncheck("#moveGauge")
             page.click("#events .chip:nth-child(3)")  # back to 2011
             page.wait_for_timeout(800)
         else:

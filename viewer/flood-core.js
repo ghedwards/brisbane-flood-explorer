@@ -491,15 +491,17 @@
     return best;
   }
 
-  // Snap a clicked cell to the nearest stream cell within r cells
-  function snapToStream(a, x, y, r) {
+  // Snap a clicked cell to the nearest stream cell within r cells whose
+  // flow accumulation is at least minAcc cells (default: any stream)
+  function snapToStream(a, x, y, r, minAcc) {
     const R = r || 10;
+    const floor = minAcc || 0;
     let best = -1, bd = Infinity;
     for (let dy = -R; dy <= R; dy++) for (let dx = -R; dx <= R; dx++) {
       const nx = x + dx, ny = y + dy;
       if (nx < 0 || ny < 0 || nx >= a.W || ny >= a.H) continue;
       const n = ny * a.W + nx;
-      if (!a.stream[n]) continue;
+      if (!a.stream[n] || a.acc[n] < floor) continue;
       const d = dx * dx + dy * dy - Math.log10(a.acc[n]) * 0.01;
       if (d < bd) { bd = d; best = n; }
     }

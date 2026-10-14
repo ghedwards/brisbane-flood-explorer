@@ -581,9 +581,9 @@
   function onGeoClick(e) {
     const c = latLngCell(e.latlng);
     if (!c) return;
-    const s = F.snapToStream(state.a, c.x, c.y, 6);
+    const s = $('moveGauge').checked ? F.snapToStream(state.a, c.x, c.y, 6, gaugeFloor()) : -1;
     let text;
-    if (s >= 0 && s !== state.gauge && $('moveGauge').checked) {
+    if (s >= 0 && s !== state.gauge) {
       state.gauge = s;
       state.base = null;
       runScenario();
@@ -623,6 +623,13 @@
     $('readout').textContent = 'Finding your location…';
     state.lmap.locate({ setView: true, maxZoom: 15 });
   });
+
+  // Only sizeable rivers can carry the gauge: at least 5% of the main
+  // river's flow accumulation where it leaves the grid.
+  function gaugeFloor() {
+    const a = state.a;
+    return a.mainOutlet >= 0 ? a.acc[a.mainOutlet] * 0.05 : 0;
+  }
 
   function isFlood(i) { return !(state.base && state.base.wet[i]) && !state.a.ocean[i]; }
 
@@ -774,7 +781,7 @@
     if (!state.a) return;
     const c = cellAt(ev);
     if (!c) return;
-    const s = F.snapToStream(state.a, c.x, c.y, 8);
+    const s = F.snapToStream(state.a, c.x, c.y, 8, gaugeFloor());
     if (s >= 0 && s !== state.gauge) {
       state.gauge = s;
       state.base = null;
