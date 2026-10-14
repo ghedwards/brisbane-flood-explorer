@@ -154,3 +154,16 @@ test('GeoTIFF reader handles sparse tiles from the elevation service', () => {
   assert.equal(t.data[140 * 200 + 150], -9999);   // tile 3 is sparse
   assert.deepEqual(t.bounds.map((v) => +v.toFixed(3)), [153, -27.15, 153.2, -27]);
 });
+
+test('deepest-water figure ignores a single deep pit', () => {
+  const base = F.inundate(a, scenario(0.5, { bayLevel: 0 }));
+  const run = F.inundate(a, scenario(4.46));
+  const before = F.stats(a, run, base).maxDepth;
+  // dig a 30 m pit in one newly flooded, off-channel cell
+  let pit = -1;
+  for (let c = 0; c < a.N; c++) if (run.wet[c] && !base.wet[c] && !a.stream[c] && !a.ocean[c]) { pit = c; break; }
+  run.depth[pit] = 30;
+  const s = F.stats(a, run, base);
+  assert.ok(Math.abs(s.maxDepth - before) < 0.5, `p99 moved from ${before} to ${s.maxDepth}`);
+  assert.equal(s.rawMaxDepth, 30);
+});

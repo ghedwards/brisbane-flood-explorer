@@ -537,6 +537,36 @@
       legend: 'How often satellites have seen water there: pale = rarely (floods), dark blue = usually (rivers, lakes)' },
   ];
 
+  // State flood mapping, drawn as images by each state's map server (so no
+  // cross-site data access is needed). Shown wherever the state has data.
+  const STATE_OVERLAYS = [
+    { name: 'Queensland floodplain assessment (state)', state: 'QLD',
+      url: 'https://spatial-gis.information.qld.gov.au/arcgis/rest/services/Boundaries/AdminBoundariesFramework/MapServer',
+      layers: [15], opacity: 0.45,
+      attribution: 'Queensland Floodplain Assessment Overlay &copy; State of Queensland, CC BY 4.0',
+      legend: 'Queensland floodplain assessment: land that may be on a floodplain (statewide, broad scale)', swatch: '#4a7fc1' },
+    { name: 'NSW flood planning areas (state)', state: 'NSW',
+      url: 'https://mapprod3.environment.nsw.gov.au/arcgis/rest/services/Planning/Hazard/MapServer',
+      layers: [1], opacity: 0.6, minZoom: 13,
+      attribution: 'Flood planning &copy; State of New South Wales (Department of Planning), from local environmental plans',
+      legend: 'NSW flood planning areas from council planning schemes (zoom in to see)', swatch: '#3b6fb6' },
+  ];
+
+  function makeStateOverlay(o) {
+    const esri = window.L && window.L.esri;
+    if (!esri) return null;
+    const st = (status.overlays[o.name] = { features: 0, errors: 0 });
+    const layer = esri.dynamicMapLayer({
+      url: o.url, layers: o.layers, opacity: o.opacity, attribution: o.attribution, f: 'image', format: 'png32',
+      transparent: true, minZoom: o.minZoom || 0, zIndex: 4,
+    });
+    layer.on('load', () => { st.features++; });
+    layer.on('requesterror', () => { st.errors++; });
+    o.layer = layer;
+    o.kind = 'state';
+    return layer;
+  }
+
   function makeWmsOverlay(L, o) {
     const st = (status.overlays[o.name] = { features: 0, errors: 0 });
     const layer = deaWms(L, { layers: o.layers, styles: o.styles }, { attribution: DEA_ATTR, opacity: 0.75, maxZoom: 19, maxNativeZoom: 16, zIndex: 5 });
@@ -580,6 +610,10 @@
       const hidden = on.filter((o) => o.minZoom && z < o.minZoom);
       if (hidden.length) parts.push(`<span class="hint">Zoom in to see ${hidden.map((o) => o.name.split(' ')[0].toLowerCase()).join(' and ')} layers</span>`);
     }
+    STATE_OVERLAYS.filter((o) => o.layer && state.lmap.hasLayer(o.layer)).forEach((o) => {
+      const z = state.lmap.getZoom();
+      parts.push(`<span><i style="background:${o.swatch};opacity:.6"></i>${escapeHtml(o.legend)}${o.minZoom && z < o.minZoom ? ' <em>(zoom in)</em>' : ''}</span>`);
+    });
     NATIONAL_OVERLAYS.filter((o) => o.layer && state.lmap.hasLayer(o.layer)).forEach((o) => {
       parts.push(`<span><i style="background:linear-gradient(90deg,#e6f3fb,#5aa9d6,#08306b)"></i>${escapeHtml(o.legend)}</span>`);
     });
@@ -660,6 +694,7 @@
       status.overlays = {};
       const overlays = {};
       for (const o of NATIONAL_OVERLAYS) overlays[o.name] = makeWmsOverlay(L, o);
+      for (const o of STATE_OVERLAYS) { const l = makeStateOverlay(o); if (l) overlays[o.name] = l; }
       const fhLayers = floodHubOverlays(L);
       Object.assign(overlays, fhLayers);
       const fh = state.floodhub;
@@ -1516,6 +1551,8 @@
       }
     }
 
+    if (p.kind === 'storage') html += '<div id="waterHistory"></div>';
+
     // Google Flood Hub near this point
     const fhg = p.kind !== 'storage' ? nearestFloodHubGauge(lat, lon, 15) : null;
     if (fhg && fhg.status) {
@@ -1531,6 +1568,7 @@
       <button type="button" class="btn primary" id="reportModel">${kind === 'coast' ? 'Model coastal flooding here' : 'Model flooding here'}</button>
       ${p.kind !== 'tide' && p.kind !== 'storage' ? '' : ''}
       <button type="button" class="btn" id="reportZoom">Zoom to</button>
+      ${stateLayerFor(p.state) ? `<button type="button" class="btn" id="reportState">Show ${escapeHtml(stateLayerFor(p.state).state)} flood mapping</button>` : ''}
     </div>`;
     const links = [];
     if (p.url) links.push(`<a href="${escapeHtml(p.url)}" target="_blank" rel="noopener">BoM water storage page</a>`);
@@ -1543,9 +1581,24 @@
     $('h-report').textContent = p.kind === 'storage' ? 'Dam report' : p.kind === 'tide' ? 'Tide gauge report' : 'River gauge report';
     $('reportModel').addEventListener('click', () => modelHere(lat, lon, { kind, name: p.name }));
     $('reportZoom').addEventListener('click', () => state.lmap && state.lmap.setView([lat, lon], 13));
+    const sl = stateLayerFor(p.state);
+    if (sl && $('reportState')) $('reportState').addEventListener('click', () => {
+      if (sl.layer && state.lmap) {
+        sl.layer.userOn = true; sl.layer.addTo(state.lmap);
+        state.lmap.setView([lat, lon], Math.max(state.lmap.getZoom(), sl.minZoom || 11));
+        syncLayerLists(); renderOverlayLegend();
+      }
+    });
+    if (p.kind === 'storage') addWaterHistory(lat, lon, $('waterHistory'));
     openPanel('panel-report');
     status.report = { name: p.name, kind: p.kind };
   }
+  function stateLayerFor(st) {
+    const code = String(st || '').toUpperCase();
+    const norm = { QUEENSLAND: 'QLD', 'NEW SOUTH WALES': 'NSW' }[code] || code;
+    return STATE_OVERLAYS.find((o) => o.state === norm && o.layer) || null;
+  }
+
   window.__floodOpenReport = (index) => {
     const f = nat.data && nat.data.gauges.filter((g) => g.properties.kind === 'forecast')[index || 0];
     if (f) openReport(f);
@@ -1566,6 +1619,124 @@
     }));
     L.popup({ closeButton: true }).setLatLng(e.latlng).setContent(div).openOn(state.lmap);
   }
+
+
+  /* ---------- satellite water history for dams (DEA Waterbodies) */
+  // Digital Earth Australia maps every waterbody seen by Landsat since 1987
+  // and publishes, for each one, the percentage of its area seen wet on
+  // every clear pass. That is a good proxy for how full a dam has been.
+  const DEA_WFS = 'https://geoserver.dea.ga.gov.au/geoserver/wfs';
+  const WB_LAYERS = ['DigitalEarthAustraliaWaterbodies_v3', 'DigitalEarthAustraliaWaterbodies'];
+  status.waterbodies = {};
+
+  async function findWaterbody(lat, lon) {
+    const d = 0.02; // ~2 km search box
+    const w = lon - d, e = lon + d, s = lat - d, n = lat + d;
+    const variants = [];
+    for (const layer of WB_LAYERS) {
+      variants.push(['1.1.0 latlon', `version=1.1.0&typeName=${layer}&bbox=${s},${w},${n},${e},EPSG:4326`]);
+      variants.push(['1.1.0 lonlat', `version=1.1.0&typeName=${layer}&bbox=${w},${s},${e},${n},EPSG:4326`]);
+      variants.push(['2.0.0 urn', `version=2.0.0&typeNames=${layer}&bbox=${s},${w},${n},${e},urn:ogc:def:crs:EPSG::4326`]);
+    }
+    const tried = [];
+    for (const [label, q] of variants) {
+      try {
+        const r = await fetch(`${DEA_WFS}?service=WFS&request=GetFeature&outputFormat=application/json&srsName=EPSG:4326&${q}`);
+        if (!r.ok) { tried.push(`${label}:${r.status}`); continue; }
+        const gj = await r.json();
+        const feats = (gj.features || []).filter((f) => f.geometry);
+        tried.push(`${label}:${feats.length}`);
+        if (!feats.length) continue;
+        // prefer the waterbody containing the dam point, else the largest
+        const inside = feats.find((f) => pointInGeom([lon, lat], f.geometry));
+        const pick = inside || feats.slice().sort((a, b) => (b.properties.area_m2 || 0) - (a.properties.area_m2 || 0))[0];
+        status.waterbodies.query = label;
+        return pick;
+      } catch (err) {
+        tried.push(`${label}:error`);
+      }
+    }
+    status.waterbodies.tried = tried;
+    return null;
+  }
+
+  function pointInRing(pt, ring) {
+    let inside = false;
+    for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+      const [xi, yi] = ring[i], [xj, yj] = ring[j];
+      if (((yi > pt[1]) !== (yj > pt[1])) && pt[0] < ((xj - xi) * (pt[1] - yi)) / (yj - yi) + xi) inside = !inside;
+    }
+    return inside;
+  }
+  function pointInGeom(pt, g) {
+    const polys = g.type === 'Polygon' ? [g.coordinates] : g.type === 'MultiPolygon' ? g.coordinates : [];
+    return polys.some((p) => pointInRing(pt, p[0]) && !p.slice(1).some((h) => pointInRing(pt, h)));
+  }
+
+  async function waterHistory(feature) {
+    const p = feature.properties || {};
+    const url = p.timeseries || p.timeseries_url;
+    if (!url) throw new Error('no time series is published for this waterbody');
+    const r = await fetch(url);
+    if (!r.ok) throw new Error(`time series returned ${r.status}`);
+    const rows = (await r.text()).trim().split(/\r?\n/).slice(1);
+    const out = [];
+    for (const line of rows) {
+      const [date, pc] = line.split(',');
+      const t = Date.parse(date), v = parseFloat(pc);
+      if (Number.isFinite(t) && Number.isFinite(v)) out.push([t, v]);
+    }
+    if (!out.length) throw new Error('the time series is empty');
+    return out;
+  }
+
+  function historyChart(series) {
+    const t0 = series[0][0], t1 = series[series.length - 1][0];
+    const span = t1 - t0 || 1;
+    const X = (t) => 4 + ((t - t0) / span) * 292, Y = (v) => 86 - (Math.max(0, Math.min(100, v)) / 100) * 78;
+    const pts = series.map(([t, v]) => `${X(t).toFixed(1)},${Y(v).toFixed(1)}`).join(' ');
+    const y0 = new Date(t0).getFullYear(), y1 = new Date(t1).getFullYear();
+    const ticks = [];
+    const step = Math.max(1, Math.round((y1 - y0) / 4));
+    for (let y = Math.ceil(y0 / step) * step; y <= y1; y += step) {
+      const x = X(Date.UTC(y, 0, 1));
+      if (x > 20 && x < 280) ticks.push(`<line x1="${x}" x2="${x}" y1="8" y2="86" stroke="var(--line)"/><text x="${x}" y="99" text-anchor="middle">${y}</text>`);
+    }
+    return `<svg viewBox="0 0 300 104" style="width:100%;height:auto;display:block;font:9px var(--font-data);fill:var(--muted)" role="img" aria-label="Percentage of the waterbody seen wet, ${y0} to ${y1}">
+      ${ticks.join('')}
+      <line x1="4" x2="296" y1="${Y(100)}" y2="${Y(100)}" stroke="var(--line)"/><line x1="4" x2="296" y1="${Y(50)}" y2="${Y(50)}" stroke="var(--line)" stroke-dasharray="2 3"/>
+      <text x="6" y="${Y(100) + 9}">100%</text><text x="6" y="${Y(50) - 2}">50%</text>
+      <polyline points="${pts}" fill="none" stroke="var(--accent)" stroke-width="1.2" vector-effect="non-scaling-stroke"/>
+    </svg>`;
+  }
+
+  async function addWaterHistory(lat, lon, box) {
+    box.innerHTML = '<p class="hint">Looking up satellite records for this dam…</p>';
+    try {
+      const wb = await findWaterbody(lat, lon);
+      if (!wb) { box.innerHTML = '<p class="hint">No satellite water record was found for this dam.</p>'; status.waterbodies.ok = false; return; }
+      const series = await waterHistory(wb);
+      const last = series[series.length - 1];
+      const recent = series.filter(([t]) => t > Date.now() - 5 * 365 * 864e5).map(([, v]) => v);
+      const lo = recent.length ? Math.min(...recent) : NaN, hi = recent.length ? Math.max(...recent) : NaN;
+      box.innerHTML = `<div class="reading"><span class="label">Water seen by satellite</span>
+        <div class="big">${Math.round(last[1])}<small>% of surface wet</small></div>
+        <span class="hint">On ${escapeHtml(fmtDate(new Date(last[0]).toISOString()))}. Over the last 5 years it ranged ${Math.round(lo)}–${Math.round(hi)}%. ${series.length.toLocaleString('en-AU')} clear satellite passes since ${new Date(series[0][0]).getFullYear()}.</span>
+        ${historyChart(series)}
+        <span class="hint">Digital Earth Australia Waterbodies (Geoscience Australia, Landsat), CC BY 4.0. Surface area, not volume.</span></div>`;
+      status.waterbodies.ok = true;
+      status.waterbodies.points = series.length;
+    } catch (err) {
+      box.innerHTML = `<p class="hint">Satellite water history isn’t available: ${escapeHtml(err.message || String(err))}.</p>`;
+      status.waterbodies.ok = false;
+      status.waterbodies.error = String(err.message || err);
+    }
+  }
+  window.__floodOpenDam = (name) => {
+    const f = nat.data && nat.data.storages.find((x) => !name || (x.properties.name || '').includes(name));
+    if (f) openReport(f);
+    return !!f;
+  };
 
   /* ---------- on-demand flood modelling */
 

@@ -587,7 +587,8 @@
    */
   function stats(a, run, base) {
     const cellKm2 = (a.cell * a.cell) / 1e6;
-    let land = 0, extra = 0, maxD = 0, sumD = 0, deep = 0;
+    let land = 0, extra = 0, rawMax = 0, sumD = 0, deep = 0;
+    const offChannel = [];
     for (let c = 0; c < a.N; c++) {
       if (!run.wet[c] || a.ocean[c]) continue;
       land++;
@@ -595,14 +596,24 @@
       extra++;
       const d = run.depth[c];
       sumD += d;
-      if (d > maxD) maxD = d;
+      if (d > rawMax) rawMax = d;
       if (d >= 1) deep++;
+      if (!a.stream[c]) offChannel.push(d);
+    }
+    // "Deepest water" is the 99th percentile of newly flooded land away from
+    // stream channels: single pits, quarries and carved channel cells in the
+    // elevation model otherwise dominate the maximum.
+    let p99 = 0;
+    if (offChannel.length) {
+      offChannel.sort((x, y) => x - y);
+      p99 = offChannel[Math.min(offChannel.length - 1, Math.floor(offChannel.length * 0.99))];
     }
     return {
       wetLandKm2: land * cellKm2,
       floodedKm2: extra * cellKm2,
       deepKm2: deep * cellKm2,
-      maxDepth: maxD,
+      maxDepth: p99,
+      rawMaxDepth: rawMax,
       meanDepth: extra ? sumD / extra : 0,
     };
   }
