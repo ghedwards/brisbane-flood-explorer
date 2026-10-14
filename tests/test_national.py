@@ -127,3 +127,17 @@ class WaterHistoryTests(unittest.TestCase):
             wh.main(d)
             out = json.loads((Path(d) / "waterhistory.json").read_text())
         self.assertEqual(out["7"]["uid"], "r7hk")
+        self.assertIn("fetched", out["7"])
+
+    def test_keeps_fresh_records_and_fills_missing(self):
+        import datetime as dt
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(wh, "get", fake_wh):
+            (Path(d) / "storages.geojson").write_text(json.dumps({"features": [
+                {"geometry": {"type": "Point", "coordinates": [152.55, -27.25]}, "properties": {"id": "7"}},
+                {"geometry": {"type": "Point", "coordinates": [152.55, -27.25]}, "properties": {"id": "8"}}]}))
+            prev = Path(d) / "prev.json"
+            prev.write_text(json.dumps({"7": {"uid": "kept", "fetched": dt.date.today().isoformat()}}))
+            wh.main(d, str(prev))
+            out = json.loads((Path(d) / "waterhistory.json").read_text())
+        self.assertEqual(out["7"]["uid"], "kept")   # fresh: not refetched
+        self.assertEqual(out["8"]["uid"], "r7hk")   # missing: fetched

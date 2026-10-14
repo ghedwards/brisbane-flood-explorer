@@ -1,7 +1,11 @@
 #!/usr/bin/env python3
 """Satellite water history for every BoM water storage (dam).
 
-Usage: python pipeline/fetch_waterhistory.py site/data/national
+Usage: python pipeline/fetch_waterhistory.py site/data/national [previous.json]
+
+Runs within a time budget (WATERHISTORY_BUDGET_S, default 300 s). Dams
+already in previous.json and fetched in the last week are kept as they are,
+so successive builds fill in the rest instead of starting again.
 
 Reads storages.geojson (from fetch_national.py), finds the Digital Earth
 Australia Waterbodies polygon at each dam, downloads its Landsat time series
@@ -31,16 +35,16 @@ LAYER = "DigitalEarthAustraliaWaterbodies_v3"
 UA = {"User-Agent": "brisbane-flood-explorer (github.com/ghedwards/brisbane-flood-explorer)"}
 
 
-def get(url, as_json=True, retries=4):
+def get(url, as_json=True, retries=2):
     last = None
     for attempt in range(retries):
         try:
-            with urllib.request.urlopen(urllib.request.Request(url, headers=UA), timeout=90) as r:
+            with urllib.request.urlopen(urllib.request.Request(url, headers=UA), timeout=30) as r:
                 data = r.read()
             return json.loads(data) if as_json else data.decode("utf-8", "replace")
         except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as e:
             last = e
-            time.sleep(4 * (attempt + 1))
+            time.sleep(3)
     raise RuntimeError(f"{url[:100]}: {last}")
 
 
@@ -120,42 +124,67 @@ def one(feature):
     return p["id"], series, None
 
 
-def main(national_dir: str) -> None:
+def main(national_dir: str, previous: str = "") -> None:
+    import datetime as dt
+    import os
     d = Path(national_dir)
     storages = json.loads((d / "storages.geojson").read_text())["features"]
-    out, misses, errors = {}, 0, []
-    failed = []
+    budget = float(os.environ.get("WATERHISTORY_BUDGET_S", "300"))
+    deadline = time.monotonic() + budget
+    today = dt.date.today()
+    out = {}
+    if previous and Path(previous).exists():
+        try:
+            out = json.loads(Path(previous).read_text())
+        except json.JSONDecodeError:
+            out = {}
 
-    def run(features, workers):
-        nonlocal misses
-        again = []
-        with cf.ThreadPoolExecutor(max_workers=workers) as pool:
-            futs = {pool.submit(one, f): f for f in features}
-            for fut in cf.as_completed(futs):
+    def fresh(sid):
+        h = out.get(sid)
+        if not h or not h.get("fetched"):
+            return False
+        return (today - dt.date.fromisoformat(h["fetched"])).days < 7
+
+    todo = [f for f in storages if not fresh(f["properties"]["id"])]
+    # dams never fetched first, then the stalest
+    todo.sort(key=lambda f: (f["properties"]["id"] in out, out.get(f["properties"]["id"], {}).get("fetched", "")))
+    done = misses = 0
+    errors = []
+    with cf.ThreadPoolExecutor(max_workers=3) as pool:
+        futs = {}
+        it = iter(todo)
+        def submit():
+            for f in it:
+                if time.monotonic() > deadline:
+                    return
+                futs[pool.submit(one, f)] = f
+                return
+        for _ in range(3):
+            submit()
+        while futs:
+            fin, _ = cf.wait(list(futs), return_when=cf.FIRST_COMPLETED)
+            for fut in fin:
+                futs.pop(fut)
                 try:
                     sid, series, why = fut.result()
+                    if series:
+                        series["fetched"] = today.isoformat()
+                        out[sid] = series
+                        done += 1
+                    else:
+                        misses += 1
                 except Exception as e:
-                    again.append((futs[fut], str(e)[:200]))
-                    continue
-                if series:
-                    out[sid] = series
-                else:
-                    misses += 1
-        return again
-
-    # gentle first pass, then retry failures one at a time after a pause
-    failed = run(storages, 3)
-    if failed:
-        time.sleep(20)
-        retry = run([f for f, _ in failed], 1)
-        errors = [e for _, e in retry]
+                    errors.append(str(e)[:200])
+                submit()
     (d / "waterhistory.json").write_text(json.dumps(out, separators=(",", ":")))
-    print(f"Water history: {len(out)} of {len(storages)} dams, {misses} without a record, {len(errors)} errors")
+    left = sum(1 for f in storages if not fresh(f["properties"]["id"]))
+    print(f"Water history: {len(out)} of {len(storages)} dams on record ({done} updated this run, "
+          f"{misses} without a record, {len(errors)} errors, {left} still to fetch)")
     for e in errors[:3]:
         print("warning:", e)
 
 
 if __name__ == "__main__":
-    if len(sys.argv) != 2:
+    if len(sys.argv) not in (2, 3):
         sys.exit(__doc__)
-    main(sys.argv[1])
+    main(*sys.argv[1:])
