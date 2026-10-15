@@ -1098,7 +1098,7 @@
     if (!area) { box.innerHTML = ''; return; }
     const hidden = hiddenNums.has(r.n);
     box.innerHTML = `<div class="link-row"><span class="pin-num" style="background:${AREA_COLOR}">${r.n}</span>
-      <span>Flood model ${hidden ? '(hidden)' : 'on the map'}${area.key === state.areaKey ? ', active' : ''}</span></div>`;
+      <span>Flood model ${hidden ? '(hidden)' : 'on the map'}</span></div>`;
   }
 
   function activateArea(key, opts) {
@@ -1244,7 +1244,7 @@
       return `<li class="place${sel ? ' on' : ''}${hidden ? ' off' : ''}">
         <button type="button" class="place-main" data-num="${n}" aria-pressed="${sel}" title="Select ${escapeHtml(name)}">
           <span class="pin-num" style="background:${color}">${n}</span>
-          <span class="place-text"><span class="place-name">${escapeHtml(name)}</span><span class="place-tags">${tags}${isActive ? ' · active scenario' : ''}</span></span>
+          <span class="place-text"><span class="place-name">${escapeHtml(name)}</span><span class="place-tags">${tags}</span></span>
         </button>
         <button type="button" class="icon-btn" data-act="${r ? 'report' : 'nearest'}" data-n="${n}" aria-label="${escapeHtml(repLabel)}" title="${r ? 'Report' : 'Report on nearest gauge'}">${ICON_REPORT}</button>
         <button type="button" class="icon-btn" data-act="zoom" data-n="${n}" aria-label="Zoom to ${escapeHtml(name)}" title="Zoom to">${ICON_ZOOM}</button>
