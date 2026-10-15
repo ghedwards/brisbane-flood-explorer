@@ -168,7 +168,8 @@ The tests check routing (every cell drains), monotonic flooding, water levels at
 ```
 config/brisbane.json         area, CRS, cell size, gauge, thresholds
 pipeline/                    DEM download, GeoLibre install + hydrology, export
-viewer/                      static web app (index.html, app.js, flood-core.js)
+viewer/                      static web app: index.html (markup), styles.css, app.js,
+                             flood-core.js (model), flood-worker.js (background analysis)
 tests/                       Node tests for the flood model
 .github/workflows/build.yml  CI: test, build terrain, publish to Pages
 ```

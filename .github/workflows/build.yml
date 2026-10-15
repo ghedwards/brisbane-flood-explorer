@@ -80,7 +80,7 @@ jobs:
       - name: Assemble site
         run: |
           mkdir -p site/data
-          cp viewer/index.html viewer/app.js viewer/flood-core.js viewer/flood-worker.js site/
+          cp viewer/index.html viewer/styles.css viewer/app.js viewer/flood-core.js viewer/flood-worker.js site/
           if [ -f work/brisbane/dem.tif ] && [ -f work/brisbane/d8.tif ]; then
             python pipeline/export_viewer.py config/brisbane.json work/brisbane site/data
           else
