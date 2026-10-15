@@ -1040,8 +1040,9 @@
       area.outline = L.rectangle(bounds, { color: '#c66f1d', weight: 1.5, dashArray: '5 5', fill: false, interactive: false }).addTo(m);
       area.marker = L.marker(bounds.getCenter(), { icon: numIcon(area.n, AREA_COLOR, true), keyboard: false, zIndexOffset: 900 }).addTo(m);
       area.marker.bindTooltip(`${area.n}. ${area.name}: flood model gauge`, { direction: 'top', offset: [0, -12] });
-      area.marker.on('click', () => { activateArea(key); openPanel('panel-scenario'); });
+      area.marker.on('click', () => selectPlace(area.n));
       areaReg.set(key, area);
+      selectedNum = area.n;
       if (hiddenNums.has(area.n)) setPlaceHidden(area.n, false);
       // keep memory in check: drop the oldest inactive area
       if (areaReg.size > MAX_AREAS) {
@@ -1097,9 +1098,7 @@
     if (!area) { box.innerHTML = ''; return; }
     const hidden = hiddenNums.has(r.n);
     box.innerHTML = `<div class="link-row"><span class="pin-num" style="background:${AREA_COLOR}">${r.n}</span>
-      <span>Flood model ${hidden ? '(hidden)' : 'on the map'}${area.key === state.areaKey ? ', active' : ''}</span>
-      <button type="button" class="btn small js-eye">${hidden ? 'Show' : 'Hide'}</button></div>`;
-    box.querySelector('.js-eye').addEventListener('click', () => setPlaceHidden(r.n, !hidden));
+      <span>Flood model ${hidden ? '(hidden)' : 'on the map'}${area.key === state.areaKey ? ', active' : ''}</span></div>`;
   }
 
   function activateArea(key, opts) {
@@ -1176,9 +1175,40 @@
 
   function renderAreaList() { renderPlaces(); }
 
-  // One row per number: its report, its flood model, or both. Tapping a row
-  // opens its actions; the active flood scenario's row starts open.
-  let expandedNum = null;
+  // One row per number: its report, its flood model, a pinned spot, or a mix.
+  // Choosing a row does exactly what tapping that number on the map does
+  // (selectPlace); the icons open its report and zoom to it.
+  let selectedNum = null;
+  function placeLatLon(n) {
+    const a = areaByNumber(n), r = reports.find((x) => x.n === n), pin = pins.find((x) => x.n === n);
+    if (r) return [r.lat, r.lon];
+    if (pin) return [pin.lat, pin.lon];
+    if (a) { const b = a.areaMeta.bounds_lonlat; return [(b[1] + b[3]) / 2, (b[0] + b[2]) / 2]; }
+    return null;
+  }
+
+  // The one way a numbered place is chosen, from its map pin or its row:
+  // its flood scenario becomes active and its report shows (on a phone,
+  // the scenario wins); a bare pin just becomes the selected row.
+  function selectPlace(n, opts) {
+    const a = areaByNumber(n), r = reports.find((x) => x.n === n);
+    const fromList = !!(opts && opts.fromList);
+    selectedNum = n;
+    if (hiddenNums.has(n)) setPlaceHidden(n, false);
+    if (r && !(a && isPhone())) showReport(r);
+    if (a) { activateArea(a.key, { fit: fromList }); openPanel('panel-scenario'); }
+    if (fromList && !a && state.lmap) {
+      const ll = placeLatLon(n);
+      if (ll && !state.lmap.getBounds().pad(-0.1).contains(ll)) state.lmap.panTo(ll);
+    }
+    setPlacesCollapsed(false);
+    renderPlaces();
+  }
+  window.__floodSelectPlace = (n) => selectPlace(n, { fromList: true });
+
+  const ICON_REPORT = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 3h7l5 5v13H7z"/><path d="M14 3v5h5M10 13h6M10 17h6"/></svg>';
+  const ICON_ZOOM = '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6"/><path d="m20 20-4.5-4.5M11 8v6M8 11h6"/></svg>';
+
   function renderPlaces() {
     const box = $('areaList');
     if (!box) return;
@@ -1193,46 +1223,39 @@
     renderScenarioTitle();
     if (!nums.length) {
       box.innerHTML = `<div class="places-empty"><p><strong>No places yet.</strong></p>
-        <p class="hint">Tap a flood gauge, tide gauge or dam on the map for a report, or tap anywhere to model flooding there. Each place gets a number that matches its pins on the map.</p></div>`;
+        <p class="hint">Tap a flood gauge, tide gauge or dam on the map for a report, or tap anywhere to add a place or model flooding there. Each place gets a number that matches its pin on the map.</p></div>`;
       return;
     }
-    const active = state.areaKey && areaReg.get(state.areaKey);
-    if (expandedNum == null && active) expandedNum = active.n;
+    if (!nums.includes(selectedNum)) selectedNum = act ? act.n : null;
+    status.selectedPlace = selectedNum;
     const rows = nums.map((n) => {
       const r = reports.find((x) => x.n === n), a = areaByNumber(n), pin = pins.find((x) => x.n === n);
-      const hidden = hiddenNums.has(n), isActive = a && a.key === state.areaKey, open = expandedNum === n;
+      const hidden = hiddenNums.has(n), isActive = a && a.key === state.areaKey, sel = selectedNum === n;
       const name = (r && r.name) || (pin && pin.name) || (a && a.name) || `Place ${n}`;
       const tags = [r ? (r.kind === 'storage' ? 'dam report' : r.kind === 'tide' ? 'tide report' : 'gauge report') : null, pin ? 'pinned place' : null, a ? 'flood model' : null].filter(Boolean).join(' + ');
       const color = a ? (isActive ? AREA_COLOR : '#8a6a4a') : r ? (GAUGE_STYLE[r.kind] || GAUGE_STYLE.river).color : PIN_COLOR;
       const acts = [];
-      if (r) acts.push(`<button type="button" class="btn" data-act="report" data-n="${n}">Open report</button>`);
-      if (a) acts.push(`<button type="button" class="btn primary" data-act="scenario" data-n="${n}">${isActive ? 'Edit flood scenario' : 'Open flood scenario'}</button>`);
-      else if (r) acts.push(`<button type="button" class="btn primary" data-act="model" data-n="${n}">${r.kind === 'tide' ? 'Model coastal flooding here' : 'Model flooding here'}</button>`);
-      else if (pin) {
-        acts.push(`<button type="button" class="btn primary" data-act="model" data-n="${n}">Model river flooding here</button>`);
-        acts.push(`<button type="button" class="btn" data-act="modelcoast" data-n="${n}">Model coastal flooding here</button>`);
+      if (!a && r) acts.push(`<button type="button" class="btn primary" data-act="model" data-n="${n}">${r.kind === 'tide' ? 'Model coastal flooding here' : 'Model flooding here'}</button>`);
+      else if (!a && pin) {
+        acts.push(`<button type="button" class="btn primary" data-act="model" data-n="${n}">Model river flooding</button>`);
+        acts.push(`<button type="button" class="btn" data-act="modelcoast" data-n="${n}">Model coastal flooding</button>`);
       }
-      if (pin && !r) acts.push(`<button type="button" class="btn" data-act="nearest" data-n="${n}">Report on nearest gauge</button>`);
-      acts.push(`<button type="button" class="btn" data-act="zoom" data-n="${n}">Zoom to</button>`);
-      return `<li class="place${isActive ? ' on' : ''}${hidden ? ' off' : ''}">
-        <button type="button" class="place-main" data-num="${n}" aria-expanded="${open}">
+      const repLabel = r ? `Open the report for ${name}` : `Report on the gauge or dam nearest ${name}`;
+      return `<li class="place${sel ? ' on' : ''}${hidden ? ' off' : ''}">
+        <button type="button" class="place-main" data-num="${n}" aria-pressed="${sel}" title="Select ${escapeHtml(name)}">
           <span class="pin-num" style="background:${color}">${n}</span>
-          <span class="place-text"><span class="place-name">${escapeHtml(name)}</span><span class="place-tags">${tags}${isActive ? ' · active scenario' : ''}${hidden ? ' · hidden' : ''}</span></span>
+          <span class="place-text"><span class="place-name">${escapeHtml(name)}</span><span class="place-tags">${tags}${isActive ? ' · active scenario' : ''}</span></span>
         </button>
-        <button type="button" class="icon-btn" data-eye="${n}" aria-pressed="${!hidden}" aria-label="${hidden ? 'Show' : 'Hide'} ${escapeHtml(name)} on the map" title="${hidden ? 'Show on map' : 'Hide from map'}">${hidden ? EYE_OFF : EYE}</button>
+        <button type="button" class="icon-btn" data-act="${r ? 'report' : 'nearest'}" data-n="${n}" aria-label="${escapeHtml(repLabel)}" title="${r ? 'Report' : 'Report on nearest gauge'}">${ICON_REPORT}</button>
+        <button type="button" class="icon-btn" data-act="zoom" data-n="${n}" aria-label="Zoom to ${escapeHtml(name)}" title="Zoom to">${ICON_ZOOM}</button>
         <button type="button" class="icon-btn" data-drop="${n}" aria-label="Remove ${escapeHtml(name)}" title="Remove">×</button>
-        ${open ? `<div class="place-actions">${acts.join('')}</div>` : ''}
+        ${sel && acts.length ? `<div class="place-actions">${acts.join('')}</div>` : ''}
       </li>`;
     }).join('');
     box.innerHTML = `<ul class="places">${rows}</ul>
-      <p class="hint">Numbers match the pins on the map. Tap a gauge or dam for a new report, or tap the map to model a new place.</p>`;
-    box.querySelectorAll('[data-num]').forEach((b) => b.addEventListener('click', () => {
-      const n = +b.dataset.num;
-      expandedNum = expandedNum === n ? null : n;
-      renderPlaces();
-    }));
+      <p class="hint">Choosing a place here works like tapping its number on the map.</p>`;
+    box.querySelectorAll('[data-num]').forEach((b) => b.addEventListener('click', () => selectPlace(+b.dataset.num, { fromList: true })));
     box.querySelectorAll('[data-act]').forEach((b) => b.addEventListener('click', () => placeAction(b.dataset.act, +b.dataset.n)));
-    box.querySelectorAll('[data-eye]').forEach((b) => b.addEventListener('click', () => setPlaceHidden(+b.dataset.eye, !hiddenNums.has(+b.dataset.eye))));
     box.querySelectorAll('[data-drop]').forEach((b) => b.addEventListener('click', () => {
       const n = +b.dataset.drop, a = areaByNumber(n);
       reports.filter((r) => r.n === n).forEach(closeReport);
@@ -1242,7 +1265,7 @@
         pins.splice(i, 1);
       }
       hiddenNums.delete(n);
-      if (expandedNum === n) expandedNum = null;
+      if (selectedNum === n) selectedNum = null;
       renderPlaces();
     }));
   }
@@ -1270,23 +1293,25 @@
   function placeAction(act, n) {
     const a = areaByNumber(n), r = reports.find((x) => x.n === n), pin = pins.find((x) => x.n === n);
     if (pin && !r && (act === 'model' || act === 'modelcoast')) {
-      expandedNum = n;
+      selectedNum = n;
       modelHere(pin.lat, pin.lon, { kind: act === 'modelcoast' ? 'coast' : 'river', name: pin.name, pinN: n });
       return;
     }
-    if (act === 'nearest' && pin) {
-      const near = nearestNamed(pin.lat, pin.lon, 100);
+    if (act === 'nearest') {
+      const ll = placeLatLon(n);
+      const near = ll && nearestNamed(ll[0], ll[1], 100);
       if (near) { openReport(near.f); if (state.lmap) state.lmap.setView([near.f.geometry.coordinates[1], near.f.geometry.coordinates[0]], Math.max(state.lmap.getZoom(), 11)); }
       else say('No Bureau of Meteorology gauge or dam within 100 km of this place.');
       return;
     }
     if (act === 'report' && r) {
+      selectedNum = n;
       showReport(r);
-    } else if (act === 'scenario' && a) {
-      activateArea(a.key, { fit: true });
-      openPanel('panel-scenario');
+      renderPlaces();
+    } else if ((act === 'scenario' || act === 'select') && (a || r || pin)) {
+      selectPlace(n, { fromList: true });
     } else if (act === 'model' && r) {
-      expandedNum = n;
+      selectedNum = n;
       modelHere(r.lat, r.lon, { kind: r.kind === 'tide' ? 'coast' : 'river', name: r.name, reportId: r.id });
     } else if (act === 'zoom' && state.lmap) {
       if (a) { const b = a.areaMeta.bounds_lonlat; state.lmap.fitBounds([[b[1], b[0]], [b[3], b[2]]]); }
@@ -2039,10 +2064,10 @@
     if (state.lmap) {
       pin.marker = window.L.marker([lat, lon], { icon: numIcon(pin.n, PIN_COLOR), keyboard: false, zIndexOffset: 800 }).addTo(state.lmap);
       pin.marker.bindTooltip(`${pin.n}. ${name}`, { direction: 'top', offset: [0, -12] });
-      pin.marker.on('click', () => { setPlacesCollapsed(false); expandedNum = pin.n; renderPlaces(); });
+      pin.marker.on('click', () => selectPlace(pin.n));
     }
     pins.push(pin);
-    expandedNum = pin.n;
+    selectedNum = pin.n;
     setPlacesCollapsed(false);
     renderPlaces();
     say(`Added place ${pin.n}: ${name}.`);
@@ -2102,7 +2127,7 @@
     const [lon, lat] = f.geometry.coordinates;
     const id = `${p.kind}:${p.id}`;
     const existing = reports.find((r) => r.id === id);
-    if (existing) { showReport(existing); return; }
+    if (existing) { selectPlace(existing.n); return; }
     const st = GAUGE_STYLE[p.kind] || GAUGE_STYLE.river;
     const num = nextNumber();
     let html = `<div class="card-head"><span class="pin-num" style="background:${st.color}">${num}</span><div style="min-width:0"><span class="kind">${escapeHtml(st.label)}</span><h3>${escapeHtml(p.name || 'Unnamed')}</h3></div><button type="button" class="close js-close" aria-label="Remove this report" title="Remove this report">×</button></div>`;
@@ -2181,7 +2206,7 @@
     if (state.lmap) {
       r.pin = window.L.marker([lat, lon], { icon: numIcon(num, st.color), keyboard: false, zIndexOffset: 1000 });
       if (!hiddenNums.has(num)) r.pin.addTo(state.lmap);
-      r.pin.on('click', () => showReport(r));
+      r.pin.on('click', () => selectPlace(r.n));
     }
     q('.js-close').addEventListener('click', () => closeReport(r));
     q('.js-model').addEventListener('click', () => {
@@ -2203,6 +2228,7 @@
     link.className = 'js-link';
     q('.actions').before(link);
     reports.push(r);
+    selectedNum = num;
     $('reportBody').appendChild(el);
     // keep at most MAX_REPORTS: drop the oldest that has no flood model
     while (reports.length > MAX_REPORTS) {

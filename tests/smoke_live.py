@@ -170,13 +170,15 @@ def main() -> int:
                 page.wait_for_timeout(300)
                 if not page.locator("#areaList").is_visible():
                     failures.append("the Places list is not visible")
-                if page.locator(f"#placesCard [data-act='report'][data-n='{n}']").count() == 0:
-                    page.locator(f"#placesCard [data-num='{n}']").click()
+                page.evaluate("window.__floodOpenPanel('panel-layers')")  # close the report first
                 page.locator(f"#placesCard [data-act='report'][data-n='{n}']").click()
                 page.wait_for_timeout(400)
                 rep_open = page.locator("#panel-report").is_visible() and page.locator("#areaList").is_visible()
-                page.locator(f"#placesCard [data-act='scenario'][data-n='{n}']").click()
+                # choosing the row works like tapping its number on the map
+                page.locator(f"#placesCard [data-num='{n}']").click()
                 page.wait_for_timeout(800)
+                if page.evaluate("window.__floodStatus.selectedPlace") != n:
+                    failures.append(f"choosing place {n} in Places did not select it")
                 scen_open = page.locator("#panel-scenario").is_visible() and page.locator("#areaList").is_visible()
                 title = page.text_content("#scenarioPlace") or ""
                 if not (rep_open and scen_open and title.startswith(f"{n}.")):
