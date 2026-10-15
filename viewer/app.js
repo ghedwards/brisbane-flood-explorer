@@ -3529,7 +3529,7 @@
   // Buildings, roads and key sites come from OpenStreetMap (Overpass API);
   // people from the ABS 2021 Census by SA1, spread across each SA1's
   // buildings. Counts are for the active model and current scenario.
-  const OVERPASS = ['https://overpass-api.de/api/interpreter', 'https://overpass.kumi.systems/api/interpreter'];
+  const OVERPASS = ['https://overpass-api.de/api/interpreter', 'https://maps.mail.ru/osm/tools/overpass/api/interpreter', 'https://overpass.kumi.systems/api/interpreter'];
   const ABS_SA1 = 'https://geo.abs.gov.au/arcgis/rest/services/Hosted/ABS_2021_Census_G01_SA1/FeatureServer/0';
   const SITE_KINDS = {
     hospital: 'Hospital', clinic: 'Clinic', doctors: 'Doctors', school: 'School', kindergarten: 'Kindergarten', childcare: 'Childcare',

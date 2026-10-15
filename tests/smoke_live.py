@@ -15,7 +15,21 @@ from playwright.sync_api import sync_playwright
 URL = sys.argv[1] if len(sys.argv) > 1 else "http://localhost:8000/"
 
 
+KEY = []          # key results, shown together in one annotation at the end
+KEY_WORDS = ("Recorded floods", "Best match", "Impact", "Storm", "Joined", "Share link", "Satellite check",
+             "Presets anchored", "Presets on LiDAR", "Phone Layers", "Council layer", "Downloads", "Rain radar",
+             "Address search", "Flood warnings", "Echuca", "Extended model", "Area study")
+
+
 def note(level: str, msg: str) -> None:
+    """Warnings and errors become annotations; GitHub shows only the first
+    ten notices per step, so routine notices are printed and key ones are
+    gathered into one summary annotation at the end."""
+    if level == "notice":
+        print(msg)
+        if msg.startswith(KEY_WORDS):
+            KEY.append(msg[:400])
+        return
     print(f"::{level}::{msg}")
 
 
@@ -593,7 +607,8 @@ def main() -> int:
             loc = status().get("local") or {}
             snap = status().get("snap") or {}
             stats = page.inner_text("#stats").replace("\n", " ") if loc.get("ok") else ""
-            results.append({"id": pre["id"], "ok": bool(loc.get("ok")) and loc.get("key") != before,
+            same = page.evaluate("p => (window.__floodAreaInfo() || []).some(a => a.active && p.startsWith(a.name))", pre["name"])
+            results.append({"id": pre["id"], "ok": bool(loc.get("ok")) and (loc.get("key") != before or same),
                             "ms": loc.get("ms"), "error": loc.get("error"), "snap": snap, "stats": stats[:120],
                             "anchor": status().get("presetAnchor"), "lidar": loc.get("lidar"), "kind": pre.get("kind")})
             page.screenshot(path=f"smoke-preset-{pre['id']}.png")
@@ -631,6 +646,8 @@ def main() -> int:
     note("notice", f"Map status: {json.dumps(s1)}; after 1893: flood pixels {after.get('floodPixels')}")
     if popup:
         note("notice", f"Popup: {popup}")
+    if KEY:
+        print("::notice title=Key results::" + "%0A".join(k.replace("%", "%25").replace("\n", " ") for k in KEY))
     for f in failures:
         note("error", f)
     if not failures:
