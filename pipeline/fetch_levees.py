@@ -22,7 +22,8 @@ import urllib.request
 import zipfile
 from pathlib import Path
 
-UA = {"User-Agent": "brisbane-flood-explorer (github.com/ghedwards/brisbane-flood-explorer)"}
+UA = {"User-Agent": "brisbane-flood-explorer (github.com/ghedwards/brisbane-flood-explorer)",
+      "Accept": "application/json, application/zip, */*"}
 SEED = "https://datasets.seed.nsw.gov.au/api/3/action/package_search"
 DATANSW = "https://data.nsw.gov.au/data/api/3/action/package_search"
 VIC_WFS = "https://opendata.maps.vic.gov.au/geoserver/wfs"
@@ -84,12 +85,15 @@ def shapefile_lines(zbytes, name, source):
 
 def nsw_levees(notes):
     feats = []
-    q = urllib.parse.urlencode({"q": "levee centreline", "rows": 100})
+    q = urllib.parse.urlencode({"q": "levee", "rows": 200})
     pkgs, why = None, []
     for api in (SEED, DATANSW):   # SEED, or the NSW data portal that lists the same datasets
         try:
             pkgs = get_json(f"{api}?{q}").get("result", {}).get("results", [])
-            if pkgs:
+            pkgs = [p for p in pkgs if "levee" in (p.get("title") or "").lower()]
+            if not pkgs:
+                why.append(f"{api.split('/')[2]}: no levee datasets")
+            else:
                 notes.append(f"catalogue {api.split('/')[2]}: {len(pkgs)} datasets")
                 break
         except Exception as e:  # noqa: BLE001

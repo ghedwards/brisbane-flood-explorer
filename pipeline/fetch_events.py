@@ -71,6 +71,30 @@ def pick_gauge(ev, gauges):
     return best
 
 
+def nearby_stations(ev, limit=12):
+    """Water Data Online stations within about 8 km, river stations named
+    for the event first, then nearest."""
+    dy, dx = 8 / 110.574, 8 / (111.32 * math.cos(math.radians(ev["lat"])))
+    rows = kiwis({"request": "getStationList", "bBox": f"{ev['lon'] - dx},{ev['lat'] - dy},{ev['lon'] + dx},{ev['lat'] + dy}",
+                  "returnfields": "station_no,station_name,station_latitude,station_longitude"})
+    if not rows or not isinstance(rows, list) or len(rows) < 2:
+        return []
+    h = rows[0]
+    pat = re.compile(ev.get("match", "."), re.I)
+    out = []
+    for r in rows[1:]:
+        try:
+            lat, lon = float(r[h.index("station_latitude")]), float(r[h.index("station_longitude")])
+        except (TypeError, ValueError):
+            continue
+        name = str(r[h.index("station_name")])
+        d = km(ev["lat"], ev["lon"], lat, lon)
+        if d <= 8:
+            out.append(((0 if pat.search(name) else 100) + d,
+                        {"station": str(r[h.index("station_no")]), "name": name, "lat": lat, "lon": lon}))
+    return [x[1] for x in sorted(out, key=lambda x: x[0])][:limit]
+
+
 def pick_series(station):
     rows = kiwis({"request": "getTimeseriesList", "station_no": station, "parametertype_name": "Water Course Level",
                   "returnfields": "ts_id,ts_name"})
@@ -120,7 +144,18 @@ def fetch_event(ev, gauges):
         if ts:
             break
     if not ts:
-        out["error"] = f"none of the {min(8, len(cands))} gauges within 8 km has a water level series on Water Data Online"
+        # look for any Water Data Online station around the town instead
+        # (state-run gauges that aren't on the Bureau's flood gauge list)
+        f, d = None, None
+        for st in nearby_stations(ev):
+            ts = pick_series(st["station"])
+            if ts:
+                lon, lat = st["lon"], st["lat"]
+                f = {"properties": {"name": st["name"], "station": st["station"]}, "geometry": {"coordinates": [lon, lat]}}
+                d = km(ev["lat"], ev["lon"], lat, lon)
+                break
+    if not ts:
+        out["error"] = f"no water level series on Water Data Online at the {min(8, len(cands))} gauges or other stations within 8 km"
         return out
     p = f["properties"]
     lon, lat = f["geometry"]["coordinates"][:2]
