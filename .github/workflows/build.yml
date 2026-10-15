@@ -47,7 +47,7 @@ jobs:
         run: pip install -r pipeline/requirements.txt
 
       - name: Test the data fetchers
-        run: python -m unittest tests/test_floodhub.py tests/test_national.py tests/test_council.py tests/test_floodinfo.py
+        run: python -m unittest tests/test_floodhub.py tests/test_national.py tests/test_council.py tests/test_floodinfo.py tests/test_events.py
 
       # Terrain only needs rebuilding when the area or the pipeline changes.
       - name: Restore built terrain
@@ -100,6 +100,50 @@ jobs:
         continue-on-error: true
         run: python pipeline/fetch_national.py site/data/national | tee national.log
 
+      - name: Month for the monthly caches
+        id: month
+        run: echo "month=$(date -u +%Y-%m)" >> "$GITHUB_OUTPUT"
+
+      # Hour-by-hour readings for recorded floods: fetched once per change to
+      # the event list (they don't change), then kept in the cache
+      - name: Restore recorded flood readings
+        id: events
+        uses: actions/cache@v6
+        with:
+          path: cache/events.json
+          key: events-${{ hashFiles('config/events.json', 'pipeline/fetch_events.py') }}
+
+      - name: Fetch recorded flood readings (Water Data Online)
+        if: steps.events.outputs.cache-hit != 'true' && steps.national.outcome == 'success'
+        continue-on-error: true
+        timeout-minutes: 10
+        run: |
+          mkdir -p cache
+          python pipeline/fetch_events.py config/events.json site/data/national/gauges.geojson cache/events.json | tee events.log
+
+      - name: Restore levee lines
+        id: levees
+        uses: actions/cache@v6
+        with:
+          path: cache/levees.geojson
+          key: levees-${{ steps.month.outputs.month }}-${{ hashFiles('pipeline/fetch_levees.py') }}
+
+      - name: Fetch levee lines (NSW levee audit, Victorian coastal levees; monthly)
+        if: steps.levees.outputs.cache-hit != 'true'
+        continue-on-error: true
+        timeout-minutes: 15
+        run: |
+          mkdir -p cache
+          python pipeline/fetch_levees.py cache/levees.geojson | tee levees.log
+
+      - name: Publish recorded floods and levees
+        run: |
+          [ -f cache/events.json ] && cp cache/events.json site/data/events.json || true
+          [ -f cache/levees.geojson ] && cp cache/levees.geojson site/data/levees.geojson || true
+          echo "::notice::$(grep -E '^Recorded floods' events.log 2>/dev/null || echo 'Recorded floods: from cache')"
+          grep '^warning:' events.log 2>/dev/null | head -4 | sed 's/^warning:/::warning::Recorded flood /' || true
+          echo "::notice::$(grep -E '^Levees' levees.log 2>/dev/null || echo 'Levees: from cache')"
+
       - name: Fetch BoM flood class levels and current flood warnings
         id: floodinfo
         continue-on-error: true
@@ -136,10 +180,6 @@ jobs:
       - name: Publish previous water history if this run fetched none
         if: steps.whfetch.outcome != 'success' && hashFiles('cache/waterhistory.json') != ''
         run: cp cache/waterhistory.json site/data/national/waterhistory.json
-
-      - name: Month for the council-image cache
-        id: month
-        run: echo "month=$(date -u +%Y-%m)" >> "$GITHUB_OUTPUT"
 
       - name: Restore council flood images
         id: council

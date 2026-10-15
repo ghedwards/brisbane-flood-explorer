@@ -174,14 +174,19 @@
 
     <fieldset id="timeSet">
       <legend class="label">Flood over time</legend>
-      <div class="storm-row">
+      <label class="storm-row">Flood shape <select id="floodShape" aria-label="Flood shape"><option value="">Smooth rise and fall</option></select></label>
+      <div class="storm-row" id="shapeRow">
         <label>Rises over <input type="number" id="riseH" min="1" max="240" step="1" value="24" aria-label="Hours the river takes to rise to its peak" style="width:58px"> h</label>
         <label>falls over <input type="number" id="fallH" min="1" max="480" step="1" value="48" aria-label="Hours the river takes to fall back" style="width:58px"> h</label>
-        <label>wave travels <input type="number" id="waveKmh" min="0.5" max="20" step="0.5" value="3" aria-label="Flood wave speed in km/h" style="width:58px"> km/h</label>
       </div>
+      <div class="storm-row">
+        <label>Wave travels <input type="number" id="waveKmh" min="0.5" max="20" step="0.5" value="3" aria-label="Flood wave speed in km/h" style="width:58px"> km/h</label>
+        <label>and <select id="flatten" aria-label="How much the wave flattens downstream"><option value="0">keeps its shape</option><option value="1.5" selected>flattens a little</option><option value="3">flattens a lot</option></select></label>
+      </div>
+      <p class="hint" id="shapeNote"></p>
       <div class="link-row"><button type="button" class="btn small" id="runTimeline">Run the flood hour by hour</button></div>
       <div id="timelineBox"></div>
-      <p class="hint">The gauge rises smoothly from the river's normal level to this scenario's peak and falls back; the flood wave reaches places upstream of the gauge earlier and downstream later. Hour 0 is when the gauge starts to rise. A screening sketch: real floods depend on rainfall timing, tributaries and storage.</p>
+      <p class="hint">Choose a smooth rise and fall, or a recorded flood at a nearby gauge (hour-by-hour readings from Water Data Online). The flood wave reaches places upstream of the gauge earlier and downstream later, and can flatten as it travels. A screening sketch: real floods depend on rainfall timing, tributaries and storage.</p>
     </fieldset>
 
     <fieldset id="defenceSet">

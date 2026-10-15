@@ -2284,6 +2284,7 @@
       nat.readings = readings;
       const opt = async (f) => { try { const r = await fetch(`data/national/${f}`, { cache: 'no-cache' }); return r.ok ? r.json() : null; } catch (e) { return null; } };
       [nat.floodclass, nat.warnings] = await Promise.all([opt('floodclass.json'), opt('warnings.json')]);
+      try { const r = await fetch('data/events.json', { cache: 'no-cache' }); nat.events = r.ok ? ((await r.json()).events || []).filter((e) => e.series) : []; } catch (e) { nat.events = []; }
       nat.floodclass = nat.floodclass || {};
       renderWarnings();
     } catch (e) {
@@ -3051,6 +3052,7 @@
     $('impactSet').hidden = !local || scenarioEmpty;
     $('defenceSet').hidden = !local || scenarioEmpty || ctl.floodType.value === 'flash';
     $('timeSet').hidden = !local || scenarioEmpty || ctl.floodType.value !== 'river' || state.gauge < 0;
+    if (!$('timeSet').hidden) renderShapeChoices();
     $('recordedSet').hidden = !local || scenarioEmpty;
     clearTimeout(impactT);
     impactT = setTimeout(() => { renderImpact(); renderRecorded(); renderDefences(); if (!state.timeView) renderTimeline(); }, 250);
@@ -4117,6 +4119,20 @@
         }
       }
     } catch (e2) { err = String(e2.message || e2); }
+    // published levee lines collected by the build (NSW levee audit,
+    // Victoria's coastal levees)
+    try {
+      if (!nat.levees) { const r = await fetch('data/levees.geojson', { cache: 'no-cache' }); nat.levees = r.ok ? (await r.json()).features || [] : []; }
+      nat.levees.forEach((f, i) => {
+        const pts = f.geometry.coordinates;
+        if (!pts.some(([x, y]) => x >= g.west && x <= g.east && y >= g.south && y <= g.north)) return;
+        const id = `pub${i}`;
+        if (d.levees.some((l) => l.id === id)) return;
+        const p = f.properties || {};
+        d.levees.push({ id, src: p.source || 'published', name: p.name ? `${p.name} levee` : 'Levee', pts: pts.map(([x, y]) => [y, x]), height: null, failed: false, breaches: [] });
+        found++;
+      });
+    } catch (e4) { /* no levee file */ }
     // Victoria's coastal levees (DEECA), if the state map server provides them
     if (g.south < -33.9 && g.north > -39.3 && g.east > 140.9 && g.west < 150.1) {
       try {
@@ -4256,22 +4272,53 @@
     });
   }
   const hoursLabel = (h) => (h < 0 ? `${h} h` : `+${h} h`);
+  // recorded floods at a gauge near this model's gauge
+  function eventsHere() {
+    if (!nat.events || !state.a || state.gauge < 0 || !state.geo) return [];
+    const [la, lo] = cellLatLng(state.gauge);
+    return nat.events.filter((e) => e.gauge && kmBetween([e.gauge.lat, e.gauge.lon], [la, lo]) < 12);
+  }
+  function renderShapeChoices() {
+    const sel = $('floodShape');
+    if (!sel) return;
+    const evs = eventsHere(), cur = sel.value;
+    const key = evs.map((e) => e.id).join();
+    if (sel.dataset.key !== key) {
+      sel.innerHTML = '<option value="">Smooth rise and fall</option>' + evs.map((e) => `<option value="${e.id}">Recorded: ${escapeHtml(e.name)}</option>`).join('');
+      sel.dataset.key = key;
+      if (evs.some((e) => e.id === cur)) sel.value = cur;
+    }
+    const ev = evs.find((e) => e.id === sel.value);
+    $('shapeRow').hidden = !!ev;
+    $('shapeNote').innerHTML = ev
+      ? `${escapeHtml(ev.gauge.name)} gauge, peak ${ev.peak.level.toFixed(2)} m on its board at ${escapeHtml(fmtWhen(ev, ev.peak.hours))}. The recorded rise and fall is used with its peak lined up to this scenario's peak; to match the real flood's height, use <em>Check against recorded floods</em>, <em>Find the matching level</em> first.`
+      : (nat.events && nat.events.length ? (evs.length ? '' : 'No recorded flood readings near this model\'s gauge yet.') : '');
+  }
+  function fmtWhen(ev, hours) {
+    const d = new Date(new Date(ev.start).getTime() + hours * 3600e3);
+    return d.toLocaleString('en-AU', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric', hour: 'numeric', hour12: true });
+  }
   function timeOpts() {
-    const a = state.a;
+    const a = state.a, ev = eventsHere().find((e) => e.id === $('floodShape').value);
     return {
       baseLevel: a.dem[state.gauge] + 0.3,
       riseHours: Math.max(1, parseFloat($('riseH').value) || 24),
       fallHours: Math.max(1, parseFloat($('fallH').value) || 48),
       speedKmh: Math.max(0.5, parseFloat($('waveKmh').value) || 3),
+      flatten: parseFloat($('flatten').value) || 0,
+      hydro: ev ? ev.series : null,
+      eventId: ev ? ev.id : null,
     };
   }
-  async function runTimeline() {
+  $('floodShape').addEventListener('change', renderShapeChoices);
+  async function runTimeline(eventId) {
     const area = state.areaKey && areaReg.get(state.areaKey), a = state.a;
     if (!area || !a || state.gauge < 0) return null;
+    if (eventId !== undefined) { renderShapeChoices(); $('floodShape').value = eventId || ''; renderShapeChoices(); }
     const box = $('timelineBox');
     box.innerHTML = '<p class="hint">Working out the flood hour by hour…</p>';
     const s = scenario(), opts = timeOpts();
-    if (s.gaugeLevel <= opts.baseLevel + 0.1) { box.innerHTML = '<p class="hint">Set a peak above the river\'s normal level first.</p>'; return null; }
+    if (!opts.hydro && s.gaugeLevel <= opts.baseLevel + 0.1) { box.innerHTML = '<p class="hint">Set a peak above the river\'s normal level first.</p>'; return null; }
     if (area.impact == null) await countImpact();   // roads and buildings for closures
     const key = state.areaKey;
     let tl;
@@ -4281,6 +4328,8 @@
     }
     if (state.areaKey !== key) return null;
     tl.opts = opts; tl.s = s;
+    tl.event = opts.eventId ? nat.events.find((e) => e.id === opts.eventId) : null;
+    if (tl.event) tl.boardShift = s.gaugeLevel - tl.event.peak.level;
     tl.wave = F.waveSetup(a, s, opts);
     tl.access = timelineAccess(tl, area.impact);
     area.timeline = tl;
@@ -4288,7 +4337,7 @@
     renderTimeline();
     showTimeStep(state.timeStep);
     const ac = tl.access;
-    status.timeline = { steps: tl.steps, step: tl.step, firstRoad: ac ? ac.firstClose : null, maxIsolated: ac ? ac.maxIso : null, longestHours: ac ? ac.longest : null, roadsClosed: ac ? ac.roads.length : null };
+    status.timeline = { steps: tl.steps, step: tl.step, event: opts.eventId, firstRoad: ac ? ac.firstClose : null, maxIsolated: ac ? ac.maxIso : null, longestHours: ac ? ac.longest : null, roadsClosed: ac ? ac.roads.length : null };
     return status.timeline;
   }
   // Roads and isolation through time, from when each spot is over 0.3 m deep
@@ -4396,13 +4445,15 @@
       }
     }
     const n = (v) => Math.round(v).toLocaleString('en-AU');
+    const whenH = (h) => (tl.event ? fmtWhen(tl.event, h) : hoursLabel(h));
     box.innerHTML = `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="Gauge level and buildings affected over time">${bars}<polyline points="${line}" fill="none" stroke="var(--ink)" stroke-width="1.5"/><line id="tlCursor" x1="0" x2="0" y1="0" y2="${H}" stroke="#c62828" stroke-width="1.5"/></svg>
       <p class="hint">Line: gauge level. Blue: buildings flooded. Orange: buildings cut off.</p>
       <div class="time-ctl"><span class="time-label" id="tlLabel"></span>
         <button type="button" class="btn small" id="tlPlay">Play</button>
         <input type="range" id="tlSlider" min="0" max="${K - 1}" step="1" value="${state.timeStep}" aria-label="Time"></div>
-      ${ac ? `<p><strong>Roads:</strong> ${ac.roads.length ? `the first closes at ${hoursLabel(ac.firstClose)} (${escapeHtml(ac.roads[0].name)})${ac.firstClose < 0 ? ', before the gauge starts rising: places upstream see the flood first' : ''}. ${ac.roads.slice(0, 8).map((r) => `${escapeHtml(r.name)} ${hoursLabel(r.closes)} to ${hoursLabel(r.reopens)}`).join('; ')}${ac.roads.length > 8 ? `; and ${ac.roads.length - 8} more` : ''}.` : 'no named road goes under more than 30 cm of water.'}</p>
-        <p><strong>Cut off:</strong> ${ac.maxIso ? `up to ${n(ac.maxIso)} dry buildings have no dry road out, at ${hoursLabel(ac.maxIsoAt)}; the longest any is cut off is about ${ac.longest} hours.` : 'no dry building loses its last dry road out.'}</p>`
+      ${tl.event ? `<p class="hint">Recorded flood: ${escapeHtml(tl.event.name)}, ${escapeHtml(tl.event.gauge.name)} gauge (Water Data Online, Bureau of Meteorology and data owners). Hours count from ${escapeHtml(fmtWhen(tl.event, 0))}.</p>` : ''}
+      ${ac ? `<p><strong>Roads:</strong> ${ac.roads.length ? `the first closes ${tl.event ? '' : 'at '}${whenH(ac.firstClose)} (${escapeHtml(ac.roads[0].name)})${!tl.event && ac.firstClose < 0 ? ', before the gauge starts rising: places upstream see the flood first' : ''}. ${ac.roads.slice(0, 8).map((r) => `${escapeHtml(r.name)} ${whenH(r.closes)} to ${whenH(r.reopens)}`).join('; ')}${ac.roads.length > 8 ? `; and ${ac.roads.length - 8} more` : ''}.` : 'no named road goes under more than 30 cm of water.'}</p>
+        <p><strong>Cut off:</strong> ${ac.maxIso ? `up to ${n(ac.maxIso)} dry buildings have no dry road out, ${tl.event ? '' : 'at '}${whenH(ac.maxIsoAt)}; the longest any is cut off is about ${ac.longest} hours.` : 'no dry building loses its last dry road out.'}</p>`
     : '<p class="hint">Count what\'s affected to see road closures and places cut off.</p>'}`;
     const slider = $('tlSlider');
     slider.addEventListener('input', () => showTimeStep(+slider.value));
@@ -4422,7 +4473,9 @@
     if (!tl || !$('tlLabel')) return;
     const h = Math.round(tl.t0 + k * tl.step), g = tl.gauge[k], prev = tl.gauge[Math.max(0, k - 1)];
     const ac = tl.access;
-    $('tlLabel').textContent = `${hoursLabel(h)} · gauge ${g.toFixed(2)} m (${g > prev + 1e-3 ? 'rising' : g < prev - 1e-3 ? 'falling' : 'steady'})`
+    const when = tl.event ? fmtWhen(tl.event, h) : hoursLabel(h);
+    const board = tl.event ? ` (${(g - tl.boardShift).toFixed(2)} m on the gauge board)` : '';
+    $('tlLabel').textContent = `${when} · gauge ${g.toFixed(2)} m${board}, ${g > prev + 1e-3 ? 'rising' : g < prev - 1e-3 ? 'falling' : 'steady'}`
       + (ac ? ` · ${ac.floodCount[k].toLocaleString('en-AU')} buildings flooded, ${ac.isoCount[k].toLocaleString('en-AU')} cut off, ${ac.closedCount[k].toLocaleString('en-AU')} road sections closed` : '');
     const cur = document.getElementById('tlCursor');
     if (cur) { const xx = (k / (tl.steps - 1)) * 300; cur.setAttribute('x1', xx); cur.setAttribute('x2', xx); }
@@ -4444,6 +4497,7 @@
   }
   $('runTimeline').addEventListener('click', () => runTimeline());
   window.__floodRunTimeline = runTimeline;
+  window.__floodEventsHere = () => eventsHere().map((e) => e.id);
   window.__floodTimeStep = (k) => { showTimeStep(k); return status.impact; };
 
   /* ---------- on-demand flood modelling */

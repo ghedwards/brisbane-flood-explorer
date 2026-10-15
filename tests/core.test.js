@@ -273,3 +273,19 @@ test('flood over time: the gauge rises and falls, and the wave reaches places in
   assert.ok(tl.firstWet[up] < tl.firstWet[near], 'upstream floods first (the wave travels down to the gauge)');
   assert.ok(tl.lastWet[near] >= tl.firstWet[near] && tl.lastWet[near] < tl.steps - 1, 'and drains again');
 });
+
+test('flood over time: a recorded rise and fall is followed, and the wave flattens downstream', () => {
+  const g = valley(), W = g.W;
+  const a = F.analyse(g, { streamAreaKm2: 0.001 });
+  const gauge = 10 * W + 50;
+  const s = { gauge, gaugeLevel: g.dem[gauge] + 1.5, bayLevel: 0, upstreamGradient: 0 };
+  // a recorded flood on the gauge board: 3 m rising to 9 m at hour 10, back to 4 m
+  const hydro = [[0, 3], [5, 6], [10, 9], [20, 6], [30, 4]];
+  const w = F.waveSetup(a, s, { hydro, speedKmh: 1 });
+  assert.ok(Math.abs(w.gaugeAt(10) - s.gaugeLevel) < 1e-9, 'the recorded peak lines up with the scenario peak');
+  assert.ok(Math.abs(w.gaugeAt(0) - (s.gaugeLevel - 6)) < 1e-9, 'and keeps the recorded rise in metres');
+  const sharp = F.waveSetup(a, s, { hydro, speedKmh: 1, flatten: 0 });
+  const flat = F.waveSetup(a, s, { hydro, speedKmh: 1, flatten: 3 });
+  const peakOf = (f) => Math.max(...Array.from({ length: 60 }, (_, t) => f(t - 10)));
+  assert.ok(peakOf(flat.at[6]) < peakOf(sharp.at[0]) - 0.1, 'the peak 40 km downstream is lower when the wave flattens');
+});

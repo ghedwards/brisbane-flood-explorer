@@ -16,7 +16,7 @@ URL = sys.argv[1] if len(sys.argv) > 1 else "http://localhost:8000/"
 
 
 KEY = []          # key results, shown together in one annotation at the end
-KEY_WORDS = ("Flood over time", "Levees", "Storm tide", "Presets checked", "Recorded floods", "Best match", "Impact", "Storm", "Joined", "Share link", "Satellite check",
+KEY_WORDS = ("Recorded flood over time", "Flood over time", "Levees", "Storm tide", "Presets checked", "Recorded floods", "Best match", "Impact", "Storm", "Joined", "Share link", "Satellite check",
              "Presets anchored", "Presets on LiDAR", "Phone Layers", "Council layer", "Downloads", "Rain radar",
              "Address search", "Flood warnings", "Echuca", "Extended model", "Area study")
 
@@ -574,6 +574,18 @@ def main() -> int:
         if not (tlr and tlr.get("steps", 0) > 10 and not tlr.get("error")):
             failures.append(f"flood over time failed: {tlr}")
         page.screenshot(path="smoke-timeline.png")
+        evs = page.evaluate("window.__floodEventsHere ? window.__floodEventsHere() : []")
+        if evs:
+            try:
+                tle = page.evaluate("id => window.__floodRunTimeline(id)", evs[0])
+            except Exception as e:
+                tle = {"error": str(e)[:300]}
+            note("notice", f"Recorded flood over time at Rockhampton ({evs}): {json.dumps(tle)}")
+            if not (tle and tle.get("event") == evs[0] and tle.get("steps", 0) > 10):
+                failures.append(f"recorded flood over time failed: {tle}")
+            page.screenshot(path="smoke-timeline-recorded.png")
+        else:
+            note("warning", "No recorded flood readings near Rockhampton's gauge (events.json missing or not matched)")
 
         # ---- on a phone, a swipe scrolls the Layers panel
         mctx = browser.new_context(viewport={"width": 390, "height": 844}, has_touch=True, is_mobile=True)

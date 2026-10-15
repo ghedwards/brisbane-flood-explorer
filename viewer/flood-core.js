@@ -646,8 +646,19 @@
    * the first and last time step it is wet and at least 0.3 m deep (-1:
    * never), the time axis, and the number of cells wet at each step.
    */
+  //   o.hydro: optional recorded readings [[hours, level], ...]; their shape
+  //   is used, shifted so the recorded peak matches the scenario's peak
+  //   o.flatten: how much the wave spreads out downstream (hours of spread
+  //   per square root of km travelled); 0 keeps its shape
   function waveSetup(a, s, o) {
-    const base = o.baseLevel, peak = s.gaugeLevel;
+    const rec = o.hydro && o.hydro.length > 1 ? o.hydro : null;
+    let recShift = 0, recMin = 0;
+    if (rec) {
+      const pk = Math.max(...rec.map((r) => r[1]));
+      recShift = s.gaugeLevel - pk;
+      recMin = Math.min(...rec.map((r) => r[1])) + recShift;
+    }
+    const base = rec ? recMin : o.baseLevel, peak = s.gaugeLevel;
     const lo = Math.min(base, peak - 0.5), hi = Math.max(peak, lo + 0.5);
     const w0 = streamSurface(a, Object.assign({}, s, { gaugeLevel: lo })).wse;
     const w1 = streamSurface(a, Object.assign({}, s, { gaugeLevel: hi })).wse;
@@ -664,22 +675,67 @@
       if (h > maxA) maxA = h;
     }
     const rise = Math.max(0.5, o.riseHours || 24), fall = Math.max(0.5, o.fallHours || 48);
-    const gaugeAt = (t) => (t <= 0 ? base : t < rise ? base + (peak - base) * 0.5 * (1 - Math.cos((Math.PI * t) / rise))
-      : t < rise + fall ? base + (peak - base) * 0.5 * (1 + Math.cos((Math.PI * (t - rise)) / fall)) : base);
-    return { lo, hi, w0, w1, cells: Int32Array.from(cells), arrive, minA, maxA, rise, fall, gaugeAt };
+    let gaugeAt, tStart, tEnd;
+    if (rec) {
+      tStart = rec[0][0]; tEnd = rec[rec.length - 1][0];
+      gaugeAt = (t) => {
+        if (t <= rec[0][0]) return rec[0][1] + recShift;
+        if (t >= tEnd) return rec[rec.length - 1][1] + recShift;
+        let lo2 = 0, hi2 = rec.length - 1;
+        while (hi2 - lo2 > 1) { const m = (lo2 + hi2) >> 1; if (rec[m][0] <= t) lo2 = m; else hi2 = m; }
+        const [t0, v0] = rec[lo2], [t1, v1] = rec[hi2];
+        return v0 + ((v1 - v0) * (t - t0)) / Math.max(1e-9, t1 - t0) + recShift;
+      };
+    } else {
+      tStart = 0; tEnd = rise + fall;
+      gaugeAt = (t) => (t <= 0 ? base : t < rise ? base + (peak - base) * 0.5 * (1 - Math.cos((Math.PI * t) / rise))
+        : t < rise + fall ? base + (peak - base) * 0.5 * (1 + Math.cos((Math.PI * (t - rise)) / fall)) : base);
+    }
+    // the wave flattening as it travels downstream: the gauge's record
+    // smoothed with a Gaussian whose spread grows with distance
+    const flatten = Math.max(0, o.flatten || 0);
+    const bandKm = [0, 1, 2, 5, 10, 20, 40, 80, 160];
+    const band = new Uint8Array(a.N);
+    let at = [gaugeAt];
+    if (flatten > 0) {
+      const pad = Math.ceil(3 * flatten * Math.sqrt(bandKm[bandKm.length - 1])) + 2;
+      const T0 = Math.floor(tStart - pad), T1 = Math.ceil(tEnd + pad), n = T1 - T0 + 1;
+      const raw = new Float64Array(n);
+      for (let i = 0; i < n; i++) raw[i] = gaugeAt(T0 + i);
+      at = bandKm.map((km, b) => {
+        if (!b) return gaugeAt;
+        const sig = flatten * Math.sqrt(km), r = Math.ceil(3 * sig), sm = new Float64Array(n);
+        const wts = []; let wsum = 0;
+        for (let k = -r; k <= r; k++) { const wv = Math.exp(-(k * k) / (2 * sig * sig)); wts.push(wv); wsum += wv; }
+        for (let i = 0; i < n; i++) {
+          let acc = 0;
+          for (let k = -r; k <= r; k++) acc += wts[k + r] * raw[Math.min(n - 1, Math.max(0, i + k))];
+          sm[i] = acc / wsum;
+        }
+        return (t) => { const x = Math.min(n - 1, Math.max(0, t - T0)), i0 = Math.floor(x), f = x - i0; return sm[i0] + (sm[Math.min(n - 1, i0 + 1)] - sm[i0]) * f; };
+      });
+      for (const c of cells) {
+        if (arrive[c] <= 0) continue;
+        const km = arrive[c] * speed;
+        let b = 0;
+        for (let k = 1; k < bandKm.length; k++) if (Math.abs(bandKm[k] - km) < Math.abs(bandKm[b] - km)) b = k;
+        band[c] = b;
+      }
+    }
+    return { lo, hi, w0, w1, cells: Int32Array.from(cells), arrive, minA, maxA, rise, fall, gaugeAt, at, band, tStart, tEnd };
   }
   function waveSurface(a, w, t, out) {
     const wse = out || new Float64Array(a.N).fill(NaN);
     const span = w.hi - w.lo;
     for (const c of w.cells) {
-      const h = w.gaugeAt(t - w.arrive[c]);
+      const h = w.at[w.band[c]](t - w.arrive[c]);
       wse[c] = w.w0[c] + ((w.w1[c] - w.w0[c]) * (h - w.lo)) / span;
     }
     return wse;
   }
   function floodTimeline(a, s, o) {
     const w = waveSetup(a, s, o);
-    const t0 = Math.floor(w.minA) - 1, t1 = Math.ceil(w.rise + w.fall + w.maxA) + 1;
+    const t0 = Math.floor(w.tStart + w.minA) - 1, t1 = Math.ceil(w.tEnd + w.maxA) + 1;
     const step = Math.max(o.stepHours || 1, (t1 - t0) / (o.maxSteps || 120));
     const steps = Math.ceil((t1 - t0) / step) + 1;
     const N = a.N;
