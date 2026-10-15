@@ -3913,7 +3913,11 @@
     }
     status.vicRecorded = { key, events: groups.size, features: feats.length };
     return Array.from(groups.entries()).sort((x, y) => y[1].length - x[1].length).slice(0, 12)
-      .map(([v, fs], i) => ({ id: `vic${i}`, name: `Victoria: ${v} (Victorian flood history)`, features: fs }));
+      .map(([v, fs], i) => {
+        const d = /^\d{4}-\d{2}-\d{2}/.test(v) ? new Date(v) : null;
+        const label = d && !Number.isNaN(d.getTime()) ? `flood observed ${d.toLocaleDateString('en-AU', { day: 'numeric', month: 'long', year: 'numeric' })}` : v;
+        return { id: `vic${i}`, name: `Victoria: ${label} (Victorian flood history)`, features: fs };
+      });
   }
 
   async function findRecorded() {
