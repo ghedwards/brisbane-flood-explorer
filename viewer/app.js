@@ -1006,6 +1006,7 @@
       window.__floodSetBasemap = (name) => setBasemap(m, layers, name);
       L.control.scale({ imperial: false }).addTo(m);
       m.on('click', onGeoClick);
+      wireStudy();
       m.on('mousemove', onGeoMove);
       m.on('locationfound', onLocated);
       m.on('locationerror', (e) => { say(`Couldn’t get your location: ${e.message}`); });
@@ -1584,6 +1585,7 @@
   }
 
   function onGeoClick(e) {
+    if (Date.now() < suppressClickUntil) return;   // the end of a box drag
     if (state.pendingGeo) { say('Still loading this area…'); return; }
     const hit = areaAt(e.latlng);
     if (!hit) { onNationalClick(e); return; }
@@ -2500,6 +2502,7 @@
   }
 
   function onDotClick(f, latlng) {
+    if (Date.now() < suppressClickUntil) return;
     const p = f.properties;
     const existing = reports.find((r) => r.id === `${p.kind}:${p.id}`);
     if (existing) { selectPlace(existing.n); return; }   // already a place
@@ -2710,6 +2713,140 @@
     }
   }
   window.__floodModelHere = modelHere;
+
+  /* ---------- study an area: drag a box, pull in everything inside */
+  // Opens reports for the gauges and dams in the box, covers it with up to
+  // four flood models (each run from a gauge where there is one, or from a
+  // pinned spot), and switches on the state flood layer.
+  let suppressClickUntil = 0;
+  const STUDY_MAX_MODELS = 4, STUDY_MAX_REPORTS = 6;
+  status.study = null;
+
+  function setStudyMode(on) {
+    const m = state.lmap;
+    if (!m) { say('Open the Australia map first.'); return; }
+    $('studyArea').setAttribute('aria-pressed', String(on));
+    $('studyHint').hidden = !on;
+    $('lmap').classList.toggle('selecting', on);
+    if (on) { m.dragging.disable(); m.closePopup(); } else m.dragging.enable();
+    studyDrag.on = on;
+  }
+  const studyDrag = { on: false, start: null, rect: null };
+  function studyPoint(e) { return state.lmap.mouseEventToLatLng(e); }
+  function wireStudy() {
+    const el = $('lmap');
+    el.addEventListener('pointerdown', (e) => {
+      if (!studyDrag.on || e.button > 0) return;
+      e.preventDefault(); e.stopPropagation();
+      el.setPointerCapture(e.pointerId);
+      studyDrag.start = studyPoint(e);
+      studyDrag.rect = window.L.rectangle([studyDrag.start, studyDrag.start], { color: '#0d5f8c', weight: 2, dashArray: '6 4', fillOpacity: 0.08, interactive: false }).addTo(state.lmap);
+    }, true);
+    el.addEventListener('pointermove', (e) => {
+      if (!studyDrag.on || !studyDrag.rect) return;
+      e.preventDefault();
+      studyDrag.rect.setBounds(window.L.latLngBounds(studyDrag.start, studyPoint(e)));
+    }, true);
+    el.addEventListener('pointerup', (e) => {
+      if (!studyDrag.on || !studyDrag.rect) return;
+      const b = window.L.latLngBounds(studyDrag.start, studyPoint(e));
+      state.lmap.removeLayer(studyDrag.rect);
+      studyDrag.rect = null;
+      suppressClickUntil = Date.now() + 500;
+      const px = state.lmap.latLngToContainerPoint(b.getNorthEast()).subtract(state.lmap.latLngToContainerPoint(b.getSouthWest()));
+      if (Math.abs(px.x) < 12 || Math.abs(px.y) < 12) { say('Drag to draw a box over the area.'); return; }
+      setStudyMode(false);
+      studyArea(b);
+    }, true);
+  }
+  $('studyArea').addEventListener('click', () => setStudyMode(!studyDrag.on));
+  $('studyCancel').addEventListener('click', () => setStudyMode(false));
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && studyDrag.on) setStudyMode(false); });
+
+  const kmBetween = (a, b) => {
+    const dy = (a[0] - b[0]) * 110.574, dx = (a[1] - b[1]) * 111.32 * Math.cos(((a[0] + b[0]) / 2) * Math.PI / 180);
+    return Math.hypot(dx, dy);
+  };
+
+  async function studyArea(b) {
+    if (!nat.data) await loadNationalData();
+    const S = b.getSouth(), N = b.getNorth(), Wl = b.getWest(), E = b.getEast();
+    const midLat = (S + N) / 2;
+    const wKm = (E - Wl) * 111.32 * Math.cos(midLat * Math.PI / 180), hKm = (N - S) * 110.574;
+    // smallest model size that covers the box in at most four windows
+    let size = null, nx = 0, ny = 0;
+    for (const [half, cell] of MODEL_SIZES) {
+      nx = Math.max(1, Math.ceil(wKm / (2 * half) - 0.05)); ny = Math.max(1, Math.ceil(hKm / (2 * half) - 0.05));
+      if (nx * ny <= STUDY_MAX_MODELS) { size = [half, cell]; break; }
+    }
+    if (!size) {
+      say(`That box is about ${Math.round(wKm)} × ${Math.round(hKm)} km. Draw one up to about 160 km across.`);
+      status.study = { ok: false, error: 'too big' };
+      return status.study;
+    }
+    const inBox = (f) => { const [lo, la] = f.geometry.coordinates; return la >= S && la <= N && lo >= Wl && lo <= E; };
+    const rank = { forecast: 0, information: 1, tide: 2, river: 3 };
+    const gauges = nat.data.gauges.filter(inBox).sort((x, y) => (rank[x.properties.kind] ?? 9) - (rank[y.properties.kind] ?? 9));
+    const dams = nat.data.storages.filter(inBox);
+    // tiles, each modelled from the best gauge inside it
+    const tiles = [];
+    const dLat = (N - S) / ny, dLon = (E - Wl) / nx;
+    for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) {
+      const t = { s: S + j * dLat, n: S + (j + 1) * dLat, w: Wl + i * dLon, e: Wl + (i + 1) * dLon };
+      t.c = [(t.s + t.n) / 2, (t.w + t.e) / 2];
+      const inside = gauges.filter((f) => { const [lo, la] = f.geometry.coordinates; return la >= t.s && la <= t.n && lo >= t.w && lo <= t.e && f.properties.kind !== 'tide'; });
+      inside.sort((x, y) => ((rank[x.properties.kind] ?? 9) - (rank[y.properties.kind] ?? 9))
+        || kmBetween([x.geometry.coordinates[1], x.geometry.coordinates[0]], t.c) - kmBetween([y.geometry.coordinates[1], y.geometry.coordinates[0]], t.c));
+      t.gauge = inside[0] || null;
+      t.tide = gauges.find((f) => f.properties.kind === 'tide' && (() => { const [lo, la] = f.geometry.coordinates; return la >= t.s && la <= t.n && lo >= t.w && lo <= t.e; })()) || null;
+      tiles.push(t);
+    }
+    // a single window centred on the box (or on each tile)
+    const summary = { ok: true, km: 2 * size[0], tiles: tiles.length, models: 0, reports: 0, gauges: gauges.length, dams: dams.length, layers: [] };
+    status.study = Object.assign({ running: true }, summary);
+    state.lmap.fitBounds(b, { padding: [30, 30] });
+    // state flood layers for the states in the box
+    const states = new Set([...gauges, ...dams].map((f) => f.properties.state).filter(Boolean));
+    for (const st of states) {
+      const sl = stateLayerFor(st);
+      if (sl && sl.layer && !state.lmap.hasLayer(sl.layer)) { sl.layer.userOn = true; sl.layer.addTo(state.lmap); summary.layers.push(sl.name); }
+    }
+    if (summary.layers.length) { syncLayerLists(); renderOverlayLegend(); }
+    // reports: each tile's gauge first, then dams and other gauges
+    const want = [...tiles.map((t) => t.gauge || t.tide).filter(Boolean), ...dams, ...gauges.filter((f) => ['forecast', 'information', 'tide'].includes(f.properties.kind))];
+    const seen = new Set();
+    for (const f of want) {
+      const id = `${f.properties.kind}:${f.properties.id}`;
+      if (seen.has(id) || seen.size >= STUDY_MAX_REPORTS) continue;
+      seen.add(id);
+      if (!reports.some((r) => r.id === id)) summary.reports++;
+      openReport(f);
+    }
+    // models, one per tile
+    for (const [k, t] of tiles.entries()) {
+      setBusy(true, `Modelling part ${k + 1} of ${tiles.length} of the area…`);
+      const src = t.gauge || t.tide;
+      let ok;
+      if (src) {
+        const [lo, la] = src.geometry.coordinates, p = src.properties;
+        const r = reports.find((x) => x.id === `${p.kind}:${p.id}`);
+        if (r && areaForReport(r)) { summary.models++; continue; }
+        ok = await modelHere(la, lo, { kind: p.kind === 'tide' ? 'coast' : 'river', name: p.name, reportId: r ? r.id : null, halfKm: size[0], cellM: size[1], center: t.c });
+      } else {
+        const pin = addPin(t.c[0], t.c[1]);
+        ok = await modelHere(t.c[0], t.c[1], { kind: 'river', name: pin.name, pinN: pin.n, halfKm: size[0], cellM: size[1], center: t.c });
+      }
+      if (ok) summary.models++;
+    }
+    setBusy(false);
+    status.study = summary;
+    const first = tiles.map((t) => t.gauge || t.tide).find(Boolean);
+    say(`Area study: ${summary.models} flood model${summary.models === 1 ? '' : 's'} (${summary.km} km each), ${summary.gauges} gauge${summary.gauges === 1 ? '' : 's'} and ${summary.dams} dam${summary.dams === 1 ? '' : 's'} inside${summary.layers.length ? `; ${summary.layers.join(', ')} on` : ''}.`);
+    if (first) { const r = reports.find((x) => x.id === `${first.properties.kind}:${first.properties.id}`); if (r) selectPlace(r.n); }
+    state.lmap.fitBounds(b, { padding: [30, 30] });
+    return summary;
+  }
+  window.__floodStudyArea = (s0, w0, n0, e0) => studyArea(window.L.latLngBounds([s0, w0], [n0, e0]));
 
   /* --------------------------------------------------------- panels */
   const isPhone = () => window.matchMedia('(max-width: 760px)').matches;

@@ -398,6 +398,23 @@ def main() -> int:
                 failures.append(f"extending the model failed: {ext}, {loc}, {ext_place}")
             page.screenshot(path="smoke-extended.png")
 
+        # ---- studying an area pulls in gauges, dams and several models
+        try:
+            study = page.evaluate("window.__floodStudyArea(-28.95, 153.10, -28.65, 153.45)")
+        except Exception as e:
+            study = {"ok": False, "error": str(e)[:300]}
+        print(f"Area study: {study}")
+        note("notice", f"Area study near Lismore: {json.dumps(study)}")
+        if not (study and study.get("ok") and study.get("models", 0) >= 2 and study.get("gauges", 0) >= 1):
+            failures.append(f"area study failed: {study}")
+        page.screenshot(path="smoke-study.png")
+        # the box tool itself: button arms it, a drag draws the box
+        page.locator("#studyArea").click()
+        armed = page.locator("#studyHint").is_visible()
+        page.locator("#studyCancel").click()
+        if not armed:
+            failures.append("the Study an area button did not arm the box tool")
+
         # ---- every preset in the menu models successfully
         results = []
         for pre in page.evaluate("window.__floodPresets || []"):

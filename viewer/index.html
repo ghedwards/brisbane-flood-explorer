@@ -232,8 +232,12 @@ details > div { display: grid; gap: 14px; }
 .sub-link, .link-btn { border: 0; background: none; padding: 0; color: var(--accent); font: 600 12.5px var(--font-body); cursor: pointer; text-align: left; }
 .sub-link:empty { display: none; }
 .map-fab { position: fixed; z-index: 999; right: calc(var(--right) + 10px); bottom: calc(var(--bottom) + 96px); width: 40px; height: 40px; border: 0; border-radius: 10px; display: grid; place-items: center; cursor: pointer; color: var(--ink); }
+#studyArea { bottom: calc(var(--bottom) + 144px); }
+#studyArea[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); }
+#lmap.selecting, #lmap.selecting .leaflet-interactive { cursor: crosshair !important; }
+.study-hint { position: fixed; z-index: 1002; left: 50%; transform: translateX(-50%); top: calc(var(--top) + 64px); padding: 8px 14px; border-radius: 10px; font-size: 13px; }
 .map-fab svg { width: 22px; height: 22px; stroke: currentColor; fill: none; stroke-width: 1.8; stroke-linecap: round; }
-@media (max-width: 760px) { .map-fab { bottom: calc(var(--bar) + env(safe-area-inset-bottom, 0px) + 70px); } body.sheet-open .map-fab { display: none; } }
+@media (max-width: 760px) { #studyArea { bottom: calc(var(--bar) + env(safe-area-inset-bottom, 0px) + 118px); } .map-fab { bottom: calc(var(--bar) + env(safe-area-inset-bottom, 0px) + 70px); } body.sheet-open .map-fab { display: none; } }
 #reportPrev, #reportNext { font-size: 22px; }
 .tool .count { position: absolute; top: 2px; right: 6px; min-width: 16px; height: 16px; border-radius: 8px; padding: 0 4px; background: var(--gauge); color: #fff; font: 700 10px/16px var(--font-body); }
 .place-actions { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 6px; padding: 0 8px 8px 40px; }
@@ -576,7 +580,11 @@ details > div { display: grid; gap: 14px; }
 </div>
 
 <div class="readout float" id="readout" role="status" hidden></div>
+<div class="study-hint float" id="studyHint" hidden>Drag a box over the area to study. <button type="button" class="link-btn" id="studyCancel">Cancel</button></div>
 
+<button type="button" class="map-fab float" id="studyArea" aria-label="Study an area: drag a box on the map" title="Study an area" aria-pressed="false">
+  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8V4h4M16 4h4v4M20 16v4h-4M8 20H4v-4" /><path d="M9 12h6M12 9v6"/></svg>
+</button>
 <button type="button" class="map-fab float" id="locate" aria-label="Show my location" title="My location">
   <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg>
 </button>
