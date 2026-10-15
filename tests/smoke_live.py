@@ -16,7 +16,7 @@ URL = sys.argv[1] if len(sys.argv) > 1 else "http://localhost:8000/"
 
 
 KEY = []          # key results, shown together in one annotation at the end
-KEY_WORDS = ("Sea reached", "Recorded flood over time", "Flood over time", "Levees", "Storm tide", "Presets checked", "Recorded floods", "Best match", "Impact", "Storm", "Joined", "Share link", "Satellite check",
+KEY_WORDS = ("Tides at", "Sea reached", "Recorded flood over time", "Flood over time", "Levees", "Storm tide", "Presets checked", "Recorded floods", "Best match", "Impact", "Storm", "Joined", "Share link", "Satellite check",
              "Presets anchored", "Presets on LiDAR", "Phone Layers", "Council layer", "Downloads", "Rain radar",
              "Address search", "Flood warnings", "Echuca", "Extended model", "Area study")
 
@@ -654,6 +654,9 @@ def main() -> int:
                 seas.append(f"{pre['id']}: {json.dumps(sea)}")
                 if pre["id"] in ("goldcoast", "carnarvon") and sea and not sea.get("hasSea"):
                     failures.append(f"tides not offered on the coast at {pre['id']}: {sea}")
+                if pre["id"] == "carnarvon":
+                    tp = page.evaluate("window.__floodTidePort ? window.__floodTidePort() : null")
+                    note("notice" if tp and tp.get("src") == "eot20" else "warning", f"Tides at Carnarvon (national tide model): {json.dumps(tp)}")
                 if pre["id"] in ("echuca", "lismore") and sea and sea.get("hasSea"):
                     failures.append(f"tides offered inland at {pre['id']}: {sea}")
             if pre["id"] == "goldcoast" and loc.get("ok"):

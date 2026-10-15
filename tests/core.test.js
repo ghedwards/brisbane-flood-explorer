@@ -327,3 +327,16 @@ test('tides: the sea rises and falls, with high water at the river peak unless a
   for (let k = 2; k < tl.steps; k++) if ((tl.wetCount[k] - tl.wetCount[k - 1]) * (tl.wetCount[k - 1] - tl.wetCount[k - 2]) < 0) ups++;
   assert.ok(ups >= 4, 'the flooded area rises and falls with the tides');
 });
+
+test('storm: stormwater pipes take runoff from built-up land, so less flows overland and ponds', () => {
+  const st = { rainMm: 60, hours: 1, initialLoss: 3, contLoss: 0.5 };
+  const none = F.flashFlood(a, st);
+  const urban = new Uint8Array(a.N).fill(1);
+  const piped = F.flashFlood(a, Object.assign({}, st, { urban, pipeMmH: 40 }));
+  assert.ok(piped.summary.overlandKm2 < none.summary.overlandKm2, 'less overland flow');
+  assert.ok(piped.summary.pondKm2 <= none.summary.pondKm2, 'no more ponding');
+  assert.equal(piped.summary.maxCreekRise, none.summary.maxCreekRise, 'creeks still get the piped water');
+  assert.equal(piped.summary.pipedMm, 40);
+  const huge = F.flashFlood(a, Object.assign({}, st, { urban, pipeMmH: 500 }));
+  assert.equal(huge.summary.overlandKm2, 0, 'pipes bigger than the storm leave no overland flow');
+});

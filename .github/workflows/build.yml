@@ -47,7 +47,7 @@ jobs:
         run: pip install -r pipeline/requirements.txt
 
       - name: Test the data fetchers
-        run: python -m unittest tests/test_floodhub.py tests/test_national.py tests/test_council.py tests/test_floodinfo.py tests/test_events.py tests/test_osm.py
+        run: python -m unittest tests/test_floodhub.py tests/test_national.py tests/test_council.py tests/test_floodinfo.py tests/test_events.py tests/test_osm.py tests/test_tides.py
 
       # Terrain only needs rebuilding when the area or the pipeline changes.
       - name: Restore built terrain
@@ -140,6 +140,23 @@ jobs:
       # impact counts don't depend on the busy Overpass service. Each run
       # refreshes a few (missing first, then over 30 days old); the cache
       # always restores the latest set.
+      # Tide heights around the whole coast (AIMS EOT20 tidal statistics);
+      # they don't change, so fetched once per change to the script
+      - name: Restore tide heights
+        id: tides
+        uses: actions/cache@v6
+        with:
+          path: cache/tides.json
+          key: tides-${{ hashFiles('pipeline/fetch_tides.py') }}
+
+      - name: Fetch tide heights for the whole coast
+        if: steps.tides.outputs.cache-hit != 'true'
+        continue-on-error: true
+        timeout-minutes: 15
+        run: |
+          python pipeline/fetch_tides.py cache/tides.json | tee tides.log
+          grep -q '^Tides: [0-9]' tides.log || rm -f cache/tides.json
+
       - name: Restore OpenStreetMap copies
         uses: actions/cache@v6
         with:
@@ -157,6 +174,8 @@ jobs:
         run: |
           [ -f cache/events.json ] && cp cache/events.json site/data/events.json || true
           [ -f cache/levees.geojson ] && cp cache/levees.geojson site/data/levees.geojson || true
+          [ -f cache/tides.json ] && cp cache/tides.json site/data/tides.json || true
+          echo "::notice::$(grep -E '^Tides' tides.log 2>/dev/null || ([ -f cache/tides.json ] && echo 'Tides: from cache') || echo 'Tides: none')"
           if [ -f cache/osm/index.json ]; then mkdir -p site/data/osm && cp cache/osm/*.json site/data/osm/; fi
           echo "::notice::$(grep -E '^OpenStreetMap copies' osm.log 2>/dev/null || echo 'OpenStreetMap copies: none')"
           grep '^warning:' osm.log 2>/dev/null | head -3 | sed 's/^warning:/::warning::OpenStreetMap copy /' || true

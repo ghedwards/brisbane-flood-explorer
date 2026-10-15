@@ -1038,8 +1038,12 @@
    * 10 cm deep; and runoff fills dips in the ground (the gaps the
    * depression-filled surface bridges) up to the volume draining into them;
    * dips over 5 m deep (quarries, dams, data gaps) are left out.
-   * Pipes, culverts and timing are ignored, so small storms in sewered
-   * areas are overstated.
+   * Stormwater pipes (o.urban: a mask of built-up cells; o.pipeMmH: the
+   * runoff rate the pipes carry, mm/h) take runoff from built-up land
+   * before it flows overland or ponds: each point's overland flow loses
+   * the pipes' share from the built-up part of its catchment, and each dip
+   * loses the volume piped away over the storm. Pipes empty into the
+   * creeks, so creek flows are unchanged. Culverts and timing are ignored.
    * Returns { wet, depth, level, kind (0 dry, 1 creek, 2 overland, 3 pond, 4 sea), summary }.
    */
   function flashFlood(a, o) {
@@ -1055,6 +1059,17 @@
     const cellA = cell * cell;
     const nCh = o.nChannel ?? 0.05, nOv = o.nOverland ?? 0.035, maxRise = o.maxRise ?? 10;
     const depth = new Float32Array(N), kind = new Uint8Array(N), wet = new Uint8Array(N);
+    // built-up catchment area above each cell (cells), for the pipes
+    const pipe = o.urban && o.pipeMmH > 0 ? o.pipeMmH / 1000 / 3600 : 0;   // m/s
+    let ua = null, urbanCells = 0;
+    if (pipe) {
+      ua = new Float32Array(N);
+      for (let j = a.nOrder - 1; j >= 0; j--) {
+        const c = a.order[j];
+        if (o.urban[c] && valid[c]) { ua[c] += 1; urbanCells++; }
+        if (rec[c] >= 0) ua[rec[c]] += ua[c];
+      }
+    }
     const slopeAt = (c) => {
       // channel slope over ~10 cells downstream
       let d = c, k = 0;
@@ -1102,7 +1117,7 @@
     if (C > 0) {
       for (let c = 0; c < N; c++) {
         if (!valid[c] || stream[c] || (ocean && ocean[c]) || rec[c] < 0) continue;
-        const qw = (C * iAt((acc[c] * cellA) / 1e6) * acc[c] * cellA) / cell;   // m²/s per metre width
+        const qw = Math.max(0, C * iAt((acc[c] * cellA) / 1e6) * acc[c] * cellA - (ua ? pipe * ua[c] * cellA : 0)) / cell;   // m²/s per metre width
         const S = Math.max(0.002, (dem[c] - dem[rec[c]]) / Math.max(cell, chain[c] - chain[rec[c]]));
         const d = Math.pow((qw * nOv) / Math.sqrt(S), 0.6);
         if (d >= 0.1 && d > depth[c]) { depth[c] = d; kind[c] = 2; wet[c] = 1; overland++; }
@@ -1131,13 +1146,16 @@
       }
       const ex = excessMm / 1000;
       for (const list of cells) {
-        let accMax = 0, lo = Infinity, hi = -Infinity;
-        for (const c of list) { if (acc[c] > accMax) accMax = acc[c]; if (dem[c] < lo) lo = dem[c]; if (filled[c] > hi) hi = filled[c]; }
+        let accMax = 0, cMax = list[0], lo = Infinity, hi = -Infinity;
+        for (const c of list) { if (acc[c] > accMax) { accMax = acc[c]; cMax = c; } if (dem[c] < lo) lo = dem[c]; if (filled[c] > hi) hi = filled[c]; }
         // dips more than 5 m deep are quarries, dams or gaps in the data,
         // not places a storm newly floods
         if (hi - lo > (o.maxPondDepth ?? 5)) continue;
         const vol = (L) => { let v = 0; for (const c of list) if (L > dem[c]) v += Math.min(L, filled[c]) - dem[c]; return v * cellA; };
-        const vin = ex * accMax * cellA;
+        // runoff in, less what the pipes take from the built-up part
+        const piped = ua ? Math.min(ex, pipe * hours * 3600) * ua[cMax] * cellA : 0;
+        const vin = ex * accMax * cellA - piped;
+        if (vin <= 0) continue;
         let L = hi;
         if (vin < vol(hi)) {
           let a0 = lo, b0 = hi;
@@ -1159,6 +1177,7 @@
       summary: {
         excessMm, runoffCoeff: C, creekKm2: creek * km2, overlandKm2: overland * km2, pondKm2: pondCells * km2,
         maxCreekRise: maxRiseSeen,
+        pipedMm: pipe ? Math.min(excessMm, o.pipeMmH * hours) : 0, urbanKm2: urbanCells * km2,
       },
     };
   }

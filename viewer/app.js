@@ -35,7 +35,7 @@
   const ctl = {
     gaugeLevel: $('gaugeLevel'), bayLevel: $('bayLevel'), slr: $('slr'),
     extra: $('extra'), grad: $('grad'), streamArea: $('streamArea'),
-    floodType: $('floodType'), rainMm: $('rainMm'), stormHours: $('stormHours'), ground: $('ground'),
+    floodType: $('floodType'), rainMm: $('rainMm'), stormHours: $('stormHours'), ground: $('ground'), pipes: $('pipes'),
   };
   // soil and surface losses for each ground type: initial loss (mm) and
   // continuing loss (mm/h), in the range Australian Rainfall and Runoff
@@ -45,7 +45,39 @@
   const STORMS = [['Heavy shower', 30, 1], ['Severe storm', 80, 1], ['Long downpour', 150, 3], ['Extreme rain', 300, 24]];
   function storm() {
     const [il, cl] = GROUND[ctl.ground.value] || GROUND.typical;
-    return { rainMm: parseFloat(ctl.rainMm.value), hours: parseFloat(ctl.stormHours.value), initialLoss: il, contLoss: cl };
+    const o = { rainMm: parseFloat(ctl.rainMm.value), hours: parseFloat(ctl.stormHours.value), initialLoss: il, contLoss: cl };
+    const pipeMmH = parseFloat(ctl.pipes.value) || 0;
+    if (pipeMmH > 0) {
+      const urban = urbanMask();
+      if (urban) Object.assign(o, { urban, pipeMmH });
+    }
+    return o;
+  }
+  // Built-up land for the pipes: cells with at least 3 OpenStreetMap
+  // buildings within about 60 m (the buildings come with the impact data;
+  // they are fetched the first time pipes are needed)
+  function urbanMask() {
+    const area = state.areaKey && areaReg.get(state.areaKey), a = state.a;
+    if (!area || !a) return null;
+    const d = area.impact;
+    if (!d) {
+      if (!area.impactLoading) {
+        area.impactLoading = true;
+        countImpact().then(() => { area.impactLoading = false; if (ctl.floodType.value !== 'river') runScenario(); });
+      }
+      return null;
+    }
+    if (d.error || !d.bx) return null;
+    if (area.urban && area.urban.src === d) return area.urban.mask;
+    const n = new Uint16Array(a.N);
+    for (let i = 0; i < d.bx.length; i++) { const c = cellOf(d.by[i], d.bx[i]); if (c >= 0) n[c]++; }
+    const r = Math.max(1, Math.round(60 / a.cell)), W = a.W, H = a.H;
+    // box sums over (2r+1)² cells, rows then columns
+    const rowS = new Uint16Array(a.N), mask = new Uint8Array(a.N);
+    for (let y = 0; y < H; y++) { let acc = 0; for (let x = -r; x < W; x++) { if (x + r < W) acc += n[y * W + x + r]; if (x - r - 1 >= 0) acc -= n[y * W + x - r - 1]; if (x >= 0) rowS[y * W + x] = acc; } }
+    for (let x = 0; x < W; x++) { let acc = 0; for (let y = -r; y < H; y++) { if (y + r < H) acc += rowS[(y + r) * W + x]; if (y - r - 1 >= 0) acc -= rowS[(y - r - 1) * W + x]; if (y >= 0 && acc >= 3) mask[y * W + x] = 1; } }
+    area.urban = { src: d, mask };
+    return mask;
   }
   const fmt = (v, d) => (Math.round(v * 10 ** d) / 10 ** d).toFixed(d);
   const streamFromSlider = (v) => 0.02 * Math.pow(10, (v / 100) * 3); // 0.02–20 km²
@@ -1352,7 +1384,7 @@
   const areaReg = new Map();
   let localCount = 0;
   let geoToken = 0;   // bumped whenever the active area changes
-  const CTL_KEYS = ['gaugeLevel', 'bayLevel', 'slr', 'extra', 'grad', 'streamArea', 'floodType', 'rainMm', 'stormHours', 'ground'];
+  const CTL_KEYS = ['gaugeLevel', 'bayLevel', 'slr', 'extra', 'grad', 'streamArea', 'floodType', 'rainMm', 'stormHours', 'ground', 'pipes'];
 
   function areaFields() {
     return {
@@ -2869,20 +2901,44 @@
     ['Port Douglas', -16.48, 145.46, 3.40, 2.54, 1.581], ['Weipa', -12.67, 141.86, 3.33, 3.01, 1.752], ['Karumba', -17.49, 140.83, 4.85, 3.91, 2.184],
   ].map(([name, lat, lon, hat, mhws, ahd]) => ({ name, lat, lon, hat: Math.round((hat - ahd) * 100) / 100, mhws: Math.round((mhws - ahd) * 100) / 100 }));
   const SURGES = [['Tropical low', 0.5], ['Category 1–2 cyclone', 1.0], ['Category 3 cyclone', 2.0], ['Category 4–5 cyclone', 3.0]];
+  // Tide heights for anywhere on the coast: Queensland's standard ports
+  // (Maritime Safety Queensland) where one is within 60 km, otherwise the
+  // nearest coastal point of the national tide model grid (AIMS, EOT20)
+  let tideGrid;
+  function loadTideGrid() {
+    if (tideGrid !== undefined) return;
+    tideGrid = null;
+    fetch('data/tides.json').then((r) => (r.ok ? r.json() : null)).then((d) => {
+      tideGrid = d && d.points && d.points.length ? d : null;
+      if (tideGrid && state.a) { renderTideRow(); if (!$('stormTide').hidden) renderStormTide(); }
+    }).catch(() => {});
+  }
   function tidePort() {
     const g = state.geo;
     if (!g) return null;
+    loadTideGrid();
     const c = [(g.north + g.south) / 2, (g.east + g.west) / 2];
     let best = null;
-    for (const p of TIDE_PORTS) { const km = kmBetween([p.lat, p.lon], c); if (km < 150 && (!best || km < best.km)) best = { ...p, km }; }
+    for (const p of TIDE_PORTS) { const km = kmBetween([p.lat, p.lon], c); if (km < 60 && (!best || km < best.km)) best = { ...p, km, src: 'msq' }; }
+    if (best || !tideGrid) return best;
+    // distance from the model's box to a point (0 inside it)
+    const toBox = (la, lo) => kmBetween([Math.min(g.north, Math.max(g.south, la)), Math.min(g.east, Math.max(g.west, lo))], [la, lo]);
+    for (const [la, lo, hat, mhws] of tideGrid.points) {
+      if (Math.abs(la - c[0]) > 1.5 || Math.abs(lo - c[1]) > 1.5) continue;
+      const km = toBox(la, lo);
+      if (km < 60 && (!best || km < best.km)) best = { name: `the coast at ${la.toFixed(2)}, ${lo.toFixed(2)}`, lat: la, lon: lo, hat, mhws, km, src: 'eot20' };
+    }
     return best;
   }
+  const tideSource = (p) => (p.src === 'eot20' ? 'national tide model (AIMS, EOT20, CC BY 4.0), metres above mean sea level' : 'Maritime Safety Queensland');
   function stormTideTotal() { return parseFloat($('tideM').value || 0) + parseFloat($('surgeM').value) + parseFloat($('setupM').value); }
   function renderStormTide(fromTideChoice) {
     const p = tidePort();
     $('tidePort').innerHTML = p
-      ? `Nearest standard port: <strong>${escapeHtml(p.name)}</strong> (${Math.round(p.km)} km): high spring tide ${p.mhws.toFixed(2)} m, highest astronomical tide ${p.hat.toFixed(2)} m AHD (Maritime Safety Queensland).`
-      : 'No Queensland standard port within 150 km: enter the tide height for this coast (metres above sea level).';
+      ? (p.src === 'eot20'
+        ? `Tides at <strong>${escapeHtml(p.name)}</strong>${p.km > 1 ? ` (${Math.round(p.km)} km away)` : ''}: high spring tide ${p.mhws.toFixed(2)} m, highest tide ${p.hat.toFixed(2)} m (${tideSource(p)}; mean sea level is close to AHD).`
+        : `Nearest standard port: <strong>${escapeHtml(p.name)}</strong> (${Math.round(p.km)} km): high spring tide ${p.mhws.toFixed(2)} m, highest astronomical tide ${p.hat.toFixed(2)} m AHD (${tideSource(p)}).`)
+      : 'No tide heights found within 60 km: enter the tide height for this coast (metres above sea level).';
     if (fromTideChoice && p) {
       const t = $('tideLevel').value;
       $('tideM').value = (t === 'hat' ? p.hat : t === 'mhws' ? p.mhws : 0).toFixed(2);
@@ -2910,6 +2966,12 @@
   $('tideLevel').addEventListener('change', () => renderStormTide(true));
   ['tideM', 'surgeM', 'setupM'].forEach((id) => $(id).addEventListener('input', () => renderStormTide()));
   $('applyStormTide').addEventListener('click', applyStormTide);
+  window.__floodTidePort = async () => {
+    loadTideGrid();
+    for (let i = 0; i < 40 && tideGrid === null; i++) await new Promise((r) => setTimeout(r, 250));
+    const p = tidePort();
+    return p && { name: p.name, src: p.src, km: Math.round(p.km), mhws: p.mhws, hat: p.hat, grid: tideGrid ? tideGrid.points.length : 0 };
+  };
   window.__floodStormTide = (tide, surge, setup) => {
     $('stormTide').open = true; $('tideLevel').value = tide || 'hat'; renderStormTide(true);
     if (surge != null) $('surgeM').value = surge; if (setup != null) $('setupM').value = setup;
@@ -2929,7 +2991,9 @@
       ? (f.excessMm > 0
         ? `${Math.round(f.excessMm)} mm runs off after ${Math.round(parseFloat(ctl.rainMm.value) - f.excessMm)} mm soaks in. Creeks rise up to ${fmt(f.maxCreekRise, 1)} m; overland flow covers ${fmt(f.overlandKm2, 2)} km²; water ponds over ${fmt(f.pondKm2, 2)} km².`
         : 'All of this rain soaks in: no runoff.')
-      : '') + ' Screening only: stormwater pipes, culverts and timing are not modelled, so small storms in sewered areas are overstated.';
+      : '') + (f && f.pipedMm > 0 ? ` Pipes take up to ${Math.round(f.pipedMm)} mm of that runoff from built-up land (${fmt(f.urbanKm2, 1)} km², where OpenStreetMap shows buildings) and carry it to the creeks.`
+        : parseFloat(ctl.pipes.value) > 0 ? (state.areaKey && (areaReg.get(state.areaKey) || {}).impactLoading ? ' Finding built-up land for the pipes…' : ' No built-up land found for the pipes here.') : '')
+      + ' Screening only: pipe capacity is a single typical rate, and culverts, blockages and timing are not modelled.';
     const g = state.geo;
     $('ifdNote').innerHTML = `The buttons are example storms, not official values for this place. For the official design rainfall here (such as the 1% annual chance storm), look up ${g ? `${((g.north + g.south) / 2).toFixed(4)}, ${((g.east + g.west) / 2).toFixed(4)}` : 'its coordinates'} in the <a href="https://www.bom.gov.au/water/designRainfalls/revised-ifd/?year=2016" target="_blank" rel="noopener">Bureau's design rainfall tool</a> and set the rain and duration to match.`;
     const box = $('stormPresets');
@@ -4366,10 +4430,10 @@
     if (!row) return;
     row.hidden = !hasSea();
     const p = tidePort(), key = state.areaKey || '';
-    if (!row.hidden && row.dataset.key !== key) {
-      row.dataset.key = key;
+    if (!row.hidden && row.dataset.key !== `${key}:${tideGrid ? 1 : 0}`) {
+      row.dataset.key = `${key}:${tideGrid ? 1 : 0}`;
       $('tideAmp').value = p ? Math.max(0.1, p.mhws).toFixed(1) : '0.8';
-      $('tideAmp').title = p ? `High spring tide at ${p.name}: ${p.mhws.toFixed(2)} m above mean sea level (Maritime Safety Queensland)` : 'Typical spring tide; set it for this coast';
+      $('tideAmp').title = p ? `High spring tide at ${p.name}: ${p.mhws.toFixed(2)} m above mean sea level (${tideSource(p)})` : 'Typical spring tide; set it for this coast';
     }
   }
   async function runTimeline(eventId) {
