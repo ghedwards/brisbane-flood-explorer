@@ -279,6 +279,15 @@ details > div { display: grid; gap: 14px; }
 .report-pin span { display: grid; place-items: center; width: 24px; height: 24px; border-radius: 50%; border: 2px solid #fff; box-shadow: 0 1px 4px rgba(0,0,0,.45); color: #fff; font: 700 12px Archivo, sans-serif; }
 .head-actions { display: inline-flex; gap: 6px; align-items: center; }
 .btn.small { padding: 4px 9px; font-size: 12.5px; }
+.spot-popup .leaflet-popup-content-wrapper { border-radius: 12px; box-shadow: 0 4px 18px rgba(0,0,0,.22); }
+.spot-popup .leaflet-popup-content { margin: 8px 8px 8px 12px; }
+.spot { display: flex; align-items: center; gap: 10px; }
+.spot-text { display: grid; gap: 1px; }
+.spot-coord { font: 600 13px var(--font-mono, ui-monospace, monospace); color: var(--ink); white-space: nowrap; }
+.spot-near { font-size: 12px; color: var(--muted); }
+.spot-add { flex: none; width: 34px; height: 34px; border: 0; border-radius: 9px; background: var(--accent); color: var(--accent-ink); display: grid; place-items: center; cursor: pointer; }
+.spot-add:hover { filter: brightness(1.1); }
+.spot-add svg { width: 19px; height: 19px; stroke: currentColor; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 .popup-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
 .popup-actions button { font: 600 12.5px var(--font-body); border: 1px solid #0d5f8c; color: #0d5f8c; background: #fff; border-radius: 6px; padding: 4px 8px; cursor: pointer; }
 #floodhubBody { display: grid; gap: 10px; }
@@ -399,8 +408,9 @@ details > div { display: grid; gap: 14px; }
 <!-- Scenario -->
 <aside class="sheet float" id="panel-scenario" data-panel data-side="left" aria-labelledby="h-scenario">
   <div class="sheet-head"><div class="head-title head-toggle" id="scenarioToggle"><h2 id="h-scenario">Flood scenario</h2><span class="sub-link" id="scenarioPlace"></span></div>
+    <span class="head-actions"><button type="button" class="icon-btn" id="scenarioPrev" aria-label="Previous flood scenario" title="Previous flood scenario" hidden>‹</button><button type="button" class="icon-btn" id="scenarioNext" aria-label="Next flood scenario" title="Next flood scenario" hidden>›</button>
     <button type="button" class="collapse-btn" id="scenarioCollapse" aria-label="Collapse the flood scenario" aria-expanded="true" aria-controls="scenarioBody"><svg class="chev" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></button>
-    <button type="button" class="close phone-only" data-close aria-label="Close">×</button></div>
+    <button type="button" class="close phone-only" data-close aria-label="Close">×</button></span></div>
   <div class="sheet-body" id="scenarioBody">
     <div id="scenarioModel" class="model-here" hidden></div>
     <div id="scenarioEmpty" class="empty" hidden>

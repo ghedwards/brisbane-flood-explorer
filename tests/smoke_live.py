@@ -138,6 +138,16 @@ def main() -> int:
             with open(os.environ.get("GITHUB_STEP_SUMMARY", os.devnull), "a") as fh:
                 fh.write(f"- Areas: {json.dumps(after_switch)}\n")
         page.screenshot(path="smoke-two-areas.png")
+        # ‹ › in the Scenario panel select the next modelled place; Places follows
+        if len(areas) >= 2:
+            act0 = [a["key"] for a in page.evaluate("window.__floodAreaInfo()") if a["active"]]
+            page.locator("#scenarioNext").click()
+            page.wait_for_timeout(800)
+            act1 = [a["key"] for a in page.evaluate("window.__floodAreaInfo()") if a["active"]]
+            sel = page.evaluate("window.__floodStatus.selectedPlace")
+            if act0 == act1 or sel is None:
+                failures.append(f"Scenario › did not move to the next flood scenario: {act0} -> {act1}, selected {sel}")
+            print(f"Scenario step: {act0} -> {act1}, selected {sel}")
 
         # ---- a model started from a report shares the report's number,
         #      and the number can be hidden and shown from Places
@@ -299,7 +309,22 @@ def main() -> int:
         # ---- a pin dropped on the map becomes a place; modelling it keeps its number
         page.select_option("#area", "australia")
         page.wait_for_timeout(1500)
-        pin_n = page.evaluate("window.__floodAddPin(-27.62, 152.76)")
+        # tapping an empty spot offers a single add-a-place button
+        page.evaluate("window.__floodTestZoom && window.__floodTestZoom(-27.62, 152.76, 11)")
+        page.wait_for_timeout(800)
+        page.evaluate("window.__floodTapAt(-27.62, 152.76)")
+        page.wait_for_timeout(400)
+        spot = page.locator(".spot-popup .spot-add")
+        page.screenshot(path="smoke-spot-popup.png")
+        if spot.count() and spot.first.is_visible():
+            n_before = len(page.evaluate("window.__floodPlaces()"))
+            spot.first.click()
+            page.wait_for_timeout(300)
+            places_now = page.evaluate("window.__floodPlaces()")
+            pin_n = max(p["n"] for p in places_now if p["pin"]) if len(places_now) > n_before else page.evaluate("window.__floodAddPin(-27.62, 152.76)")
+        else:
+            failures.append("tapping an empty spot did not offer the add-a-place button")
+            pin_n = page.evaluate("window.__floodAddPin(-27.62, 152.76)")
         before = (status().get("local") or {}).get("key")
         # its model options sit at the top of the Scenario panel, not in Places
         page.wait_for_timeout(300)

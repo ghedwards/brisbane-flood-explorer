@@ -1336,6 +1336,8 @@
     if (!el) return;
     const a = state.areaKey && areaReg.get(state.areaKey), u = unmodelledSelection();
     el.textContent = a ? `${a.n}. ${a.name}` : u ? `${u.n}. ${u.name}: not modelled yet` : '';
+    const many = areaReg.size > (a ? 1 : 0);
+    $('scenarioPrev').hidden = $('scenarioNext').hidden = !many;
     renderScenarioModel(u);
   }
 
@@ -2061,14 +2063,31 @@
     setTimeout(() => r.el.classList.remove('flash'), 700);
   }
 
-  function stepReport(dir) {
-    const list = reports.slice().sort((a, b) => a.n - b.n);
-    if (list.length < 2) return;
-    const i = list.indexOf(activeReport);
-    showReport(list[(i + dir + list.length) % list.length]);
+  // ‹ › in the Report and Scenario panels step to the next place that has a
+  // report / a flood model and select it, so every panel follows along.
+  function stepPlace(nums, current, dir) {
+    if (!nums.length) return;
+    nums.sort((a, b) => a - b);
+    let next;
+    if (current != null && nums.includes(current)) next = nums[(nums.indexOf(current) + dir + nums.length) % nums.length];
+    else if (dir > 0) next = nums.find((n) => current == null || n > current) ?? nums[0];
+    else next = nums.slice().reverse().find((n) => current == null || n < current) ?? nums[nums.length - 1];
+    selectPlace(next, { fromList: true });
   }
+  function stepReport(dir) {
+    const cur = reports.some((r) => r.n === selectedNum) ? selectedNum : activeReport ? activeReport.n : selectedNum;
+    stepPlace(reports.map((r) => r.n), cur, dir);
+  }
+  function stepScenario(dir) {
+    const cur = state.areaKey && areaReg.get(state.areaKey);
+    stepPlace(Array.from(areaReg.values()).map((a) => a.n), cur ? cur.n : selectedNum, dir);
+  }
+  window.__floodStepScenario = stepScenario;
+  window.__floodStepReport = stepReport;
   $('reportPrev').addEventListener('click', () => stepReport(-1));
   $('reportNext').addEventListener('click', () => stepReport(1));
+  $('scenarioPrev').addEventListener('click', () => stepScenario(-1));
+  $('scenarioNext').addEventListener('click', () => stepScenario(1));
 
   // Reports and modelled areas share one set of numbers: an area modelled
   // from report 2 is also 2. A number is free once neither uses it.
@@ -2285,23 +2304,24 @@
   };
 
   // A tap on empty map in the national view
+  const ICON_ADD_PLACE = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 21s-6.5-5.6-6.5-11a6.5 6.5 0 0 1 13 0c0 5.4-6.5 11-6.5 11Z"/><path d="M12 7v6M9 10h6"/></svg>';
   function onNationalClick(e) {
     const L = window.L;
     const { lat, lng } = e.latlng;
-    const div = document.createElement('div');
     const near = nearestNamed(lat, lng, 25);
-    div.innerHTML = `<strong>${lat.toFixed(4)}, ${lng.toFixed(4)}</strong>${near ? `<br><small>${near.km.toFixed(1)} km from ${escapeHtml(near.f.properties.name)}</small>` : ''}<div class="popup-actions">
-      <button type="button" data-k="pin">Add as a place</button>
-      <button type="button" data-k="river">Model river flooding here</button>
-      <button type="button" data-k="coast">Model coastal flooding here</button></div>`;
-    div.querySelectorAll('button').forEach((b) => b.addEventListener('click', () => {
+    const div = document.createElement('div');
+    div.className = 'spot';
+    div.innerHTML = `<div class="spot-text"><span class="spot-coord">${lat.toFixed(4)}, ${lng.toFixed(4)}</span>
+      ${near ? `<span class="spot-near">${near.km.toFixed(1)} km from ${escapeHtml(near.f.properties.name)}</span>` : ''}</div>
+      <button type="button" class="spot-add" data-k="pin" aria-label="Add as a place" title="Add as a place">${ICON_ADD_PLACE}</button>`;
+    div.querySelector('.spot-add').addEventListener('click', () => {
       state.lmap.closePopup();
-      if (b.dataset.k === 'pin') { addPin(lat, lng); return; }
       const pin = addPin(lat, lng);
-      modelHere(lat, lng, { kind: b.dataset.k, name: pin.name, pinN: pin.n });
-    }));
-    L.popup({ closeButton: true }).setLatLng(e.latlng).setContent(div).openOn(state.lmap);
+      selectPlace(pin.n);
+    });
+    L.popup({ closeButton: false, className: 'spot-popup', offset: [0, -4] }).setLatLng(e.latlng).setContent(div).openOn(state.lmap);
   }
+
 
 
   /* ---------- satellite water history for dams (DEA Waterbodies) */
