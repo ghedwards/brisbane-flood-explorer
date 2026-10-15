@@ -142,6 +142,9 @@ h1 span { color: var(--accent); }
 .model-here .place-row { display: flex; gap: 8px; align-items: center; font-weight: 600; }
 .model-here .btns { display: flex; flex-wrap: wrap; gap: 6px; }
 .model-here p { margin: 0; }
+.edge-note { display: grid; gap: 8px; padding: 10px 12px; border-radius: 10px; background: var(--warn-bg, #fff4e0); color: var(--warn-ink, #5a3b00); font-size: 13px; }
+.edge-note p { margin: 0; }
+.edge-note .btn { justify-self: start; }
 .places-head {
   display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 10px; width: 100%;
   border: 0; background: transparent; color: var(--ink); padding: 10px 12px 10px 16px; cursor: pointer; text-align: left;
@@ -421,6 +424,7 @@ details > div { display: grid; gap: 14px; }
       <p class="hint">Choose a place in <button type="button" class="link-btn" data-places-open>Places</button> or on the map: tap a river gauge, tide gauge or dam, or tap anywhere to add a place. Its flood model options appear here. Or pick a river town or coast from the menu at the top to model it straight away.</p>
     </div>
     <div class="stats" id="stats"></div>
+    <div class="edge-note" id="edgeNote" hidden></div>
 
     <fieldset id="eventsSet">
       <legend class="label">Historic peaks at the gauge</legend>

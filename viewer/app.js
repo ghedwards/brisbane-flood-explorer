@@ -463,11 +463,74 @@
       state.base = F.inundate(a, Object.assign({}, s, base, { upstreamGradient: s.upstreamGradient }));
     }
     state.run = F.inundate(a, s);
+    state.edges = floodEdges(a, state.run);
     drawMap();
     drawStats(s);
+    renderEdgeNote();
     drawProfile(s);
     renderNotice();
   }
+
+  // Which sides of the model window the flood runs into (ignoring the sea
+  // and the river channel itself, which always cross the edge).
+  function floodEdges(a, run) {
+    const { W, H } = a, hit = { north: 0, south: 0, west: 0, east: 0 };
+    const land = (c) => run.wet[c] && !(a.ocean && a.ocean[c]) && !(a.stream && a.stream[c]);
+    for (let x = 0; x < W; x++) { if (land(x)) hit.north++; if (land((H - 1) * W + x)) hit.south++; }
+    for (let y = 0; y < H; y++) { if (land(y * W)) hit.west++; if (land(y * W + W - 1)) hit.east++; }
+    const sides = Object.keys(hit).filter((k) => hit[k] >= 4);
+    status.edges = sides;
+    return sides;
+  }
+
+  const MODEL_SIZES = [[10, 30], [20, 30], [40, 60]];   // half-width km, cell m
+  function renderEdgeNote() {
+    const box = $('edgeNote');
+    if (!box) return;
+    const m = state.areaMeta || {}, sides = state.edges || [];
+    const level = MODEL_SIZES.findIndex(([h]) => h === (m.halfKm || 10));
+    const canGrow = m.local && level >= 0 && level < MODEL_SIZES.length - 1;
+    box.hidden = scenarioEmpty || !m.local || !sides.length;
+    if (box.hidden) return;
+    const km = 2 * (m.halfKm || 10);
+    const list = sides.length > 1 ? `${sides.slice(0, -1).join(', ')} and ${sides[sides.length - 1]}` : sides[0];
+    box.innerHTML = `<p><strong>The flood reaches the ${list} edge${sides.length > 1 ? 's' : ''}</strong> of this ${km} km model, so it may go further than shown.</p>`
+      + (canGrow ? `<button type="button" class="btn small" id="extendModel">Extend model area to ${2 * MODEL_SIZES[level + 1][0]} km</button>`
+        : '<p class="hint">This is the largest model area. Model another place further along the river to see beyond it.</p>');
+    const b = $('extendModel');
+    if (b) b.addEventListener('click', () => extendModel());
+  }
+
+  // Rebuild the active on-demand model over a larger window, shifted toward
+  // the edges the flood reaches; it keeps its number and scenario settings.
+  async function extendModel() {
+    const area = state.areaKey && areaReg.get(state.areaKey);
+    const m = state.areaMeta || {};
+    if (!area || !m.local || !m.gaugeLatLon) return false;
+    const level = MODEL_SIZES.findIndex(([h]) => h === (m.halfKm || 10));
+    if (level < 0 || level >= MODEL_SIZES.length - 1) return false;
+    const [half, cell] = MODEL_SIZES[level + 1], grow = half - (m.halfKm || 10);
+    const sides = state.edges || [];
+    const [glat, glon] = m.gaugeLatLon, [clat, clon] = m.centerLatLon || m.gaugeLatLon;
+    const dy = (sides.includes('north') ? 1 : 0) - (sides.includes('south') ? 1 : 0);
+    const dx = (sides.includes('east') ? 1 : 0) - (sides.includes('west') ? 1 : 0);
+    const center = [clat + (dy * grow * 1000) / 110574, clon + (dx * grow * 1000) / (111320 * Math.cos((clat * Math.PI) / 180))];
+    const saved = {};
+    CTL_KEYS.forEach((k) => { saved[k] = ctl[k].value; });
+    const keep = { n: area.n, key: area.key, name: area.name };
+    const ok = await modelHere(glat, glon, {
+      kind: m.kind, name: area.name, reportId: m.reportId, presetId: m.presetId, pinN: m.pinN,
+      halfKm: half, cellM: cell, center, keepN: area.n, streamAreaKm2: m.streamAreaKm2, replaceKey: keep.key,
+    });
+    if (!ok) return false;
+    CTL_KEYS.forEach((k) => { if (k !== 'streamArea') ctl[k].value = saved[k]; });
+    state.base = null;
+    syncOutputs();
+    runScenario();
+    say(`Extended ${keep.name} to ${2 * half} km across.`);
+    return true;
+  }
+  window.__floodExtendModel = extendModel;
 
   /* ------------------------------------------------------------ drawing */
 
@@ -1138,7 +1201,7 @@
     if (!area) {
       const fromReport = state.areaMeta.reportId && reports.find((r) => r.id === state.areaMeta.reportId);
       const fromPin = state.areaMeta.pinN != null && pins.find((x) => x.n === state.areaMeta.pinN);
-      area = { key, name: state.areaMeta.name || key, n: fromReport ? fromReport.n : fromPin ? fromPin.n : nextNumber(), reportId: state.areaMeta.reportId || null };
+      area = { key, name: state.areaMeta.name || key, n: state.areaMeta.keepN != null ? state.areaMeta.keepN : fromReport ? fromReport.n : fromPin ? fromPin.n : nextNumber(), reportId: state.areaMeta.reportId || null };
       area.overlay = L.imageOverlay(BLANK, bounds, {
         opacity: parseFloat($('floodOpacity').value) / 100, className: 'flood-layer', zIndex: 6,
       }).addTo(m);
@@ -1238,6 +1301,8 @@
     renderInfo();
     renderNotice();
     if (state.run) { drawStats(scenario()); drawProfile(scenario()); }
+    state.edges = state.run && state.a ? floodEdges(state.a, state.run) : [];
+    renderEdgeNote();
     renderAreaList();
     return true;
   }
@@ -2109,9 +2174,10 @@
   function showScenarioEmpty(empty) {
     scenarioEmpty = empty;
     Array.from($('scenarioEmpty').parentElement.children).forEach((el) => {
-      if (el.id !== 'scenarioEmpty' && el.id !== 'scenarioModel') el.hidden = empty || (el.id === 'eventsSet' && !state.eventsApply);
+      if (el.id !== 'scenarioEmpty' && el.id !== 'scenarioModel' && el.id !== 'edgeNote') el.hidden = empty || (el.id === 'eventsSet' && !state.eventsApply);
     });
-    if (empty) $('stats').innerHTML = '';
+    if (empty) { $('stats').innerHTML = ''; state.edges = []; }
+    renderEdgeNote();
     renderScenarioTitle();
   }
 
@@ -2596,8 +2662,10 @@
       // more at a slightly different size (the service occasionally returns
       // a file the reader rejects)
       let got = null, lastErr = null;
-      for (const [half, cell] of [[10, 30], [10, 32], [9, 30]]) {
-        try { got = await fetchDemWindow(lat, lon, half, cell); break; } catch (err) {
+      const H0 = o.halfKm || 10, C0 = o.cellM || 30, [wlat, wlon] = o.center || [lat, lon];
+      if (H0 > 10) setBusy(true, `Downloading elevation for a ${2 * H0} km area…`);
+      for (const [half, cell] of [[H0, C0], [H0, Math.round(C0 * 1.07)], [H0 * 0.9, C0]]) {
+        try { got = await fetchDemWindow(wlat, wlon, half, cell); break; } catch (err) {
           lastErr = err;
           if (/no land/.test(String(err.message))) break;
         }
@@ -2608,10 +2676,13 @@
       await nextFrame();
       const col = Math.round(((lon - bounds[0]) / (bounds[2] - bounds[0])) * grid.W);
       const row = Math.round(((bounds[3] - lat) / (bounds[3] - bounds[1])) * grid.H);
+      if (col < 0 || row < 0 || col >= grid.W || row >= grid.H) throw new Error('the gauge fell outside the elevation window');
+      if (o.replaceKey) removeArea(o.replaceKey, { quiet: true });   // extending: the new window replaces the old
       const key = `local-${++localCount}`;
       state.areaMeta = {
         id: 'local', areaKey: key, local: true, kind: o.kind, name: o.name, bounds_lonlat: bounds, reportId: o.reportId || null, presetId: o.presetId || null, pinN: o.pinN != null ? o.pinN : null,
-        gauge: { col, row }, streamAreaKm2: Math.max(0.5, Math.min(4, (grid.W * grid.H * grid.cell * grid.cell) / 1e6 * 0.004)),
+        keepN: o.keepN != null ? o.keepN : null, halfKm: o.halfKm || 10, gaugeLatLon: [lat, lon], centerLatLon: o.center || [lat, lon],
+        gauge: { col, row }, streamAreaKm2: o.streamAreaKm2 || Math.max(0.5, Math.min(4, (grid.W * grid.H * grid.cell * grid.cell) / 1e6 * 0.004)),
         source: 'Terrain: Geoscience Australia 1-second (about 30 m) hydrologically enforced elevation model (DEM-H), CC BY 4.0, read live from GA.',
       };
       addModelledOption(key, o.name);
@@ -2624,14 +2695,16 @@
         syncOutputs();
         runScenario();
       }
-      status.local = { ok: true, key, W: grid.W, H: grid.H, cell: Math.round(grid.cell), ms: Math.round(performance.now() - t0), kind: o.kind };
+      status.local = { ok: true, key, W: grid.W, H: grid.H, cell: Math.round(grid.cell), ms: Math.round(performance.now() - t0), kind: o.kind, km: 2 * (o.halfKm || 10) };
       openPanel('panel-scenario');
-      say(o.kind === 'coast'
+      if (!o.replaceKey) say(o.kind === 'coast'
         ? 'Coastal model ready. Set the bay level and sea-level rise in Scenario.'
         : 'River model ready. Set the peak level at the gauge in Scenario.');
+      return true;
     } catch (err) {
       status.local = { ok: false, error: String(err.message || err) };
       say(`Couldn’t model this area: ${err.message || err}.`);
+      return false;
     } finally {
       setBusy(false);
     }

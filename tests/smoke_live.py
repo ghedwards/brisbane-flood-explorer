@@ -382,6 +382,22 @@ def main() -> int:
             failures.append(f"pinned place {pin_n} was not modelled under its own number: {pin_place}")
         page.screenshot(path="smoke-pin.png")
 
+        # ---- extending a model rebuilds it over a 40 km window, keeping its number
+        if pin_place and pin_place[0]["area"]:
+            ext = None
+            try:
+                ext = page.evaluate("window.__floodExtendModel()")
+                page.wait_for_function("window.__floodAreaInfo().every(a => a.drawn)", timeout=30_000)
+            except Exception as e:
+                ext = f"error: {e}"
+            loc = status().get("local") or {}
+            after = [p for p in page.evaluate("window.__floodPlaces()") if p["n"] == pin_n]
+            print(f"Extend model: {ext}; local {loc}; place {after}")
+            note("notice", f"Extended model: {json.dumps(loc)}")
+            if ext is not True or loc.get("km") != 40 or not (after and after[0]["area"]):
+                failures.append(f"extending the model failed: {ext}, {loc}, {after}")
+            page.screenshot(path="smoke-extended.png")
+
         # ---- every preset in the menu models successfully
         results = []
         for pre in page.evaluate("window.__floodPresets || []"):

@@ -12,7 +12,7 @@ The heavy terrain work is done by the hydrology tools that power [RustGIS](https
 
 ## Australia-wide view
 
-The menu at the top has one-tap presets for about 60 well-known flood sites and populated flood-prone places, grouped by state: river towns such as Lismore, Maitland, Windsor, Wagga Wagga, Forbes, Rockhampton, Bundaberg, Ipswich, Townsville, Charleville, Rochester, Shepparton, Echuca, Murray Bridge, Carnarvon, Fitzroy Crossing, Launceston and Katherine, plus coasts and estuaries from Cairns to Hobart. Picking one models it on the spot; places you've modelled are listed at the top of the menu, and the detailed Brisbane River model is under *Detailed models*.
+The menu at the top has one-tap presets for about 60 well-known flood sites and populated flood-prone places, grouped by state: river towns such as Lismore, Maitland, Windsor, Wagga Wagga, Forbes, Rockhampton, Bundaberg, Ipswich, Townsville, Charleville, Rochester, Shepparton, Echuca, Murray Bridge, Carnarvon, Fitzroy Crossing, Launceston and Katherine, plus coasts and estuaries from Cairns to Hobart. Picking one models it on the spot over a 20 km square; when the flood reaches the edge of that square the Scenario panel says so and offers *Extend model area*, which rebuilds it 40 km and then 80 km across, shifted toward the edges the water reaches; places you've modelled are listed at the top of the menu, and the detailed Brisbane River model is under *Detailed models*.
 
 
 The app opens on a map of Australia:
