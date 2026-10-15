@@ -35,7 +35,18 @@
   const ctl = {
     gaugeLevel: $('gaugeLevel'), bayLevel: $('bayLevel'), slr: $('slr'),
     extra: $('extra'), grad: $('grad'), streamArea: $('streamArea'),
+    floodType: $('floodType'), rainMm: $('rainMm'), stormHours: $('stormHours'), ground: $('ground'),
   };
+  // soil and surface losses for each ground type: initial loss (mm) and
+  // continuing loss (mm/h), in the range Australian Rainfall and Runoff
+  // gives for sealed urban, typical and dry/sandy catchments
+  const GROUND = { urban: [3, 0.5], typical: [20, 2], dry: [40, 6] };
+  // example storms (not official design values for any place)
+  const STORMS = [['Heavy shower', 30, 1], ['Severe storm', 80, 1], ['Long downpour', 150, 3], ['Extreme rain', 300, 24]];
+  function storm() {
+    const [il, cl] = GROUND[ctl.ground.value] || GROUND.typical;
+    return { rainMm: parseFloat(ctl.rainMm.value), hours: parseFloat(ctl.stormHours.value), initialLoss: il, contLoss: cl };
+  }
   const fmt = (v, d) => (Math.round(v * 10 ** d) / 10 ** d).toFixed(d);
   const streamFromSlider = (v) => 0.02 * Math.pow(10, (v / 100) * 3); // 0.02–20 km²
   const sliderFromStream = (km2) => Math.round((Math.log10(km2 / 0.02) / 3) * 100);
@@ -527,13 +538,23 @@
     const a = state.a;
     if (!a) return;
     const s = scenario();
+    if (state.base && (state.baseMode === 'flash') !== (ctl.floodType.value === 'flash')) state.base = null;
+    state.baseMode = ctl.floodType.value;
+    if (!state.base && state.baseMode === 'flash') state.base = F.flashFlood(a, { rainMm: 0 });
     if (!state.base) {
       const base = state.eventsApply || state.gauge < 0
         ? BASELINE
         : { gaugeLevel: a.dem[state.gauge] + 0.3, bayLevel: 0 };
       state.base = F.inundate(a, Object.assign({}, s, base, { upstreamGradient: s.upstreamGradient }));
     }
-    state.run = F.inundate(a, s);
+    const mode = ctl.floodType.value;
+    state.riverRun = mode === 'flash' ? null : F.inundate(a, s);
+    if (mode === 'river') { state.run = state.riverRun; state.flash = null; } else {
+      const fl = F.flashFlood(a, storm());
+      state.flash = fl.summary;
+      state.run = mode === 'both' ? F.mergeRuns(state.riverRun, fl) : fl;
+    }
+    renderStorm();
     state.edges = floodEdges(a, state.run);
     drawMap();
     drawStats(s);
@@ -826,6 +847,52 @@
       legend: 'NSW flood planning areas from council planning schemes', swatch: '#3b6fb6' },
   ];
 
+  // Council overland-flow mapping published as open map services (shown
+  // when zoomed in). Brisbane's are in the council layers above.
+  const COUNCIL_OVERLAYS = [
+    { name: 'Moreton Bay overland flow paths (council)', type: 'feature', minZoom: 12,
+      url: 'https://services-ap1.arcgis.com/152ojN3Ts9H3cdtl/ArcGIS/rest/services/OM_Overland_Flow_Path_WebMercator_OpenData/FeatureServer/0',
+      attribution: 'Overland flow paths &copy; City of Moreton Bay (planning scheme overlay)',
+      legend: 'Moreton Bay overland flow paths (planning scheme)', swatch: '#7b4fc9', test: [-27.2, 153.0] },
+    { name: 'Sunshine Coast overland flow, 1% chance (council)', type: 'map', minZoom: 12,
+      url: 'https://geoimage.scc.qld.gov.au/arcgis/rest/services/Emergency/FloodMapping_IndividualStudies_OverlandFlowModel_scrc/MapServer',
+      pick: (l) => l.id < 57 && !(l.subLayerIds && l.subLayerIds.length) && /(1\s*%|1 in 100)/i.test(l.name) && /current/i.test(l.name),
+      attribution: 'Overland flow model &copy; Sunshine Coast Council',
+      legend: 'Sunshine Coast overland flow model, 1% annual chance, current climate (study areas only)', swatch: '#7b4fc9', test: [-26.66, 153.06] },
+    { name: 'Randwick overland flow paths (council)', type: 'map', minZoom: 13,
+      url: 'https://mapservices.randwick.nsw.gov.au/arcgis/rest/services/intStormwater/OverlandFlowPath/MapServer',
+      attribution: 'Overland flow paths &copy; Randwick City Council',
+      legend: 'Randwick overland flow paths', swatch: '#7b4fc9', test: [-33.92, 151.24] },
+  ];
+  function makeCouncilOverlay(o) {
+    const esri = window.L && window.L.esri;
+    if (!esri) return null;
+    const st = (status.overlays[o.name] = { features: 0, errors: 0 });
+    let layer;
+    if (o.type === 'feature') {
+      layer = esri.featureLayer({
+        url: o.url, minZoom: o.minZoom, simplifyFactor: 0.5, precision: 6, attribution: o.attribution,
+        style: () => ({ color: o.swatch, weight: 1, fillColor: o.swatch, fillOpacity: 0.35 }),
+      });
+      layer.on('load', () => { let n = 0; layer.eachFeature(() => { n++; }); st.features = n; });
+    } else {
+      layer = esri.dynamicMapLayer({ url: o.url, opacity: 0.6, attribution: o.attribution, f: 'image', format: 'png32', transparent: true, minZoom: o.minZoom, zIndex: 4 });
+      layer.on('load', () => { st.features++; });
+      if (o.pick) {
+        fetch(`${o.url}?f=json`).then((r) => r.json()).then((j) => {
+          const ids = (j.layers || []).filter(o.pick).map((l) => l.id);
+          st.picked = ids.length;
+          if (ids.length) layer.setLayers(ids);
+        }).catch(() => { st.errors++; });
+      }
+    }
+    layer.on('requesterror', () => { st.errors++; });
+    layer.zoomNote = { min: o.minZoom, text: 'council view' };
+    o.layer = layer;
+    o.kind = 'council';
+    return layer;
+  }
+
   function makeStateOverlay(o) {
     const esri = window.L && window.L.esri;
     if (!esri) return null;
@@ -956,7 +1023,7 @@
       const hidden = on.filter((o) => o.layer.zoomNote && z < o.layer.zoomNote.min);
       if (hidden.length) parts.push(`<span class="hint">Zoom in to see ${hidden.map((o) => o.name.split(' ')[0].toLowerCase()).join(' and ')} layers</span>`);
     }
-    STATE_OVERLAYS.filter((o) => o.layer && state.lmap.hasLayer(o.layer)).forEach((o) => {
+    [...STATE_OVERLAYS, ...COUNCIL_OVERLAYS].filter((o) => o.layer && state.lmap.hasLayer(o.layer)).forEach((o) => {
       const z = state.lmap.getZoom();
       parts.push(`<span><i style="background:${o.swatch};opacity:.6"></i>${escapeHtml(o.legend)}${o.layer.zoomNote && z < o.layer.zoomNote.min ? ' <em>(zoom in)</em>' : ''}</span>`);
     });
@@ -1051,6 +1118,7 @@
       const overlays = {};
       for (const o of NATIONAL_OVERLAYS) overlays[o.name] = makeWmsOverlay(L, o);
       for (const o of STATE_OVERLAYS) { const l = makeStateOverlay(o); if (l) overlays[o.name] = l; }
+      for (const o of COUNCIL_OVERLAYS) { const l = makeCouncilOverlay(o); if (l) overlays[o.name] = l; }
       const fhLayers = floodHubOverlays(L);
       Object.assign(overlays, fhLayers);
       const fh = state.floodhub;
@@ -1250,7 +1318,7 @@
   const areaReg = new Map();
   let localCount = 0;
   let geoToken = 0;   // bumped whenever the active area changes
-  const CTL_KEYS = ['gaugeLevel', 'bayLevel', 'slr', 'extra', 'grad', 'streamArea'];
+  const CTL_KEYS = ['gaugeLevel', 'bayLevel', 'slr', 'extra', 'grad', 'streamArea', 'floodType', 'rainMm', 'stormHours', 'ground'];
 
   function areaFields() {
     return {
@@ -1749,15 +1817,18 @@
 
   function drawStats(s) {
     const st = F.stats(state.a, state.run, state.base);
+    const flashOnly = ctl.floodType.value === 'flash';
     const cells = [
       ['Land newly flooded', fmt(st.floodedKm2, 1), 'km²'],
       ['Deeper than 1 m', fmt(st.deepKm2, 1), 'km²'],
       ['Deepest water', fmt(st.maxDepth, 1), 'm'],
-      ['Level at gauge', fmt(s.gaugeLevel, 2), 'm'],
+      flashOnly ? ['Creeks rise up to', fmt((state.flash && state.flash.maxCreekRise) || 0, 1), 'm'] : ['Level at gauge', fmt(s.gaugeLevel, 2), 'm'],
     ];
+    $('eventsSet').hidden = scenarioEmpty || !state.eventsApply || flashOnly;
     const ev = state.eventsApply && state.events.find((e) => Math.abs(e.level - parseFloat(ctl.gaugeLevel.value)) < 0.001);
-    $('summaryLine').innerHTML = `<b>${ev ? ev.label + ' peak' : 'Gauge'}</b> ${fmt(s.gaugeLevel, 2)} m · ` +
-      `${fmt(st.floodedKm2, 1)} km² newly flooded` + (parseFloat(ctl.slr.value) ? ` · +${ctl.slr.value} m sea level` : '');
+    const stormTxt = ctl.floodType.value !== 'river' ? `<b>Storm</b> ${ctl.rainMm.value} mm in ${ctl.stormHours.selectedOptions[0].textContent}` : '';
+    $('summaryLine').innerHTML = (flashOnly ? stormTxt : `<b>${ev ? ev.label + ' peak' : 'Gauge'}</b> ${fmt(s.gaugeLevel, 2)} m` + (stormTxt ? ` + ${stormTxt}` : '')) + ' · '
+      + `${fmt(st.floodedKm2, 1)} km² newly flooded` + (parseFloat(ctl.slr.value) && !flashOnly ? ` · +${ctl.slr.value} m sea level` : '');
     $('stats').innerHTML = cells.map(([k, v, u]) =>
       `<div class="stat"><div class="label">${k}</div><div class="v">${v}<small>${u}</small></div></div>`).join('');
   }
@@ -1789,9 +1860,18 @@
   }
 
   function drawProfile(s) {
-    const a = state.a, run = state.run, base = state.base;
+    const a = state.a, run = state.riverRun || state.run;
+    const base = state.baseMode === 'flash' ? null : state.base;
     const canvas = $('profile');
     if ($('panel-profile').hidden) return;
+    if (!state.riverRun || !base) {
+      const c2 = canvas.getContext('2d');
+      c2.clearRect(0, 0, canvas.width, canvas.height);
+      c2.fillStyle = cssVar('--muted'); c2.font = '13px Archivo, sans-serif';
+      c2.fillText('The river profile applies to river flooding. Set Flood type to River or Both.', 8, 24);
+      $('profileNote').textContent = '';
+      return;
+    }
     const dpr = Math.min(2, window.devicePixelRatio || 1);
     const cw = canvas.clientWidth, ch = canvas.clientHeight;
     canvas.width = Math.round(cw * dpr); canvas.height = Math.round(ch * dpr);
@@ -2306,11 +2386,12 @@
   function showScenarioEmpty(empty) {
     scenarioEmpty = empty;
     Array.from($('scenarioEmpty').parentElement.children).forEach((el) => {
-      if (el.id !== 'scenarioEmpty' && el.id !== 'scenarioModel' && el.id !== 'edgeNote' && el.id !== 'levelPointsSet' && el.id !== 'checkSet' && el.id !== 'downloadSet') el.hidden = empty || (el.id === 'eventsSet' && !state.eventsApply);
+      if (el.id !== 'scenarioEmpty' && el.id !== 'scenarioModel' && el.id !== 'edgeNote' && el.id !== 'levelPointsSet' && el.id !== 'checkSet' && el.id !== 'downloadSet' && el.id !== 'stormSet' && el.id !== 'riverSet') el.hidden = empty || (el.id === 'eventsSet' && !state.eventsApply);
     });
     if (empty) { $('stats').innerHTML = ''; state.edges = []; }
     renderEdgeNote();
     renderLevelPoints();
+    renderStorm();
     renderScenarioTitle();
   }
 
@@ -2738,6 +2819,37 @@
     return !!f;
   };
 
+  /* ---------- storm (flash flooding) controls */
+  function renderStorm() {
+    const mode = ctl.floodType.value, on = mode !== 'river';
+    $('stormSet').hidden = !on || scenarioEmpty;
+    $('riverSet').hidden = mode === 'flash' || scenarioEmpty;
+    $('rainMmOut').textContent = `${ctl.rainMm.value} mm`;
+    status.flash = on && state.flash ? Object.assign({ mode }, state.flash) : null;
+    if (!on) return;
+    const f = state.flash;
+    $('stormSummary').innerHTML = (f
+      ? (f.excessMm > 0
+        ? `${Math.round(f.excessMm)} mm runs off after ${Math.round(parseFloat(ctl.rainMm.value) - f.excessMm)} mm soaks in. Creeks rise up to ${fmt(f.maxCreekRise, 1)} m; overland flow covers ${fmt(f.overlandKm2, 2)} km²; water ponds over ${fmt(f.pondKm2, 2)} km².`
+        : 'All of this rain soaks in: no runoff.')
+      : '') + ' Screening only: stormwater pipes, culverts and timing are not modelled, so small storms in sewered areas are overstated.';
+    const g = state.geo;
+    $('ifdNote').innerHTML = `The buttons are example storms, not official values for this place. For the official design rainfall here (such as the 1% annual chance storm), look up ${g ? `${((g.north + g.south) / 2).toFixed(4)}, ${((g.east + g.west) / 2).toFixed(4)}` : 'its coordinates'} in the <a href="https://www.bom.gov.au/water/designRainfalls/revised-ifd/?year=2016" target="_blank" rel="noopener">Bureau's design rainfall tool</a> and set the rain and duration to match.`;
+    const box = $('stormPresets');
+    if (!box.childElementCount) {
+      box.innerHTML = STORMS.map(([n, mm, h], i) => `<button type="button" class="btn small" data-storm="${i}">${n}<br><small>${mm} mm in ${h < 1 ? `${h * 60} min` : `${h} h`}</small></button>`).join('');
+      box.querySelectorAll('[data-storm]').forEach((b) => b.addEventListener('click', () => {
+        const [, mm, h] = STORMS[+b.dataset.storm];
+        ctl.rainMm.value = mm; ctl.stormHours.value = String(h);
+        runScenario();
+      }));
+    }
+  }
+  window.__floodSetStorm = (mode, mm, h, ground) => {
+    ctl.floodType.value = mode; if (mm != null) ctl.rainMm.value = mm; if (h != null) ctl.stormHours.value = String(h); if (ground) ctl.ground.value = ground;
+    runScenario(); return status.flash;
+  };
+
   /* ---------- flood classes, warnings and level points */
   function classFor(p) { return p && p.bom != null && nat.floodclass ? nat.floodclass[String(p.bom)] || null : null; }
   function floodStatus(v, c) {
@@ -2837,9 +2949,9 @@
     const set = $('levelPointsSet');
     if (!set) return;
     const local = state.a && state.geo;
-    set.hidden = !local || scenarioEmpty;
-    $('checkSet').hidden = set.hidden;
-    $('downloadSet').hidden = set.hidden;
+    set.hidden = !local || scenarioEmpty || ctl.floodType.value === 'flash';
+    $('checkSet').hidden = !local || scenarioEmpty;
+    $('downloadSet').hidden = !local || scenarioEmpty;
     if (set.hidden) return;
     const sc = $('satCheck');
     if (sc.dataset.key && sc.dataset.key !== String(state.areaKey)) { sc.innerHTML = ''; sc.dataset.key = ''; }
@@ -3858,6 +3970,7 @@
     if (target) closePanel(target.id);
   });
   window.__floodOpenPanel = openPanel;
+  window.__floodCouncilLayers = () => COUNCIL_OVERLAYS.map((o) => ({ name: o.name, test: o.test, minZoom: o.minZoom }));
 
   let sayT = 0;
   function say(text) {

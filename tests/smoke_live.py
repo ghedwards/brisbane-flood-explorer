@@ -395,6 +395,15 @@ def main() -> int:
             except Exception as e:
                 sat = {"ok": False, "error": str(e)[:200]}
             note("notice" if sat and sat.get("ok") else "warning", f"Satellite check of the pinned model: {json.dumps(sat)}; LiDAR share {(status().get('local') or {}).get('lidar')}")
+            # storm mode: flash flooding on the same model
+            fl = page.evaluate("window.__floodSetStorm('flash', 80, 1, 'typical')")
+            stats_fl = page.inner_text("#stats").replace("\n", " ")
+            fb = page.evaluate("window.__floodSetStorm('both', 80, 1)")
+            page.screenshot(path="smoke-storm.png")
+            page.evaluate("window.__floodSetStorm('river')")
+            note("notice", f"Storm 80 mm in 1 h: {json.dumps(fl)} | {stats_fl[:140]}")
+            if not (fl and fl.get("excessMm", 0) > 0 and fl.get("creekKm2", 0) > 0 and fb and fb.get("mode") == "both"):
+                failures.append(f"storm (flash flood) mode failed: {fl} / {fb}")
         wst = status().get("warnings")
         note("notice", f"Flood warnings in the app: {json.dumps(wst)}; gauges ringed: {status().get('warnedGauges')}")
 
@@ -448,6 +457,16 @@ def main() -> int:
         page.locator("#studyCancel").click()
         if not armed:
             failures.append("the Study an area button did not arm the box tool")
+
+        # ---- council overland-flow layers draw where they cover
+        for cl in page.evaluate("window.__floodCouncilLayers ? window.__floodCouncilLayers() : []"):
+            page.evaluate("([la, lo, z]) => window.__floodTestZoom(la, lo, z)", [cl["test"][0], cl["test"][1], max(14, cl["minZoom"] + 1)])
+            page.evaluate("([n]) => window.__floodSetOverlay(n, true)", [cl["name"]])
+            page.wait_for_timeout(8000)
+            cst = page.evaluate("n => window.__floodStatus.overlays[n] || null", cl["name"])
+            note("notice" if cst and cst.get("features") else "warning", f"Council layer {cl['name']}: {json.dumps(cst)}")
+            page.screenshot(path=f"smoke-council-{cl['name'].split()[0].lower()}.png")
+            page.evaluate("([n]) => window.__floodSetOverlay(n, false)", [cl["name"]])
 
         # ---- downloads of the active model
         n_rect = page.evaluate("window.__floodGeoJSON ? window.__floodGeoJSON() : -1")

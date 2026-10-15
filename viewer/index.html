@@ -77,6 +77,9 @@ body {
 
 /* ---------- floating chrome */
 .float { background: var(--surface); color: var(--ink); border-radius: 12px; box-shadow: var(--shadow); }
+.storm-row { display: flex; flex-wrap: wrap; gap: 8px 14px; font-size: 13px; }
+.storm-row select, #floodType { font: 13.5px var(--font-body); padding: 5px 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--ink); }
+#floodType { width: 100%; font-weight: 600; }
 .search { display: flex; align-items: center; gap: 2px; min-width: 0; }
 .search input { width: 210px; min-width: 0; font: 14px var(--font-body); padding: 7px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--ink); }
 .search-results { position: absolute; top: calc(100% + 6px); left: 0; right: 0; max-height: 50vh; overflow-y: auto; padding: 6px; display: grid; gap: 2px; z-index: 1003; }
@@ -464,7 +467,36 @@ details > div { display: grid; gap: 14px; }
       <p class="hint" id="eventsNote"></p>
     </fieldset>
 
-    <fieldset>
+    <fieldset id="floodTypeSet">
+      <legend class="label">Flood type</legend>
+      <select id="floodType" aria-label="Flood type">
+        <option value="river">River and sea</option>
+        <option value="flash">Storm: flash flooding</option>
+        <option value="both">Both together</option>
+      </select>
+    </fieldset>
+
+    <fieldset id="stormSet" hidden>
+      <legend class="label">Storm</legend>
+      <div class="class-btns" id="stormPresets"></div>
+      <div class="slider">
+        <div class="row"><label for="rainMm">Rain</label><output id="rainMmOut"></output></div>
+        <input type="range" id="rainMm" min="0" max="400" step="5" value="100">
+      </div>
+      <div class="storm-row">
+        <label>Over <select id="stormHours" aria-label="Storm duration">
+          <option value="0.5">30 minutes</option><option value="1" selected>1 hour</option><option value="2">2 hours</option>
+          <option value="3">3 hours</option><option value="6">6 hours</option><option value="12">12 hours</option><option value="24">24 hours</option>
+        </select></label>
+        <label>Ground <select id="ground" aria-label="How much rain soaks in">
+          <option value="urban">Mostly sealed (city)</option><option value="typical" selected>Typical</option><option value="dry">Dry or sandy</option>
+        </select></label>
+      </div>
+      <p class="hint" id="stormSummary"></p>
+      <p class="hint" id="ifdNote"></p>
+    </fieldset>
+
+    <fieldset id="riverSet">
       <legend class="label">River and bay</legend>
       <div class="slider">
         <div class="row"><label for="gaugeLevel">Peak level at gauge</label><output id="gaugeLevelOut"></output></div>

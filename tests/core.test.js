@@ -183,3 +183,37 @@ test('extra control points pin the water surface and interpolate between them', 
   const plain = F.inundate(a, scenario(4));
   assert.ok(Math.abs(plain.wse[mid] - 3.5) > 1e-6, 'without it the level differs');
 });
+
+test('flash flood: no storm, no water; bigger storms flood more', () => {
+  const none = F.flashFlood(a, { rainMm: 0, hours: 1 });
+  let wetLand = 0;
+  for (let c = 0; c < a.N; c++) if (none.wet[c] && !a.ocean[c]) wetLand++;
+  assert.equal(wetLand, 0, 'no rain floods nothing');
+  const count = (r) => { let n = 0; for (let c = 0; c < a.N; c++) if (r.wet[c] && !a.ocean[c]) n++; return n; };
+  const small = F.flashFlood(a, { rainMm: 40, hours: 1 });
+  const big = F.flashFlood(a, { rainMm: 200, hours: 1 });
+  assert.ok(count(big) > count(small), 'more rain floods more land');
+  assert.ok(big.summary.maxCreekRise > small.summary.maxCreekRise, 'creeks rise higher');
+  assert.ok(big.summary.excessMm === 200 - 15 - 2.5, 'losses taken off the rain');
+});
+
+test('flash flood: rain that soaks in makes no runoff', () => {
+  const r = F.flashFlood(a, { rainMm: 10, hours: 1, initialLoss: 15, contLoss: 2.5 });
+  assert.equal(r.summary.excessMm, 0);
+  assert.equal(r.summary.creekKm2, 0);
+});
+
+test('flash flood: ponds fill dips only up to the runoff draining into them', () => {
+  // a bowl draining to the edge, with a dip in the middle
+  const Wd = 41, Hd = 41, demB = new Float32Array(Wd * Hd);
+  for (let y = 0; y < Hd; y++) for (let x = 0; x < Wd; x++) {
+    const r = Math.hypot(x - 20, y - 20);
+    demB[y * Wd + x] = 10 + 0.05 * r + (r < 4 ? -1 + r * 0.1 : 0);
+  }
+  const b = F.analyse({ W: Wd, H: Hd, cell: 10, dem: demB }, { streamAreaKm2: 100 });
+  const light = F.flashFlood(b, { rainMm: 20, hours: 1, initialLoss: 0, contLoss: 0 });
+  const heavy = F.flashFlood(b, { rainMm: 200, hours: 1, initialLoss: 0, contLoss: 0 });
+  const centre = 20 * Wd + 20;
+  assert.ok(light.depth[centre] > 0 && light.depth[centre] < heavy.depth[centre] + 1e-9, 'deeper pond with more rain');
+  assert.ok(heavy.summary.pondKm2 > 0);
+});

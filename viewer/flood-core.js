@@ -605,6 +605,150 @@
     return { wet, depth, level, wse, onPath };
   }
 
+  /* ------------------------------------------------------------ flash flood */
+
+  /**
+   * Flash flooding from a storm on the model area (screening level).
+   *   rainMm, hours: storm depth and duration
+   *   initialLoss (mm), contLoss (mm/h): soil and surface losses
+   * Rain left after losses runs off. Peak runoff from each cell's catchment
+   * uses the rational method (Q = C·i·A); creeks rise by the normal depth
+   * that carries that flow (Manning, a channel that widens with catchment
+   * size), spreading to connected low land beside them; elsewhere runoff
+   * concentrating downhill shows as overland flow where it is at least
+   * 10 cm deep; and runoff fills dips in the ground (the gaps the
+   * depression-filled surface bridges) up to the volume draining into them.
+   * Pipes, culverts and timing are ignored, so small storms in sewered
+   * areas are overstated.
+   * Returns { wet, depth, level, kind (0 dry, 1 creek, 2 overland, 3 pond, 4 sea), summary }.
+   */
+  function flashFlood(a, o) {
+    const { W, H, N, dem, valid, ocean, stream, recvStream, rec, chain, acc, filled, cell } = a;
+    const rain = Math.max(0, o.rainMm || 0), hours = Math.max(0.1, o.hours || 1);
+    const excessMm = Math.max(0, rain - (o.initialLoss ?? 15) - (o.contLoss ?? 2.5) * hours);
+    const C = rain > 0 ? excessMm / rain : 0;
+    // average intensity over the storm or over the time water takes to
+    // reach a point (time of concentration, tc = 0.76·A^0.38 hours for A in
+    // km², the Probabilistic Rational Method), whichever is longer, so big
+    // catchments don't see a short storm's peak intensity all at once
+    const iAt = (Akm2) => rain / Math.max(hours, 0.76 * Math.pow(Math.max(Akm2, 1e-4), 0.38)) / 1000 / 3600;   // m/s
+    const cellA = cell * cell;
+    const nCh = o.nChannel ?? 0.05, nOv = o.nOverland ?? 0.035, maxRise = o.maxRise ?? 10;
+    const depth = new Float32Array(N), kind = new Uint8Array(N), wet = new Uint8Array(N);
+    const slopeAt = (c) => {
+      // channel slope over ~10 cells downstream
+      let d = c, k = 0;
+      while (k < 10 && rec[d] >= 0) { d = rec[d]; k++; }
+      const L = chain[c] - chain[d];
+      return Math.max(0.002, L > 0 ? (dem[c] - dem[d]) / L : 0.002);
+    };
+    // creeks: rise at every stream cell
+    const rise = new Float32Array(N);
+    if (C > 0) {
+      for (let c = 0; c < N; c++) {
+        if (!stream[c] || !valid[c] || (ocean && ocean[c])) continue;
+        const A = acc[c] * cellA, Akm2 = A / 1e6;
+        const Q = C * iAt(Akm2) * A;
+        const w = Math.max(cell, 20 * Math.pow(Akm2, 0.4));
+        rise[c] = Math.min(maxRise, Math.pow((Q * nCh) / (w * Math.sqrt(slopeAt(c))), 0.6));
+      }
+    }
+    // spread each creek's water surface to connected land beside it
+    const level = new Float32Array(N).fill(NaN);
+    const q = new Int32Array(N);
+    let qh = 0, qt = 0;
+    for (let c = 0; c < N; c++) {
+      if (!valid[c]) continue;
+      if (ocean && ocean[c]) { wet[c] = 1; kind[c] = 4; continue; }
+      const r = recvStream[c];
+      if (r >= 0 && rise[r] > 0.01) level[c] = dem[r] + rise[r];
+      if (stream[c] && rise[c] > 0.01) { wet[c] = 1; kind[c] = 1; depth[c] = rise[c]; q[qt++] = c; }
+    }
+    while (qh < qt) {
+      const c = q[qh++], cx = c % W, cy = (c - cx) / W;
+      for (let k = 0; k < 4; k++) {
+        const nx = cx + DX[k], ny = cy + DY[k];
+        if (nx < 0 || ny < 0 || nx >= W || ny >= H) continue;
+        const n = ny * W + nx;
+        if (wet[n] || !valid[n] || !(dem[n] < level[n])) continue;
+        wet[n] = 1; kind[n] = 1; depth[n] = level[n] - dem[n]; q[qt++] = n;
+      }
+    }
+    // overland flow away from creeks
+    let overland = 0;
+    if (C > 0) {
+      for (let c = 0; c < N; c++) {
+        if (!valid[c] || stream[c] || (ocean && ocean[c]) || rec[c] < 0) continue;
+        const qw = (C * iAt((acc[c] * cellA) / 1e6) * acc[c] * cellA) / cell;   // m²/s per metre width
+        const S = Math.max(0.002, (dem[c] - dem[rec[c]]) / Math.max(cell, chain[c] - chain[rec[c]]));
+        const d = Math.pow((qw * nOv) / Math.sqrt(S), 0.6);
+        if (d >= 0.1 && d > depth[c]) { depth[c] = d; kind[c] = 2; wet[c] = 1; overland++; }
+      }
+    }
+    // ponding in dips, up to the runoff draining into each
+    let pondCells = 0;
+    if (filled && excessMm > 0) {
+      const lab = new Int32Array(N).fill(-1);
+      const cells = [];
+      for (let s0 = 0; s0 < N; s0++) {
+        if (lab[s0] >= 0 || !valid[s0] || (ocean && ocean[s0]) || filled[s0] - dem[s0] < 0.02) continue;
+        const id = cells.length, list = [s0];
+        lab[s0] = id;
+        for (let h = 0; h < list.length; h++) {
+          const c = list[h], cx = c % W, cy = (c - cx) / W;
+          for (let k = 0; k < 4; k++) {
+            const nx = cx + DX[k], ny = cy + DY[k];
+            if (nx < 0 || ny < 0 || nx >= W || ny >= H) continue;
+            const n = ny * W + nx;
+            if (lab[n] >= 0 || !valid[n] || (ocean && ocean[n]) || filled[n] - dem[n] < 0.02) continue;
+            lab[n] = id; list.push(n);
+          }
+        }
+        cells.push(list);
+      }
+      const ex = excessMm / 1000;
+      for (const list of cells) {
+        let accMax = 0, lo = Infinity, hi = -Infinity;
+        for (const c of list) { if (acc[c] > accMax) accMax = acc[c]; if (dem[c] < lo) lo = dem[c]; if (filled[c] > hi) hi = filled[c]; }
+        const vol = (L) => { let v = 0; for (const c of list) if (L > dem[c]) v += Math.min(L, filled[c]) - dem[c]; return v * cellA; };
+        const vin = ex * accMax * cellA;
+        let L = hi;
+        if (vin < vol(hi)) {
+          let a0 = lo, b0 = hi;
+          for (let it = 0; it < 30; it++) { const m = (a0 + b0) / 2; if (vol(m) < vin) a0 = m; else b0 = m; }
+          L = (a0 + b0) / 2;
+        }
+        for (const c of list) {
+          const d = Math.min(L, filled[c]) - dem[c];
+          if (d > 0.02 && d > depth[c]) { depth[c] = d; kind[c] = 3; wet[c] = 1; pondCells++; }
+        }
+      }
+    }
+    for (let c = 0; c < N; c++) if (wet[c] && !(ocean && ocean[c])) level[c] = dem[c] + depth[c];
+    let creek = 0, maxRiseSeen = 0;
+    for (let c = 0; c < N; c++) { if (kind[c] === 1) creek++; if (rise[c] > maxRiseSeen) maxRiseSeen = rise[c]; }
+    const km2 = cellA / 1e6;
+    return {
+      wet, depth, level, kind, wse: rise, onPath: new Uint8Array(N),
+      summary: {
+        excessMm, runoffCoeff: C, creekKm2: creek * km2, overlandKm2: overland * km2, pondKm2: pondCells * km2,
+        maxCreekRise: maxRiseSeen,
+      },
+    };
+  }
+
+  /** Combine two runs, keeping the deeper water in each cell. */
+  function mergeRuns(r1, r2) {
+    const N = r1.wet.length, wet = new Uint8Array(N), depth = new Float32Array(N), level = new Float32Array(N).fill(NaN);
+    for (let c = 0; c < N; c++) {
+      const a = r1.wet[c] ? r1.depth[c] : -1, b = r2.wet[c] ? r2.depth[c] : -1;
+      if (a < 0 && b < 0) continue;
+      wet[c] = 1;
+      if (a >= b) { depth[c] = a; level[c] = r1.level[c]; } else { depth[c] = b; level[c] = r2.level[c]; }
+    }
+    return { wet, depth, level, wse: r1.wse, onPath: r1.onPath, kind: r2.kind, summary: r2.summary };
+  }
+
   /**
    * Area statistics comparing a scenario against a baseline run.
    */
@@ -777,7 +921,7 @@
 
   return {
     syntheticTerrain, analyse, mainStem, snapToStream, encodeWhiteboxD8,
-    streamSurface, inundate, stats,
+    streamSurface, inundate, stats, flashFlood, mergeRuns,
     parseAsciiGrid, downsample, cleanNodata, parseSimpleTiff,
     // exposed for tests
     _internal: { MinHeap, chamferDistance, mulberry32 },
