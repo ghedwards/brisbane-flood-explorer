@@ -301,7 +301,13 @@ def main() -> int:
         page.wait_for_timeout(1500)
         pin_n = page.evaluate("window.__floodAddPin(-27.62, 152.76)")
         before = (status().get("local") or {}).get("key")
-        page.evaluate("n => window.__floodPlaceAction('model', n)", pin_n)
+        # its model options sit at the top of the Scenario panel, not in Places
+        page.wait_for_timeout(300)
+        if status().get("modelOptions") != pin_n or not page.locator("#scenarioModel [data-model='model']").is_visible():
+            failures.append(f"Scenario panel did not offer to model new place {pin_n}: {status().get('modelOptions')}")
+            page.evaluate("n => window.__floodPlaceAction('model', n)", pin_n)
+        else:
+            page.locator("#scenarioModel [data-model='model']").click()
         try:
             page.wait_for_function(f"window.__floodStatus.local && window.__floodStatus.local.ok !== undefined"
                                    f" && (window.__floodStatus.local.ok === false || window.__floodStatus.local.key !== {json.dumps(before)})",

@@ -1179,6 +1179,7 @@
   // Choosing a row does exactly what tapping that number on the map does
   // (selectPlace); the icons open its report and zoom to it.
   let selectedNum = null;
+  let scenarioEmpty = false;   // the Scenario panel has no flood model to show
   function placeLatLon(n) {
     const a = areaByNumber(n), r = reports.find((x) => x.n === n), pin = pins.find((x) => x.n === n);
     if (r) return [r.lat, r.lon];
@@ -1197,6 +1198,13 @@
     if (hiddenNums.has(n)) setPlaceHidden(n, false);
     if (r && !(a && isPhone())) showReport(r);
     if (a) { activateArea(a.key, { fit: fromList }); openPanel('panel-scenario'); }
+    else {
+      // not modelled yet: the Scenario panel offers to model it
+      if (state.areaKey) deactivate();
+      showScenarioEmpty(true);
+      if (!isPhone()) setScenarioCollapsed(false);
+      else if (!r) openPanel('panel-scenario');
+    }
     if (fromList && !a && state.lmap) {
       const ll = placeLatLon(n);
       if (ll && !state.lmap.getBounds().pad(-0.1).contains(ll)) state.lmap.panTo(ll);
@@ -1234,12 +1242,6 @@
       const name = (r && r.name) || (pin && pin.name) || (a && a.name) || `Place ${n}`;
       const tags = [r ? (r.kind === 'storage' ? 'dam report' : r.kind === 'tide' ? 'tide report' : 'gauge report') : null, pin ? 'pinned place' : null, a ? 'flood model' : null].filter(Boolean).join(' + ');
       const color = a ? (isActive ? AREA_COLOR : '#8a6a4a') : r ? (GAUGE_STYLE[r.kind] || GAUGE_STYLE.river).color : PIN_COLOR;
-      const acts = [];
-      if (!a && r) acts.push(`<button type="button" class="btn primary" data-act="model" data-n="${n}">${r.kind === 'tide' ? 'Model coastal flooding here' : 'Model flooding here'}</button>`);
-      else if (!a && pin) {
-        acts.push(`<button type="button" class="btn primary" data-act="model" data-n="${n}">Model river flooding</button>`);
-        acts.push(`<button type="button" class="btn" data-act="modelcoast" data-n="${n}">Model coastal flooding</button>`);
-      }
       const repLabel = r ? `Open the report for ${name}` : `Report on the gauge or dam nearest ${name}`;
       return `<li class="place${sel ? ' on' : ''}${hidden ? ' off' : ''}">
         <button type="button" class="place-main" data-num="${n}" aria-pressed="${sel}" title="Select ${escapeHtml(name)}">
@@ -1249,7 +1251,6 @@
         <button type="button" class="icon-btn" data-act="${r ? 'report' : 'nearest'}" data-n="${n}" aria-label="${escapeHtml(repLabel)}" title="${r ? 'Report' : 'Report on nearest gauge'}">${ICON_REPORT}</button>
         <button type="button" class="icon-btn" data-act="zoom" data-n="${n}" aria-label="Zoom to ${escapeHtml(name)}" title="Zoom to">${ICON_ZOOM}</button>
         <button type="button" class="icon-btn" data-drop="${n}" aria-label="Remove ${escapeHtml(name)}" title="Remove">×</button>
-        ${sel && acts.length ? `<div class="place-actions">${acts.join('')}</div>` : ''}
       </li>`;
     }).join('');
     box.innerHTML = `<ul class="places">${rows}</ul>
@@ -1310,9 +1311,10 @@
       renderPlaces();
     } else if ((act === 'scenario' || act === 'select') && (a || r || pin)) {
       selectPlace(n, { fromList: true });
-    } else if (act === 'model' && r) {
+    } else if ((act === 'model' || act === 'modelcoast') && r && !a) {
       selectedNum = n;
-      modelHere(r.lat, r.lon, { kind: r.kind === 'tide' ? 'coast' : 'river', name: r.name, reportId: r.id });
+      const kind = act === 'modelcoast' || (act === 'model' && r.kind === 'tide') ? 'coast' : 'river';
+      modelHere(r.lat, r.lon, { kind, name: r.name, reportId: r.id });
     } else if (act === 'zoom' && state.lmap) {
       if (a) { const b = a.areaMeta.bounds_lonlat; state.lmap.fitBounds([[b[1], b[0]], [b[3], b[2]]]); }
       else if (r) state.lmap.setView([r.lat, r.lon], Math.max(state.lmap.getZoom(), 12));
@@ -1321,11 +1323,38 @@
   }
   window.__floodPlaceAction = placeAction;
 
+  // The Scenario panel follows the selected place: its flood scenario when it
+  // has one, otherwise the options to model it.
+  function unmodelledSelection() {
+    if (selectedNum == null || state.areaKey || areaByNumber(selectedNum)) return null;
+    const r = reports.find((x) => x.n === selectedNum), pin = pins.find((x) => x.n === selectedNum);
+    return r || pin ? { n: selectedNum, r, pin, name: (r && r.name) || pin.name } : null;
+  }
+
   function renderScenarioTitle() {
     const el = $('scenarioPlace');
     if (!el) return;
-    const a = state.areaKey && areaReg.get(state.areaKey);
-    el.textContent = a ? `${a.n}. ${a.name}` : (areaReg.size || reports.length ? 'Choose a place in Places' : '');
+    const a = state.areaKey && areaReg.get(state.areaKey), u = unmodelledSelection();
+    el.textContent = a ? `${a.n}. ${a.name}` : u ? `${u.n}. ${u.name}: not modelled yet` : '';
+    renderScenarioModel(u);
+  }
+
+  function renderScenarioModel(u) {
+    const box = $('scenarioModel');
+    if (!box) return;
+    const show = scenarioEmpty && !!u;
+    box.hidden = !show;
+    $('scenarioEmpty').hidden = !scenarioEmpty || show;
+    status.modelOptions = show ? u.n : null;
+    if (!show) { box.innerHTML = ''; return; }
+    const coastFirst = u.r && u.r.kind === 'tide';
+    const color = u.r ? (GAUGE_STYLE[u.r.kind] || GAUGE_STYLE.river).color : PIN_COLOR;
+    const river = `<button type="button" class="btn${coastFirst ? '' : ' primary'}" data-model="model">Model river flooding</button>`;
+    const coast = `<button type="button" class="btn${coastFirst ? ' primary' : ''}" data-model="modelcoast">Model coastal flooding</button>`;
+    box.innerHTML = `<div class="place-row"><span class="pin-num" style="background:${color}">${u.n}</span><span>${escapeHtml(u.name)}</span></div>
+      <p class="hint">Model flooding around this ${u.r ? (u.r.kind === 'storage' ? 'dam' : 'gauge') : 'place'} from Geoscience Australia's elevation data (about 30 m). It keeps number ${u.n}.</p>
+      <div class="btns">${coastFirst ? coast + river : river + coast}</div>`;
+    box.querySelectorAll('[data-model]').forEach((b) => b.addEventListener('click', () => placeAction(b.dataset.model, u.n)));
   }
 
   const EYE = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/></svg>';
@@ -1971,11 +2000,12 @@
   }
 
   function showScenarioEmpty(empty) {
-    $('scenarioEmpty').hidden = !empty;
+    scenarioEmpty = empty;
     Array.from($('scenarioEmpty').parentElement.children).forEach((el) => {
-      if (el.id !== 'scenarioEmpty' && el.id !== 'areaList') el.hidden = empty || (el.id === 'eventsSet' && !state.eventsApply);
+      if (el.id !== 'scenarioEmpty' && el.id !== 'scenarioModel') el.hidden = empty || (el.id === 'eventsSet' && !state.eventsApply);
     });
     if (empty) $('stats').innerHTML = '';
+    renderScenarioTitle();
   }
 
   /* ---------- reports */
@@ -2235,7 +2265,7 @@
       const drop = reports.find((x) => x !== r && !areaForReport(x)) || reports.find((x) => x !== r);
       closeReport(drop);
     }
-    showReport(r);
+    selectPlace(r.n);
   }
   window.__floodOpenStorage = (index) => {
     const f = nat.data && nat.data.storages[index || 0];
@@ -2454,9 +2484,27 @@
   /* --------------------------------------------------------- panels */
   const isPhone = () => window.matchMedia('(max-width: 760px)').matches;
 
+  // On wide screens the Scenario panel always shows under Places and
+  // collapses to its header; on phones it is a bottom sheet like the rest.
+  function setScenarioCollapsed(collapsed) {
+    const p = $('panel-scenario');
+    p.classList.toggle('collapsed', collapsed);
+    $('scenarioCollapse').setAttribute('aria-expanded', String(!collapsed));
+    $('scenarioCollapse').setAttribute('aria-label', collapsed ? 'Expand the flood scenario' : 'Collapse the flood scenario');
+    status.scenarioOpen = !collapsed;
+    syncPanels();
+  }
+  window.__floodSetScenarioCollapsed = setScenarioCollapsed;
+  $('scenarioCollapse').addEventListener('click', () => setScenarioCollapsed(!$('panel-scenario').classList.contains('collapsed')));
+  $('scenarioToggle').addEventListener('click', (e) => {
+    if (isPhone() || e.target.closest('button, a')) return;
+    setScenarioCollapsed(!$('panel-scenario').classList.contains('collapsed'));
+  });
+
   function openPanel(id) {
     const target = $(id);
     if (!target) return;
+    if (id === 'panel-scenario') target.classList.remove('collapsed');
     document.querySelectorAll('[data-panel]').forEach((p) => {
       if (p === target) return;
       if (isPhone() || p.dataset.side === target.dataset.side) p.hidden = true;
@@ -2467,13 +2515,16 @@
   }
 
   function closePanel(id) {
+    if (id === 'panel-scenario' && !isPhone()) { setScenarioCollapsed(true); return; }
     $(id).hidden = true;
     syncPanels();
   }
 
   function syncPanels() {
+    if (!isPhone()) $('panel-scenario').hidden = false;
     document.querySelectorAll('.tool[data-open]').forEach((b) => {
-      b.setAttribute('aria-pressed', String(!$(b.dataset.open).hidden));
+      const p = $(b.dataset.open);
+      b.setAttribute('aria-pressed', String(!p.hidden && !p.classList.contains('collapsed')));
     });
     document.body.classList.toggle('sheet-open', !!document.querySelector('[data-panel]:not([hidden])'));
   }
@@ -2481,7 +2532,8 @@
   document.querySelectorAll('[data-open]').forEach((b) => {
     b.addEventListener('click', () => {
       const id = b.dataset.open;
-      if (b.classList.contains('tool') && !$(id).hidden) closePanel(id);
+      const shown = !$(id).hidden && !$(id).classList.contains('collapsed');
+      if (b.classList.contains('tool') && shown) closePanel(id);
       else openPanel(id);
     });
   });
@@ -2492,7 +2544,8 @@
     if (e.key !== 'Escape') return;
     const open = Array.from(document.querySelectorAll('[data-panel]:not([hidden])'));
     const right = open.find((p) => p.dataset.side === 'right');
-    if (right || open[0]) closePanel((right || open[0]).id);
+    const target = right || (isPhone() ? open[0] : null);
+    if (target) closePanel(target.id);
   });
   window.__floodOpenPanel = openPanel;
 
@@ -2522,6 +2575,8 @@
     ctl.gaugeLevel.value = 4.46;
     syncOutputs();
     setPlacesCollapsed(isPhone());
+    if (isPhone()) $('panel-scenario').hidden = true;
+    syncPanels();
     renderPlaces();
     const areas = await listAreas();
     await loadFloodHub();
