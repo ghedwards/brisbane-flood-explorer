@@ -148,6 +148,24 @@ jobs:
           if [ -f cache/council/council.json ]; then mkdir -p site/data/council && cp cache/council/* site/data/council/; fi
           echo "::notice::Council images: $(grep -E '^(creek|overland):|^warning' council.log 2>/dev/null | tr '\n' ' ' || echo 'from cache')"
 
+      - name: Restore DEA national images
+        id: dea
+        uses: actions/cache@v4
+        with:
+          path: cache/dea
+          key: dea-${{ steps.month.outputs.month }}-${{ hashFiles('pipeline/render_dea_mosaic.py') }}
+
+      - name: Stitch DEA national images (monthly)
+        if: steps.dea.outputs.cache-hit != 'true'
+        continue-on-error: true
+        timeout-minutes: 15
+        run: python pipeline/render_dea_mosaic.py cache/dea | tee dea.log || rm -rf cache/dea
+
+      - name: Publish DEA national images
+        run: |
+          if [ -f cache/dea/dea.json ]; then mkdir -p site/data/dea && cp cache/dea/* site/data/dea/; fi
+          echo "::notice::$(grep -E '^DEA mosaic' dea.log 2>/dev/null || echo 'DEA mosaic: from cache')"
+
       - name: Fetch Google Flood Hub forecasts
         id: floodhub
         continue-on-error: true

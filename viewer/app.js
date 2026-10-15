@@ -533,7 +533,7 @@
 
   // Available on every real-place map, anywhere in Australia
   const NATIONAL_OVERLAYS = [
-    { name: 'Water seen by satellite since 1987 (DEA)', layers: 'ga_ls_wo_fq_myear_3', styles: 'mysummary_wofs_frequency_3',
+    { name: 'Water seen by satellite since 1987 (DEA)', layers: 'ga_ls_wo_fq_myear_3', styles: 'mysummary_wofs_frequency_3', mosaic: 'water_frequency',
       legend: 'How often satellites have seen water there: pale = rarely (floods), dark blue = usually (rivers, lakes)' },
   ];
 
@@ -570,13 +570,38 @@
     return layer;
   }
 
+  // Australia-wide images of DEA layers, stitched by the build from tiles at
+  // the coarsest zoom DEA will draw (pipeline/render_dea_mosaic.py)
+  let deaMosaic = null;
+  async function loadDeaMosaic() {
+    if (deaMosaic) return deaMosaic;
+    try {
+      const r = await fetch('data/dea/dea.json', { cache: 'no-cache' });
+      deaMosaic = r.ok ? await r.json() : {};
+    } catch (e) { deaMosaic = {}; }
+    return deaMosaic;
+  }
+
   function makeWmsOverlay(L, o) {
     const st = (status.overlays[o.name] = { features: 0, errors: 0 });
     // DEA's server only draws this from about zoom 7 (regional scale)
-    const layer = deaWms(L, { layers: o.layers, styles: o.styles }, { attribution: DEA_ATTR, opacity: 0.75, maxZoom: 19, maxNativeZoom: 16, minZoom: 7, zIndex: 5 });
-    layer.zoomNote = { min: 7, text: 'regional view' };
-    layer.on('tileload', () => { st.features++; });
-    layer.on('tileerror', () => { st.errors++; });
+    const live = deaWms(L, { layers: o.layers, styles: o.styles }, { attribution: DEA_ATTR, opacity: 0.75, maxZoom: 19, maxNativeZoom: 16, minZoom: 7, zIndex: 5 });
+    live.on('tileload', () => { st.features++; });
+    live.on('tileerror', () => { st.errors++; });
+    const img = deaMosaic && deaMosaic[o.mosaic];
+    let layer = live;
+    if (img) {
+      // zoomed out: the stitched national image, scaled to fit
+      const b = img.bounds;
+      const pic = L.imageOverlay(`data/dea/${img.file}`, [[b[1], b[0]], [b[3], b[2]]], {
+        opacity: 0.8, attribution: DEA_ATTR, zIndex: 5,
+      });
+      pic.on('load', () => { st.features++; st.image = true; });
+      pic.on('error', () => { st.errors++; });
+      layer = zoomSwitch(pic, live, 7, DEA_ATTR);
+    } else {
+      live.zoomNote = { min: 7, text: 'regional view' };
+    }
     o.layer = layer;
     o.kind = 'wms';
     return layer;
@@ -721,18 +746,20 @@
     $('geoControls').hidden = false;
     $('layersStaticNote').hidden = true;
     const bounds = L.latLngBounds([b[1], b[0]], [b[3], b[2]]);
+    if (!state.lmap) await loadDeaMosaic();
     if (!state.lmap) {
       const m = L.map('lmap', { minZoom: 4, zoomSnap: 0.5, zoomControl: false, preferCanvas: false });
       if (!finePointer()) { /* pinch to zoom on touch screens */ } else L.control.zoom({ position: 'bottomright' }).addTo(m);
       const layers = {};
       status.basemaps = {};
       for (const bm of BASEMAPS) {
-        const own = bm.wms ? deaWms(L, bm.wms, Object.assign({}, bm.opts, { minZoom: 6 })) : L.tileLayer(bm.url(), bm.opts);
+        // DEA draws imagery from about zoom 6; at zoom 5 fetch zoom-6 tiles
+        // and scale them down to fit (minNativeZoom)
+        const own = bm.wms ? deaWms(L, bm.wms, Object.assign({}, bm.opts, { minZoom: 5, minNativeZoom: 6 })) : L.tileLayer(bm.url(), bm.opts);
         const st = (status.basemaps[bm.name] = { loaded: 0, errors: 0 });
         own.on('tileload', () => { st.loaded++; status.tilesLoaded++; });
         own.on('tileerror', () => { st.errors++; status.tileErrors++; });
-        // DEA renders from about zoom 6 (state scale); show Esri imagery
-        // underneath so the map is never blank when zoomed out
+        // below zoom 5 (whole-country view), Esri imagery underneath shows
         const layer = bm.wms
           ? L.featureGroup([L.tileLayer(BASEMAPS[0].url(), Object.assign({}, BASEMAPS[0].opts, { zIndex: 0 })), own])
           : own;

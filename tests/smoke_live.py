@@ -7,6 +7,7 @@ Run by CI after each deploy. Results are printed as GitHub annotations, and a
 screenshot is saved to smoke.png.
 """
 import json
+import os
 import sys
 
 from playwright.sync_api import sync_playwright
@@ -41,6 +42,31 @@ def main() -> int:
                 failures.append("the national view has no gauges")
         except Exception:
             failures.append(f"the national view did not load: {json.dumps(status())}")
+        # zoomed out over Australia: the stitched water image and scaled DEA tiles
+        page.evaluate("window.__floodTestZoom(-26.5, 134, 5)")
+        name = "Water seen by satellite since 1987 (DEA)"
+        page.evaluate("([n]) => window.__floodSetOverlay(n, true)", [name])
+        page.wait_for_timeout(6000)
+        st = page.evaluate("n => window.__floodStatus.overlays[n] || {}", name)
+        if not st.get("image"):
+            failures.append(f"national water image did not show at zoom 5: {st}")
+        page.screenshot(path="smoke-z5-water.png")
+        page.evaluate("([n]) => window.__floodSetOverlay(n, false)", [name])
+        dea = "Latest satellite, infrared (DEA)"
+        page.evaluate("n => window.__floodSetBasemap(n)", dea)
+        try:
+            page.wait_for_function(f"window.__floodStatus.basemaps[{json.dumps(dea)}].loaded > 0", timeout=40_000)
+        except Exception:
+            pass
+        bst = page.evaluate("n => window.__floodStatus.basemaps[n]", dea)
+        if not bst or not bst.get("loaded"):
+            failures.append(f"DEA basemap drew nothing at zoom 5: {bst}")
+        page.screenshot(path="smoke-z5-dea.png")
+        page.evaluate("n => window.__floodSetBasemap(n)", "Satellite (Esri)")
+        print(f"Zoomed-out checks: water image {st}, DEA basemap {bst}")
+        with open(os.environ.get("GITHUB_STEP_SUMMARY", os.devnull), "a") as fh:
+            fh.write(f"- Zoom 5: water image {json.dumps(st)}; DEA basemap {json.dumps(bst)}\n")
+
         if page.evaluate("window.__floodOpenReport ? window.__floodOpenReport(0) : false"):
             page.wait_for_timeout(500)
             rep = (page.text_content("#reportBody") or "").strip().replace("\n", " ")

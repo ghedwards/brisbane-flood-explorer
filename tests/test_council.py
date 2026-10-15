@@ -32,3 +32,21 @@ class CouncilTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+import render_dea_mosaic as dm  # noqa: E402
+
+
+class MosaicTests(unittest.TestCase):
+    def test_tile_range_covers_australia(self):
+        x0, x1, y0, y1 = dm.tile_range(7)
+        self.assertEqual((x0, x1), (103, 118))
+        self.assertTrue(y0 < y1)
+        w, s = dm.to_lonlat(*dm.tile_bbox(x0, y1, 7)[:2])
+        e, n = dm.to_lonlat(*dm.tile_bbox(x1, y0, 7)[2:])
+        self.assertTrue(w <= 112 and e >= 154 and s <= -44 and n >= -9)
+
+    def test_fill_detection(self):
+        from PIL import Image
+        self.assertTrue(dm.is_fill(Image.new("RGBA", (8, 8), (150, 180, 200, 160))))
+        self.assertFalse(dm.is_fill(Image.new("RGBA", (8, 8), (0, 0, 0, 0))))
