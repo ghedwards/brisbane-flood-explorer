@@ -52,13 +52,21 @@ would add, how it could be built from open data, and what to watch for.
 
 ## Impact
 
-- **Population at night versus day.** Census counts are where people live;
-  add workplace counts (ABS place-of-work data) for daytime exposure.
-- **Evacuation routes.** Use the cut-road analysis to find which places
-  lose their last dry road out, and when (with the time slider above).
-- **Property-level detail.** Floor heights aren't openly available; a
-  ground-level-plus-typical-floor-height estimate would separate yard
-  flooding from over-floor flooding.
+Done: buildings, people, roads, key sites, water above floor (with a floor
+height setting), daytime workplaces, and places cut off from a dry road out.
+
+- **Daytime population counts.** The ABS publishes workplace destination
+  zones as an open service but not the worker counts for them; daytime
+  exposure currently counts flooded workplaces, shops, schools and public
+  buildings from OpenStreetMap. Loading the ABS place-of-work counts (a
+  download) into the build would give numbers of workers.
+- **When places get cut off.** With a flood-over-time model (above), report
+  the time each road closes and how long places stay isolated.
+- **Measured floor heights.** Councils hold surveyed floor levels for some
+  floodplains; where any are published openly they would replace the
+  single typical floor height.
+- **Damage estimates.** Australian depth–damage curves could turn
+  over-floor depths into indicative repair costs.
 
 ## Data coverage
 

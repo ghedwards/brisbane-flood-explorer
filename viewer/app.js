@@ -3554,28 +3554,46 @@
   async function loadImpactData(area) {
     const g = area.geo || state.geo;
     const bb = `${g.south},${g.west},${g.north},${g.east}`;
-    const q = `[out:json][timeout:120];
-      way["building"](${bb});out ids center qt;
-      way["building"~"^(house|residential|detached|semidetached_house|terrace|apartments|bungalow|dormitory|duplex|cabin)$"](${bb});out ids qt;
-      way["highway"~"^(${ROAD_TYPES})(_link)?$"](${bb});out tags geom qt;
-      nwr["amenity"~"^(${Object.keys(SITE_KINDS).join('|')})$"](${bb});out tags center qt;
+    // sections are separated by markers so ids-only blocks can be told apart
+    const mark = (n) => `make marker name="${n}";out;`;
+    const q = `[out:json][timeout:150];
+      ${mark('buildings')}way["building"](${bb});out ids center qt;
+      ${mark('homes')}way["building"~"^(house|residential|detached|semidetached_house|terrace|apartments|bungalow|dormitory|duplex|cabin)$"](${bb});out ids qt;
+      ${mark('work')}way["building"~"^(commercial|retail|industrial|office|warehouse|supermarket|school|university|college|hospital|public|civic|government|kindergarten)$"](${bb});out ids qt;
+      ${mark('roads')}way["highway"~"^(${ROAD_TYPES})(_link)?$"](${bb});out body geom qt;
+      ${mark('sites')}nwr["amenity"~"^(${Object.keys(SITE_KINDS).join('|')})$"](${bb});out tags center qt;
       nwr["social_facility"~"^(nursing_home|assisted_living)$"](${bb});out tags center qt;`;
     const osm = await overpass(q);
     const els = osm.elements || [];
-    // the first block has centres (buildings), the second ids only (homes)
-    const bIdx = new Map(), bx = [], by = [], homes = new Set();
+    const bIdx = new Map(), bx = [], by = [], homes = new Set(), work = new Set();
     const roads = [], sites = [];
+    let section = '';
     for (const e of els) {
-      if (e.type === 'way' && e.center && !e.tags) { if (!bIdx.has(e.id)) { bIdx.set(e.id, bx.length); bx.push(e.center.lon); by.push(e.center.lat); } } else if (e.type === 'way' && !e.center && !e.tags && !e.geometry) homes.add(e.id);
-      else if (e.tags && e.tags.highway && e.geometry) roads.push({ name: e.tags.name || e.tags.ref || '', type: e.tags.highway, pts: e.geometry });
-      else if (e.tags && (e.tags.amenity || e.tags.social_facility)) {
+      if (e.type === 'marker') { section = e.tags && e.tags.name; continue; }
+      if (section === 'buildings' && e.center) { if (!bIdx.has(e.id)) { bIdx.set(e.id, bx.length); bx.push(e.center.lon); by.push(e.center.lat); } } else if (section === 'homes') homes.add(e.id);
+      else if (section === 'work') work.add(e.id);
+      else if (section === 'roads' && e.geometry) roads.push({ name: (e.tags && (e.tags.name || e.tags.ref)) || '', type: e.tags ? e.tags.highway : '', pts: e.geometry, nodes: e.nodes || [] });
+      else if (section === 'sites' && e.tags) {
         const ll = e.center || (e.lat != null ? { lat: e.lat, lon: e.lon } : null);
         const kind = SITE_KINDS[e.tags.amenity] || (e.tags.social_facility ? 'Aged care' : null);
         if (ll && kind) sites.push({ name: e.tags.name || kind, kind, lat: ll.lat, lon: ll.lon });
       }
     }
-    const isHome = new Uint8Array(bx.length);
-    for (const [id, i] of bIdx) if (homes.has(id)) isHome[i] = 1;
+    const isHome = new Uint8Array(bx.length), isWork = new Uint8Array(bx.length);
+    for (const [id, i] of bIdx) { if (homes.has(id)) isHome[i] = 1; if (work.has(id)) isWork[i] = 1; }
+    // road network: nodes shared between ways join them
+    const nodeIdx = new Map(), nlat = [], nlon = [], edges = [];
+    roads.forEach((rd, ri) => {
+      const ids = rd.nodes.length === rd.pts.length ? rd.nodes : rd.pts.map((p) => `${p.lat.toFixed(6)},${p.lon.toFixed(6)}`);
+      let prev = -1;
+      ids.forEach((id, k) => {
+        let n = nodeIdx.get(id);
+        if (n == null) { n = nlat.length; nodeIdx.set(id, n); nlat.push(rd.pts[k].lat); nlon.push(rd.pts[k].lon); }
+        if (prev >= 0) edges.push([prev, n, ri]);
+        prev = n;
+      });
+    });
+    const net = { lat: Float64Array.from(nlat), lon: Float64Array.from(nlon), edges };
     // people: ABS SA1 populations (optional)
     let sa1 = null;
     try {
@@ -3583,7 +3601,7 @@
       const key = feats.length && Object.keys(feats[0].attributes || {}).find((k) => /^tot_p_p$/i.test(k));
       if (key) sa1 = { feats, pop: feats.map((f) => Number(f.attributes[key]) || 0) };
     } catch (err) { sa1 = null; }
-    return { bx: Float64Array.from(bx), by: Float64Array.from(by), isHome, roads, sites, sa1, fetched: Date.now() };
+    return { bx: Float64Array.from(bx), by: Float64Array.from(by), isHome, isWork, roads, net, sites, sa1, fetched: Date.now() };
   }
   function cellOf(lat, lon) {
     const g = state.geo, a = state.a;
@@ -3596,16 +3614,65 @@
     const depthAt = (c) => (c >= 0 && run.wet[c] && !(a.ocean && a.ocean[c]) ? run.depth[c] : 0);
     // buildings
     const nB = d.bx.length;
-    let bWet = 0, bDeep = 0, hWet = 0;
+    const floorH = parseFloat($('floorHeight').value);
+    let bWet = 0, bDeep = 0, hWet = 0, overFloor = 0, workWet = 0;
     const bCell = new Int32Array(nB), bFlood = new Uint8Array(nB);
     for (let i = 0; i < nB; i++) {
       const c = cellOf(d.by[i], d.bx[i]);
       bCell[i] = c;
       const z = depthAt(c);
-      if (z >= 0.15) { bWet++; bFlood[i] = 1; if (d.isHome[i]) hWet++; if (z >= 0.5) bDeep++; }
+      if (z >= 0.15) {
+        bWet++; bFlood[i] = 1;
+        if (d.isHome[i]) hWet++;
+        if (d.isWork[i]) workWet++;
+        if (z >= 0.5) bDeep++;
+      }
+      if (z > floorH && z > 0) overFloor++;
+    }
+    // evacuation: dry roads still joined to the edge of the model area by
+    // dry roads; dry buildings whose nearest road is cut off are isolated
+    const net = d.net;
+    let isolatedB = 0, isolatedPeopleW = null, cutEdges = [], islandEdges = [];
+    if (net && net.lat.length) {
+      const nN = net.lat.length, g = state.geo;
+      const dryNode = new Uint8Array(nN);
+      for (let n = 0; n < nN; n++) dryNode[n] = depthAt(cellOf(net.lat[n], net.lon[n])) < 0.3 ? 1 : 0;
+      const adj = Array.from({ length: nN }, () => []);
+      const edgeDry = net.edges.map(([u, v]) => {
+        let ok = dryNode[u] && dryNode[v];
+        if (ok) for (let t = 1; t < 4 && ok; t++) { const f = t / 4; if (depthAt(cellOf(net.lat[u] + (net.lat[v] - net.lat[u]) * f, net.lon[u] + (net.lon[v] - net.lon[u]) * f)) >= 0.3) ok = 0; }
+        return ok;
+      });
+      net.edges.forEach(([u, v], k) => { if (edgeDry[k]) { adj[u].push(v); adj[v].push(u); } });
+      const mx = ((g.east - g.west) / a.W) * 3, my = ((g.north - g.south) / a.H) * 3;
+      const reach = new Uint8Array(nN), q = [];
+      for (let n = 0; n < nN; n++) {
+        const edge = net.lat[n] < g.south + my || net.lat[n] > g.north - my || net.lon[n] < g.west + mx || net.lon[n] > g.east - mx;
+        if (edge && dryNode[n]) { reach[n] = 1; q.push(n); }
+      }
+      for (let h = 0; h < q.length; h++) for (const m of adj[q[h]]) if (!reach[m]) { reach[m] = 1; q.push(m); }
+      net.edges.forEach(([u, v, ri], k) => {
+        if (!edgeDry[k]) cutEdges.push([u, v]);
+        else if (!reach[u] || !reach[v]) islandEdges.push([u, v]);
+      });
+      // nearest road node for each dry building (grid hash ~ 200 m)
+      const hs = 0.002, hash = new Map();
+      for (let n = 0; n < nN; n++) { const k = `${Math.floor(net.lat[n] / hs)},${Math.floor(net.lon[n] / hs)}`; let l = hash.get(k); if (!l) hash.set(k, (l = [])); l.push(n); }
+      const isoB = new Uint8Array(nB);
+      for (let i = 0; i < nB; i++) {
+        if (bFlood[i]) continue;
+        const ky = Math.floor(d.by[i] / hs), kx = Math.floor(d.bx[i] / hs);
+        let best = -1, bd = Infinity;
+        for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) for (const n of hash.get(`${ky + dy},${kx + dx}`) || []) {
+          const dd = (net.lat[n] - d.by[i]) ** 2 + ((net.lon[n] - d.bx[i]) * 0.9) ** 2;
+          if (dd < bd) { bd = dd; best = n; }
+        }
+        if (best >= 0 && dryNode[best] && !reach[best]) { isoB[i] = 1; isolatedB++; }
+      }
+      isolatedPeopleW = isoB;
     }
     // people: each SA1's population spread over its buildings (or its land)
-    let people = null;
+    let people = null, peopleIsolated = null;
     if (d.sa1) {
       if (!d.sa1Grid || d.sa1Key !== state.areaKey + a.W) {
         const px = drawRings(d.sa1.feats, state.geo, a.W, a.H, (f, i) => `rgb(${(i + 1) >> 16 & 255},${(i + 1) >> 8 & 255},${(i + 1) & 255})`);
@@ -3618,6 +3685,12 @@
       for (let c = 0; c < a.N; c++) { const s = d.sa1Grid[c]; if (s >= 0 && !(a.ocean && a.ocean[c])) { land[s]++; if (depthAt(c) >= 0.15) wetL[s]++; } }
       people = 0;
       for (let s = 0; s < nS; s++) people += d.sa1.pop[s] * (tot[s] > 0 ? hit[s] / tot[s] : (land[s] ? wetL[s] / land[s] : 0));
+      if (isolatedPeopleW) {
+        const iso = new Float64Array(nS);
+        for (let i = 0; i < nB; i++) { const s0 = bCell[i] >= 0 ? d.sa1Grid[bCell[i]] : -1; if (s0 >= 0 && isolatedPeopleW[i]) iso[s0]++; }
+        peopleIsolated = 0;
+        for (let s = 0; s < nS; s++) if (tot[s] > 0) peopleIsolated += d.sa1.pop[s] * (iso[s] / tot[s]);
+      }
     }
     // roads: length under more than 0.3 m of water (impassable to cars)
     const cutBy = new Map();
@@ -3641,7 +3714,10 @@
     const worstRoads = Array.from(cutBy.entries()).filter(([n]) => !n.startsWith('(unnamed')).sort((x, y) => y[1] - x[1]).slice(0, 8);
     // key sites
     const sitesHit = d.sites.map((s) => ({ ...s, depth: depthAt(cellOf(s.lat, s.lon)) })).filter((s) => s.depth >= 0.15).sort((x, y) => y.depth - x.depth);
-    return { buildings: nB, bWet, bDeep, hWet, homesTagged: d.isHome.reduce((x, y) => x + y, 0), people, cutKm, roadKm, worstRoads, sites: d.sites.length, sitesHit };
+    return {
+      buildings: nB, bWet, bDeep, hWet, homesTagged: d.isHome.reduce((x, y) => x + y, 0), workWet, workTagged: d.isWork.reduce((x, y) => x + y, 0),
+      overFloor, floorH, isolatedB, peopleIsolated, cutEdges, islandEdges, people, cutKm, roadKm, worstRoads, sites: d.sites.length, sitesHit,
+    };
   }
   let impactLayer = null;
   function renderImpact() {
@@ -3653,21 +3729,36 @@
     if (d.error) { box.innerHTML = `<p class="hint">Couldn't fetch what's here: ${escapeHtml(d.error)}.</p>`; return; }
     const r = computeImpact(d);
     if (!r) return;
-    status.impact = { buildings: r.buildings, bWet: r.bWet, people: r.people == null ? null : Math.round(r.people), cutKm: Math.round(r.cutKm * 10) / 10, sites: r.sites, sitesHit: r.sitesHit.length };
+    status.impact = {
+      buildings: r.buildings, bWet: r.bWet, overFloor: r.overFloor, workWet: r.workWet, isolated: r.isolatedB,
+      people: r.people == null ? null : Math.round(r.people), peopleIsolated: r.peopleIsolated == null ? null : Math.round(r.peopleIsolated),
+      cutKm: Math.round(r.cutKm * 10) / 10, sites: r.sites, sitesHit: r.sitesHit.length,
+    };
     const n = (x) => Math.round(x).toLocaleString('en-AU');
     box.innerHTML = `<div class="stats">
         <div class="stat"><div class="label">Buildings flooded</div><div class="v">${n(r.bWet)}<small> of ${n(r.buildings)}</small></div></div>
         <div class="stat"><div class="label">People affected</div><div class="v">${r.people == null ? '–' : `≈${n(r.people)}`}</div></div>
         <div class="stat"><div class="label">Roads cut</div><div class="v">${r.cutKm.toFixed(1)}<small>km</small></div></div>
-        <div class="stat"><div class="label">Key sites flooded</div><div class="v">${r.sitesHit.length}<small> of ${r.sites}</small></div></div></div>
+        <div class="stat"><div class="label">Key sites flooded</div><div class="v">${r.sitesHit.length}<small> of ${r.sites}</small></div></div>
+        <div class="stat"><div class="label">Water above floor</div><div class="v">${n(r.overFloor)}<small> buildings</small></div></div>
+        <div class="stat"><div class="label">Cut off, still dry</div><div class="v">${n(r.isolatedB)}<small> buildings${r.peopleIsolated != null ? ` · ≈${n(r.peopleIsolated)} people` : ''}</small></div></div></div>
+      <p class="hint"><strong>Daytime:</strong> ${n(r.workWet)} flooded buildings are mapped as workplaces, shops, schools or public buildings${r.workTagged ? '' : ' (few buildings here are mapped by type)'}; the people figure counts residents, so daytime numbers in business areas will differ. <strong>Cut off</strong> means the building's nearest road is dry but no dry road leads out of the model area (orange on the map); flooded roads are red.</p>
       <p class="hint">Flooded means at least 15 cm of water at the building or site; ${n(r.bDeep)} buildings have more than 50 cm${r.homesTagged ? `; ${n(r.hWet)} of the flooded buildings are mapped as homes` : ''}. Roads are cut where water is over 30 cm deep.</p>
       ${r.worstRoads.length ? `<p><strong>Roads cut:</strong> ${r.worstRoads.map(([nm, km]) => `${escapeHtml(nm)} (${km < 1 ? `${Math.round(km * 1000)} m` : `${km.toFixed(1)} km`})`).join(', ')}</p>` : ''}
       ${r.sitesHit.length ? `<p><strong>Key sites:</strong> ${r.sitesHit.slice(0, 12).map((s) => `${escapeHtml(s.name)} <small>(${s.kind.toLowerCase()}, ${s.depth.toFixed(1)} m)</small>`).join('; ')}${r.sitesHit.length > 12 ? ` and ${r.sitesHit.length - 12} more` : ''}</p>` : ''}
       <p class="hint">Buildings, roads and sites: © OpenStreetMap contributors (ODbL), complete only where mapped. People: ABS 2021 Census by SA1, spread across each area's buildings${r.people == null ? ' (not available here right now)' : ''}. Estimates for screening only.</p>`;
-    // mark flooded key sites on the map
+    // mark flooded key sites, cut roads and cut-off roads on the map
     if (state.lmap) {
       if (!impactLayer) impactLayer = window.L.layerGroup().addTo(state.lmap);
       impactLayer.clearLayers();
+      const net = d.net, seg = (list, style) => {
+        if (!net || !list.length) return;
+        window.L.polyline(list.map(([u, v]) => [[net.lat[u], net.lon[u]], [net.lat[v], net.lon[v]]]), Object.assign({ interactive: false }, style)).addTo(impactLayer);
+      };
+      if ($('showRoadImpact').checked) {
+        seg(r.cutEdges, { color: '#c62828', weight: 4, opacity: 0.85 });
+        seg(r.islandEdges, { color: '#ef6c00', weight: 4, opacity: 0.9, dashArray: '6 4' });
+      }
       r.sitesHit.forEach((s) => window.L.circleMarker([s.lat, s.lon], { radius: 7, color: '#c62828', weight: 2.5, fillColor: '#fff', fillOpacity: 0.9 })
         .bindTooltip(`${s.name}: ${s.kind}, ${s.depth.toFixed(1)} m of water`).addTo(impactLayer));
     }
@@ -3683,6 +3774,8 @@
     return status.impact;
   }
   $('impactBtn').addEventListener('click', () => countImpact());
+  $('floorHeight').addEventListener('input', () => { $('floorHeightOut').textContent = `${parseFloat($('floorHeight').value).toFixed(1)} m`; renderImpact(); });
+  $('showRoadImpact').addEventListener('change', () => renderImpact());
   window.__floodCountImpact = countImpact;
 
   /* ---------- accuracy: compare with recorded floods */
