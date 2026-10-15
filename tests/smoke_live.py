@@ -116,7 +116,7 @@ def main() -> int:
 
         if s1.get("mode") == "map":
             box = page.locator("#lmap").bounding_box()
-            page.mouse.click(box["x"] + box["width"] * 0.6, box["y"] + box["height"] * 0.55)
+            page.evaluate("window.__floodTapAt(-27.52, 152.98)")
             try:
                 page.wait_for_selector(".leaflet-popup-content", timeout=5_000)
                 popup = page.inner_text(".leaflet-popup-content")
@@ -138,7 +138,7 @@ def main() -> int:
             # moving the gauge onto a small creek must not be possible
             page.evaluate("window.__floodOpenPanel('panel-layers')")
             page.check("#moveGauge")
-            page.mouse.click(box["x"] + box["width"] * 0.6, box["y"] + box["height"] * 0.55)
+            page.evaluate("window.__floodTapAt(-27.52, 152.98)")
             page.wait_for_timeout(500)
             moved = page.inner_text("#readout")
             note("notice", f"Tap with gauge moving on: {moved}")
@@ -217,4 +217,9 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    try:
+        sys.exit(main())
+    except Exception:
+        import traceback
+        print("::error::Smoke test crashed: " + traceback.format_exc().replace("\n", " | ")[-1500:])
+        sys.exit(1)

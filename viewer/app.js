@@ -760,6 +760,8 @@
       m.on('zoomend', syncLayerLists);
       m.on('layeradd layerremove', syncLayerLists);
       window.__floodTestZoom = (lat, lng, z) => m.setView([lat, lng], z, { animate: false });
+      // simulate a tap on the map (not on a marker) at a place, for tests
+      window.__floodTapAt = (lat, lng) => m.fire('click', { latlng: L.latLng(lat, lng) });
       window.__floodSetOverlay = (name, on) => {
         const l = layerRegistry.overlays[name];
         if (!l) return false;
