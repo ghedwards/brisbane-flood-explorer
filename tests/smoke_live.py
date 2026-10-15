@@ -83,6 +83,10 @@ def main() -> int:
             # coverage builds up over several runs, so a missing dam is a warning
             note("notice" if wb.get("ok") else "warning", f"Dam report water history {json.dumps(wb)}: {dam[:300]}")
             page.screenshot(path="smoke-dam.png")
+            rep = status().get("report", {})
+            if rep.get("count", 0) < 2:
+                failures.append(f"expected two reports side by side: {rep}")
+            print(f"Reports open: {rep}")
         # NSW flood planning layer over Sydney's Parramatta River
         page.evaluate("window.__floodTestZoom && window.__floodTestZoom(-33.815, 151.0, 14)")
         page.evaluate("([n]) => window.__floodSetOverlay(n, true)", ["NSW flood planning areas (state)"])
@@ -118,6 +122,22 @@ def main() -> int:
             if not loc.get("ok"):
                 failures.append(f"on-demand {label} model failed: {loc}")
             page.screenshot(path=f"smoke-model-{label}.png")
+
+        # ---- both modelled areas stay on the map; switch back to the first
+        areas = page.evaluate("window.__floodAreaInfo ? window.__floodAreaInfo() : []")
+        if len(areas) < 2 or not all(a["drawn"] for a in areas):
+            failures.append(f"expected two drawn modelled areas: {areas}")
+        if areas:
+            page.evaluate("k => window.__floodActivateArea(k)", areas[0]["key"])
+            page.wait_for_timeout(800)
+            after_switch = page.evaluate("window.__floodAreaInfo()")
+            if not after_switch[0]["active"]:
+                failures.append(f"switching back to the first area failed: {after_switch}")
+            stats_first = page.inner_text("#stats").replace("\n", " ")
+            print(f"Areas: {areas}; after switch {after_switch}; stats {stats_first}")
+            with open(os.environ.get("GITHUB_STEP_SUMMARY", os.devnull), "a") as fh:
+                fh.write(f"- Areas: {json.dumps(after_switch)}\n")
+        page.screenshot(path="smoke-two-areas.png")
 
         # ---- detailed Brisbane model
         page.select_option("#area", "brisbane")

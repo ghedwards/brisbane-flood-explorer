@@ -190,6 +190,13 @@ details > div { display: grid; gap: 14px; }
 .sev { display: inline-block; padding: 1px 7px; border-radius: 999px; font: 600 11px/1.5 var(--font-body); color: #fff; white-space: nowrap; }
 .fh-meta { font-size: 12px; color: var(--muted); margin: 4px 0 0; }
 .empty p { margin: 0 0 6px; }
+.area-list { display: grid; gap: 6px; }
+.area-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.area-chip { display: inline-flex; align-items: stretch; border: 1px solid var(--line); border-radius: 999px; overflow: hidden; background: var(--surface); max-width: 100%; }
+.area-chip button { border: 0; background: transparent; color: var(--ink); font: 600 12.5px var(--font-body); padding: 4px 10px; cursor: pointer; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.area-chip .x { padding: 4px 9px; color: var(--muted); border-left: 1px solid var(--line); }
+.area-chip.on { border-color: var(--gauge); }
+.area-chip.on button:first-child { background: var(--gauge); color: #fff; }
 .kind { display: inline-block; font: 600 11px/1.5 var(--font-body); text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
 .facts { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 4px 12px; margin: 0; font-size: 13.5px; }
 .facts dt { color: var(--muted); }
@@ -202,6 +209,21 @@ details > div { display: grid; gap: 14px; }
 .bar > span { display: block; height: 100%; background: var(--accent); }
 .actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .btn.primary { background: var(--accent); color: var(--accent-ink); }
+/* report cards: stacked, or side by side in columns on wide screens */
+#panel-report { --cols: 1; width: min(calc(var(--cols) * 330px + 14px), calc(100vw - var(--rail) - 3 * var(--gap) - var(--right))); }
+.reports { grid-template-columns: repeat(var(--cols), minmax(0, 1fr)); align-items: start; gap: 12px; }
+#panel-report.multi .reports { overflow-x: auto; }
+.report-card { display: grid; gap: 12px; min-width: 0; align-content: start; }
+#panel-report.multi .report-card { border: 1px solid var(--line); border-radius: 10px; padding: 12px; background: var(--surface); }
+.report-card.flash { box-shadow: 0 0 0 3px var(--accent); transition: box-shadow .2s; }
+.card-head { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 10px; align-items: start; }
+.card-head h3 { margin: 2px 0 0; font: 700 1.1rem/1.2 var(--font-display); font-stretch: 85%; overflow-wrap: anywhere; }
+.card-head .close { width: 28px; height: 28px; font-size: 16px; }
+.pin-num { display: inline-grid; place-items: center; width: 24px; height: 24px; border-radius: 50%; color: #fff; font: 700 12px var(--font-body); margin-top: 2px; }
+.report-pin span { display: grid; place-items: center; width: 24px; height: 24px; border-radius: 50%; border: 2px solid #fff; box-shadow: 0 1px 4px rgba(0,0,0,.45); color: #fff; font: 700 12px Archivo, sans-serif; }
+.head-actions { display: inline-flex; gap: 6px; align-items: center; }
+.btn.small { padding: 4px 9px; font-size: 12.5px; }
+@media (max-width: 760px) { #panel-report { width: auto; --cols: 1; } }
 .popup-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
 .popup-actions button { font: 600 12.5px var(--font-body); border: 1px solid #0d5f8c; color: #0d5f8c; background: #fff; border-radius: 6px; padding: 4px 8px; cursor: pointer; }
 #floodhubBody { display: grid; gap: 10px; }
@@ -294,6 +316,7 @@ details > div { display: grid; gap: 14px; }
 <aside class="sheet float" id="panel-scenario" data-panel data-side="left" aria-labelledby="h-scenario" hidden>
   <div class="sheet-head"><h2 id="h-scenario">Flood scenario</h2><button type="button" class="close" data-close aria-label="Close">×</button></div>
   <div class="sheet-body">
+    <div id="areaList" class="area-list" hidden></div>
     <div id="scenarioEmpty" class="empty" hidden>
       <p><strong>No area modelled yet.</strong></p>
       <p class="hint">Tap a river gauge, tide gauge or dam for a report, then choose <em>Model flooding here</em>. You can also tap anywhere on the map. Or pick the detailed Lower Brisbane River model from the menu at the top.</p>
@@ -400,8 +423,10 @@ details > div { display: grid; gap: 14px; }
 
 <!-- Report on a picked feature -->
 <aside class="sheet float" id="panel-report" data-panel data-side="right" aria-labelledby="h-report" hidden>
-  <div class="sheet-head"><h2 id="h-report">Report</h2><button type="button" class="close" data-close aria-label="Close">×</button></div>
-  <div class="sheet-body" id="reportBody"></div>
+  <div class="sheet-head"><h2 id="h-report">Report</h2>
+    <span class="head-actions"><button type="button" class="btn small" id="reportsClear" hidden>Close all</button>
+    <button type="button" class="close" data-close aria-label="Close">×</button></span></div>
+  <div class="sheet-body reports" id="reportBody"></div>
 </aside>
 
 <!-- About -->

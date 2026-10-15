@@ -123,6 +123,7 @@
   }
 
   async function loadArea(id) {
+    if (areaReg.has(id)) { activateArea(id, { fit: true }); return; }
     if (id === 'australia') {
       setBusy(true, 'Loading the Australia-wide map…');
       try { await enterNational(); } finally { setBusy(false); }
@@ -131,10 +132,7 @@
     setBusy(true, 'Loading terrain…');
     await nextFrame();
     try {
-      if (id === 'local' && state.localGrid) {
-        state.areaMeta = state.localGrid.meta;
-        useGrid(state.localGrid.grid, 'local', { events: false });
-      } else if (id === 'sample') {
+      if (id === 'sample') {
         const g = F.syntheticTerrain();
         state.areaMeta = { id: 'sample', name: 'Sample terrain', synthetic: true, streamAreaKm2: 4 };
         useGrid(g, 'sample', { events: true });
@@ -169,12 +167,16 @@
   const nextFrame = () => new Promise((r) => requestAnimationFrame(() => setTimeout(r, 0)));
 
   function useGrid(grid, id, opts) {
+    // keep the area we're leaving on the map as it is
+    const meta = state.areaMeta;
+    const prev = state.areaKey && areaReg.get(state.areaKey);
+    if (prev) { state.areaMeta = prev.areaMeta; saveActive(); state.areaMeta = meta; }
+    state.areaKey = null;
+    state.base = null; state.run = null;
     state.grid = grid;
     state.areaId = id;
     status.area = id;
     state.eventsApply = !!opts.events;
-    if (id === 'local') state.localGrid = { grid, meta: state.areaMeta };
-    if (state.gaugeMarker) state.gaugeMarker.setStyle({ opacity: 1, fillOpacity: 1 });
     const areaKm2 = (grid.W * grid.H * grid.cell * grid.cell) / 1e6;
     state.streamAreaKm2 = (state.areaMeta && state.areaMeta.streamAreaKm2)
       || Math.min(4, Math.max(0.05, areaKm2 * 0.01));
@@ -197,8 +199,23 @@
     syncOutputs();
     renderInfo();
     const bl = state.areaMeta && state.areaMeta.bounds_lonlat;
-    if (bl) enterGeoMode(bl).then((ok) => { if (ok && state.run) drawMap(); });
-    else leaveGeoMode();
+    if (bl) {
+      const m = state.areaMeta;
+      const key = m.areaKey || (m.areaKey = m.local ? `local-${++localCount}` : m.id);
+      state.geo = { west: bl[0], south: bl[1], east: bl[2], north: bl[3] };
+      state.pendingGeo = true;
+      enterGeoMode(bl).then((ok) => {
+        state.pendingGeo = false;
+        if (!ok) { state.geo = null; drawMap(); return; }
+        const area = ensureArea(key);
+        state.areaKey = key;
+        setActiveLayers(area);
+        renderAreaList();
+        drawMap();
+      });
+    } else {
+      leaveGeoMode();
+    }
     runScenario();
   }
 
@@ -419,8 +436,9 @@
   }
 
   function drawMap() {
-    if (state.geo && state.lmap) drawGeoMap();
-    else drawStaticMap();
+    if (state.pendingGeo) return;            // the street map is still opening
+    if (state.geo && state.lmap && state.overlay) drawGeoMap();
+    else if (!state.geo) drawStaticMap();
   }
 
   function drawStaticMap() {
@@ -731,7 +749,8 @@
     try { return window.matchMedia('(prefers-color-scheme: dark)').matches; } catch (e) { return false; }
   }
 
-  async function enterGeoMode(b) {
+  async function enterGeoMode(b, opts) {
+    const fit = !opts || opts.fit !== false;
     try {
       await loadLeaflet();
     } catch (err) {
@@ -740,7 +759,6 @@
       return false;
     }
     const L = window.L;
-    state.geo = { west: b[0], south: b[1], east: b[2], north: b[3] };
     $('map').hidden = true;
     $('lmap').hidden = false;
     $('geoControls').hidden = false;
@@ -802,21 +820,12 @@
       });
       // for the automated browser check
       window.__floodSetBasemap = (name) => setBasemap(m, layers, name);
-      state.overlay = L.imageOverlay(BLANK, bounds, {
-        opacity: parseFloat($('floodOpacity').value) / 100, className: 'flood-layer',
-      }).addTo(m);
-      state.gaugeMarker = L.circleMarker(bounds.getCenter(), {
-        radius: 8, color: '#ffffff', weight: 2.5, fillColor: '#c66f1d', fillOpacity: 1,
-      }).addTo(m);
-      state.gaugeMarker.bindTooltip('Gauge', { direction: 'top', offset: [0, -8] });
       L.control.scale({ imperial: false }).addTo(m);
       m.on('click', onGeoClick);
       m.on('mousemove', onGeoMove);
       m.on('locationfound', onLocated);
       m.on('locationerror', (e) => { say(`Couldn’t get your location: ${e.message}`); });
       state.lmap = m;
-    } else {
-      state.overlay.setBounds(bounds);
     }
     // area-specific layers: Brisbane City Council's, once per session
     if (state.areaMeta && state.areaMeta.brisbaneGauge && !state.councilAdded) {
@@ -825,10 +834,8 @@
       state.councilAdded = true;
     }
     if (state.areaMeta && !state.areaMeta.national && nat.data) addNationalLayers(state.lmap);
-    state.overlay.setBounds(bounds);
-    state.gaugeMarker.setStyle({ opacity: 1, fillOpacity: 1 });
     state.lmap.invalidateSize();
-    state.lmap.fitBounds(bounds);
+    if (fit) state.lmap.fitBounds(bounds);
     status.mode = 'map';
     return true;
   }
@@ -921,12 +928,163 @@
 
   function leaveGeoMode() {
     state.geo = null;
+    state.areaKey = null;
+    if (areaReg.size) setActiveLayers(null);
     status.mode = 'static';
     $('map').hidden = false;
     $('lmap').hidden = true;
     $('geoControls').hidden = true;
     $('layersStaticNote').hidden = false;
   }
+
+
+  /* ---------------------------------------------------- modelled areas */
+  // Every place modelled on the street map stays there with its own terrain,
+  // scenario, flood layer and gauge. One is active at a time: the Scenario
+  // panel, profile and stats show that one; tapping inside another makes it
+  // active.
+  const areaReg = new Map();
+  let localCount = 0;
+  const MAX_AREAS = 6;
+  const CTL_KEYS = ['gaugeLevel', 'bayLevel', 'slr', 'extra', 'grad', 'streamArea'];
+
+  function areaFields() {
+    return {
+      grid: state.grid, areaId: state.areaId, areaMeta: state.areaMeta, eventsApply: state.eventsApply,
+      streamAreaKm2: state.streamAreaKm2, a: state.a, gauge: state.gauge, base: state.base, run: state.run,
+      terrain: state.terrain, geo: state.geo,
+      ctl: Object.fromEntries(CTL_KEYS.map((k) => [k, ctl[k].value])),
+      gmin: ctl.gaugeLevel.min, gmax: ctl.gaugeLevel.max,
+      levelHint: $('levelHint').hidden ? null : $('levelHint').textContent,
+    };
+  }
+
+  function saveActive() {
+    const area = state.areaKey && areaReg.get(state.areaKey);
+    if (area) Object.assign(area, areaFields());
+  }
+
+  function ensureArea(key) {
+    const L = window.L, m = state.lmap;
+    let area = areaReg.get(key);
+    const b = state.areaMeta.bounds_lonlat;
+    const bounds = L.latLngBounds([b[1], b[0]], [b[3], b[2]]);
+    if (!area) {
+      area = { key, name: state.areaMeta.name || key };
+      area.overlay = L.imageOverlay(BLANK, bounds, {
+        opacity: parseFloat($('floodOpacity').value) / 100, className: 'flood-layer', zIndex: 6,
+      }).addTo(m);
+      area.outline = L.rectangle(bounds, { color: '#c66f1d', weight: 1.5, dashArray: '5 5', fill: false, interactive: false }).addTo(m);
+      area.marker = L.circleMarker(bounds.getCenter(), {
+        radius: 8, color: '#ffffff', weight: 2.5, fillColor: '#c66f1d', fillOpacity: 1,
+      }).addTo(m);
+      area.marker.bindTooltip(area.name, { direction: 'top', offset: [0, -8] });
+      areaReg.set(key, area);
+      // keep memory in check: drop the oldest inactive area
+      if (areaReg.size > MAX_AREAS) {
+        const oldest = Array.from(areaReg.keys()).find((k) => k !== key);
+        removeArea(oldest, { quiet: true });
+        say(`Removed the oldest modelled area to make room (up to ${MAX_AREAS} at once).`);
+      }
+    } else {
+      area.overlay.setBounds(bounds);
+    }
+    Object.assign(area, areaFields());
+    return area;
+  }
+
+  function setActiveLayers(area) {
+    state.overlay = area ? area.overlay : null;
+    state.gaugeMarker = area ? area.marker : null;
+    for (const a of areaReg.values()) {
+      const on = a === area;
+      a.outline.setStyle({ color: on ? '#c66f1d' : '#8a6a4a', weight: on ? 2.5 : 1.2, dashArray: on ? null : '5 5' });
+      a.marker.setStyle({ radius: on ? 8 : 6, fillOpacity: on ? 1 : 0.7 });
+    }
+  }
+
+  function activateArea(key, opts) {
+    const area = areaReg.get(key);
+    if (!area) return false;
+    if (state.areaKey !== key) saveActive();
+    Object.assign(state, {
+      grid: area.grid, areaId: area.areaId, areaMeta: area.areaMeta, eventsApply: area.eventsApply,
+      streamAreaKm2: area.streamAreaKm2, a: area.a, gauge: area.gauge, base: area.base, run: area.run,
+      terrain: area.terrain, geo: area.geo, areaKey: key, pendingGeo: false,
+    });
+    status.area = area.areaId === 'local' ? key : area.areaId;
+    CTL_KEYS.forEach((k) => { ctl[k].value = area.ctl[k]; });
+    ctl.gaugeLevel.min = area.gmin; ctl.gaugeLevel.max = area.gmax;
+    ctl.gaugeLevel.value = area.ctl.gaugeLevel;
+    $('levelHint').hidden = !area.levelHint;
+    if (area.levelHint) $('levelHint').textContent = area.levelHint;
+    setActiveLayers(area);
+    if (!state.lmap || $('lmap').hidden) {
+      const b = area.areaMeta.bounds_lonlat;
+      enterGeoMode(b, { fit: !!(opts && opts.fit) });
+    } else if (opts && opts.fit) {
+      const b = area.areaMeta.bounds_lonlat;
+      state.lmap.fitBounds([[b[1], b[0]], [b[3], b[2]]]);
+    }
+    $('area').value = key;
+    renderEvents();
+    showScenarioEmpty(false);
+    syncOutputs();
+    renderInfo();
+    renderNotice();
+    if (state.run) { drawStats(scenario()); drawProfile(scenario()); }
+    renderAreaList();
+    return true;
+  }
+
+  function deactivate() {
+    saveActive();
+    state.areaKey = null;
+    setActiveLayers(null);
+    renderAreaList();
+  }
+
+  function removeArea(key, opts) {
+    const area = areaReg.get(key);
+    if (!area) return;
+    const m = state.lmap;
+    [area.overlay, area.outline, area.marker].forEach((l) => l && m && m.removeLayer(l));
+    if (area.overlay && area.overlay._floodUrl) URL.revokeObjectURL(area.overlay._floodUrl);
+    areaReg.delete(key);
+    const op = $('area').querySelector(`option[value="${CSS.escape(key)}"]`);
+    if (op && area.areaMeta && area.areaMeta.local) op.remove();
+    if (state.areaKey === key) {
+      state.areaKey = null;
+      if (!(opts && opts.quiet)) { $('area').value = 'australia'; enterNational({ fit: false }); }
+    }
+    renderAreaList();
+  }
+
+  function areaAt(latlng) {
+    const inside = (a) => a.geo && latlng.lat <= a.geo.north && latlng.lat >= a.geo.south
+      && latlng.lng >= a.geo.west && latlng.lng <= a.geo.east;
+    const active = state.areaKey && areaReg.get(state.areaKey);
+    if (active && inside(active)) return active;
+    return Array.from(areaReg.values()).reverse().find(inside) || null;
+  }
+
+  function renderAreaList() {
+    const box = $('areaList');
+    if (!box) return;
+    const list = Array.from(areaReg.values());
+    box.hidden = !list.length;
+    box.innerHTML = list.length ? `<span class="label">Modelled areas</span><div class="area-chips">${list.map((a) =>
+      `<span class="area-chip${a.key === state.areaKey ? ' on' : ''}"><button type="button" data-area="${escapeHtml(a.key)}" aria-pressed="${a.key === state.areaKey}">${escapeHtml(a.name)}</button>`
+      + `<button type="button" class="x" data-remove="${escapeHtml(a.key)}" aria-label="Remove ${escapeHtml(a.name)}">×</button></span>`).join('')}</div>`
+      + '<p class="hint">Tap inside an area to switch to it. Tap anywhere else on the map to model another place.</p>' : '';
+    box.querySelectorAll('[data-area]').forEach((b) => b.addEventListener('click', () => activateArea(b.dataset.area, { fit: true })));
+    box.querySelectorAll('[data-remove]').forEach((b) => b.addEventListener('click', () => removeArea(b.dataset.remove)));
+    status.areas = list.map((a) => a.key);
+  }
+  window.__floodActivateArea = (key) => activateArea(key, { fit: true });
+  window.__floodAreaInfo = () => Array.from(areaReg.values()).map((a) => ({
+    key: a.key, name: a.name, drawn: !!a.overlay._floodUrl, active: a.key === state.areaKey,
+  }));
 
   function cellLatLng(i) {
     const a = state.a, g = state.geo;
@@ -942,7 +1100,7 @@
     return { x, y, i: y * a.W + x };
   }
 
-  let overlayGen = 0, overlayUrl = null;
+  let overlayGen = 0;
   function drawGeoMap() {
     const a = state.a;
     const relief = $('showRelief').checked;
@@ -954,23 +1112,29 @@
     off.width = a.W; off.height = a.H;
     off.getContext('2d').putImageData(img, 0, 0);
     const gen = ++overlayGen;
+    const ov = state.overlay;
     off.toBlob((blob) => {
       if (!blob || gen !== overlayGen) return;
       const url = URL.createObjectURL(blob);
-      const old = overlayUrl;
-      overlayUrl = url;
-      state.overlay.setUrl(url);
+      const old = ov._floodUrl;
+      ov._floodUrl = url;
+      ov.setUrl(url);
       status.overlayUpdates++;
       if (old) setTimeout(() => URL.revokeObjectURL(old), 2000);
     }, 'image/png');
     if (state.gauge >= 0) {
       state.gaugeMarker.setLatLng(cellLatLng(state.gauge));
-      state.gaugeMarker.setTooltipContent(state.eventsApply ? 'Brisbane City gauge' : 'Gauge');
+      state.gaugeMarker.setTooltipContent(state.eventsApply ? 'Brisbane City gauge' : `Gauge: ${(state.areaMeta && state.areaMeta.name) || 'modelled area'}`);
     }
   }
 
   function onGeoClick(e) {
-    if (!state.a) { onNationalClick(e); return; }
+    const hit = areaAt(e.latlng);
+    if (!hit) { onNationalClick(e); return; }
+    if (hit.key !== state.areaKey) {
+      activateArea(hit.key);
+      say(`Switched to ${hit.name}.`);
+    }
     const c = latLngCell(e.latlng);
     if (!c) return;
     const s = $('moveGauge').checked ? F.snapToStream(state.a, c.x, c.y, 6, gaugeFloor()) : -1;
@@ -989,7 +1153,7 @@
   }
 
   function onGeoMove(e) {
-    if (!state.a) return;
+    if (!state.a || !state.geo || !state.areaKey) return;
     const c = latLngCell(e.latlng);
     if (c) say(describe(c.i));
   }
@@ -1000,19 +1164,21 @@
     state.youMarker = L.circleMarker(e.latlng, {
       radius: 7, color: '#ffffff', weight: 2, fillColor: '#1a73e8', fillOpacity: 1,
     }).addTo(state.lmap);
-    const c = state.a ? latLngCell(e.latlng) : null;
+    const hit = areaAt(e.latlng);
+    if (hit && hit.key !== state.areaKey) activateArea(hit.key);
+    const c = hit && state.a ? latLngCell(e.latlng) : null;
     say(c
       ? `Your location: ${describe(c.i)}`
-      : 'Your location is outside the modelled area.');
+      : 'Your location is outside the modelled areas. Tap the map near you to model flooding there.');
   }
 
   $('floodOpacity').addEventListener('input', (e) => {
-    if (state.overlay) state.overlay.setOpacity(parseFloat(e.target.value) / 100);
+    for (const a of areaReg.values()) a.overlay.setOpacity(parseFloat(e.target.value) / 100);
     $('floodOpacityOut').textContent = e.target.value + '%';
   });
   $('showRelief').addEventListener('change', () => { if (state.geo) drawGeoMap(); });
   $('locate').addEventListener('click', () => {
-    if (!state.lmap || !state.geo) { say('Your location can be shown on maps of real places, such as the Lower Brisbane River.'); return; }
+    if (!state.lmap || $('lmap').hidden) { say('Your location can be shown on the street map. Pick Australia or a modelled area from the menu.'); return; }
     say('Finding your location…');
     state.lmap.locate({ setView: true, maxZoom: 15 });
   });
@@ -1350,7 +1516,7 @@
   } catch (e) { /* older browsers */ }
 
   $('area').addEventListener('change', (ev) => {
-    if (ev.target.value === 'upload' || (ev.target.value === 'local' && !state.localGrid)) return;
+    if (ev.target.value === 'upload') return;
     loadArea(ev.target.value);
   });
 
@@ -1528,21 +1694,20 @@
     syncLayerLists();
   }
 
-  async function enterNational() {
+  async function enterNational(opts) {
+    deactivate();
     state.areaId = 'australia';
     status.area = 'australia';
     state.areaMeta = { id: 'australia', name: 'Australia', national: true };
-    state.grid = null; state.a = null; state.run = null; state.base = null; state.gauge = -1;
+    state.grid = null; state.a = null; state.run = null; state.base = null; state.gauge = -1; state.geo = null;
     showScenarioEmpty(true);
-    const ok = await enterGeoMode(AUS_BOUNDS);
+    const ok = await enterGeoMode(AUS_BOUNDS, { fit: !opts || opts.fit !== false });
     if (!ok) {
       $('area').value = 'sample';
       await loadArea('sample');
       say('The street map could not load, so the Australia-wide view is unavailable. Showing the sample terrain.');
       return;
     }
-    state.overlay.setUrl(BLANK);
-    state.gaugeMarker.setStyle({ opacity: 0, fillOpacity: 0 });
     await loadNationalData();
     addNationalLayers(state.lmap);
     renderNotice();
@@ -1553,7 +1718,7 @@
   function showScenarioEmpty(empty) {
     $('scenarioEmpty').hidden = !empty;
     Array.from($('scenarioEmpty').parentElement.children).forEach((el) => {
-      if (el.id !== 'scenarioEmpty') el.hidden = empty || (el.id === 'eventsSet' && !state.eventsApply);
+      if (el.id !== 'scenarioEmpty' && el.id !== 'areaList') el.hidden = empty || (el.id === 'eventsSet' && !state.eventsApply);
     });
     if (empty) $('stats').innerHTML = '';
   }
@@ -1595,12 +1760,55 @@
     return Math.hypot(x, y) * 6371;
   }
 
+  // Open reports stack up as cards (newest first), shown side by side on wide
+  // screens; each has a numbered marker on the map.
+  const MAX_REPORTS = 4;
+  const reports = [];
+
+  function reportNumber() {
+    for (let n = 1; ; n++) if (!reports.some((r) => r.n === n)) return n;
+  }
+
+  function closeReport(r) {
+    const i = reports.indexOf(r);
+    if (i < 0) return;
+    reports.splice(i, 1);
+    r.el.remove();
+    if (r.pin && state.lmap) state.lmap.removeLayer(r.pin);
+    layoutReports();
+  }
+
+  function layoutReports() {
+    const n = reports.length;
+    const panel = $('panel-report');
+    panel.style.setProperty('--cols', String(Math.max(1, Math.min(n, isPhone() ? 1 : n))));
+    panel.classList.toggle('multi', n > 1);
+    $('h-report').textContent = n > 1 ? `Reports (${n})` : n === 1 ? reports[0].title : 'Reports';
+    $('reportsClear').hidden = n < 2;
+    if (!n) closePanel('panel-report');
+    status.report = { count: n, names: reports.map((r) => r.name) };
+  }
+
   function openReport(f) {
     nat.picked = f;
     const p = f.properties;
     const [lon, lat] = f.geometry.coordinates;
+    const id = `${p.kind}:${p.id}`;
+    const existing = reports.find((r) => r.id === id);
+    if (existing) {
+      // already open: bring it to the front
+      reports.splice(reports.indexOf(existing), 1);
+      reports.unshift(existing);
+      $('reportBody').prepend(existing.el);
+      existing.el.classList.add('flash');
+      setTimeout(() => existing.el.classList.remove('flash'), 900);
+      openPanel('panel-report');
+      layoutReports();
+      return;
+    }
     const st = GAUGE_STYLE[p.kind] || GAUGE_STYLE.river;
-    let html = `<div><span class="kind">${escapeHtml(st.label)}</span><h3 style="margin:2px 0 0;font:700 1.15rem/1.2 var(--font-display);font-stretch:85%">${escapeHtml(p.name || 'Unnamed')}</h3></div>`;
+    const num = reportNumber();
+    let html = `<div class="card-head"><span class="pin-num" style="background:${st.color}">${num}</span><div style="min-width:0"><span class="kind">${escapeHtml(st.label)}</span><h3>${escapeHtml(p.name || 'Unnamed')}</h3></div><button type="button" class="close js-close" aria-label="Close this report">×</button></div>`;
     const facts = [];
     if (p.kind === 'storage') {
       if (p.river) facts.push(['River', p.river]);
@@ -1642,7 +1850,7 @@
       }
     }
 
-    if (p.kind === 'storage') html += '<div id="waterHistory"></div>';
+    if (p.kind === 'storage') html += '<div class="js-history"></div>';
 
     // Google Flood Hub near this point
     const fhg = p.kind !== 'storage' ? nearestFloodHubGauge(lat, lon, 15) : null;
@@ -1656,10 +1864,9 @@
     // what can be done here
     const kind = p.kind === 'tide' ? 'coast' : 'river';
     html += `<div class="actions">
-      <button type="button" class="btn primary" id="reportModel">${kind === 'coast' ? 'Model coastal flooding here' : 'Model flooding here'}</button>
-      ${p.kind !== 'tide' && p.kind !== 'storage' ? '' : ''}
-      <button type="button" class="btn" id="reportZoom">Zoom to</button>
-      ${stateLayerFor(p.state) ? `<button type="button" class="btn" id="reportState">Show ${escapeHtml(stateLayerFor(p.state).state)} flood mapping</button>` : ''}
+      <button type="button" class="btn primary js-model">${kind === 'coast' ? 'Model coastal flooding here' : 'Model flooding here'}</button>
+      <button type="button" class="btn js-zoom">Zoom to</button>
+      ${stateLayerFor(p.state) ? `<button type="button" class="btn js-state">Show ${escapeHtml(stateLayerFor(p.state).state)} flood mapping</button>` : ''}
     </div>`;
     const links = [];
     if (p.url) links.push(`<a href="${escapeHtml(p.url)}" target="_blank" rel="noopener">BoM water storage page</a>`);
@@ -1668,22 +1875,43 @@
     html += `<p class="hint">${links.join(' · ')}</p>`;
     html += '<p class="hint">Readings: Water Data Online (Bureau of Meteorology and data owners). Not an official warning.</p>';
 
-    $('reportBody').innerHTML = html;
-    $('h-report').textContent = p.kind === 'storage' ? 'Dam report' : p.kind === 'tide' ? 'Tide gauge report' : 'River gauge report';
-    $('reportModel').addEventListener('click', () => modelHere(lat, lon, { kind, name: p.name }));
-    $('reportZoom').addEventListener('click', () => state.lmap && state.lmap.setView([lat, lon], 13));
+    const el = document.createElement('article');
+    el.className = 'report-card';
+    el.innerHTML = html;
+    const q = (sel) => el.querySelector(sel);
+    const title = p.kind === 'storage' ? 'Dam report' : p.kind === 'tide' ? 'Tide gauge report' : 'River gauge report';
+    const r = { id, n: num, name: p.name, title, el, pin: null };
+    if (state.lmap) {
+      r.pin = window.L.marker([lat, lon], {
+        icon: window.L.divIcon({ className: 'report-pin', html: `<span style="background:${st.color}">${num}</span>`, iconSize: [24, 24], iconAnchor: [12, 12] }),
+        keyboard: false, zIndexOffset: 1000,
+      }).addTo(state.lmap);
+      r.pin.on('click', () => { openPanel('panel-report'); el.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' }); });
+    }
+    q('.js-close').addEventListener('click', () => closeReport(r));
+    q('.js-model').addEventListener('click', () => modelHere(lat, lon, { kind, name: p.name }));
+    q('.js-zoom').addEventListener('click', () => state.lmap && state.lmap.setView([lat, lon], 13));
     const sl = stateLayerFor(p.state);
-    if (sl && $('reportState')) $('reportState').addEventListener('click', () => {
+    if (sl && q('.js-state')) q('.js-state').addEventListener('click', () => {
       if (sl.layer && state.lmap) {
         sl.layer.userOn = true; sl.layer.addTo(state.lmap);
         state.lmap.setView([lat, lon], Math.max(state.lmap.getZoom(), sl.minZoom || 11));
         syncLayerLists(); renderOverlayLegend();
       }
     });
-    if (p.kind === 'storage') addWaterHistory(p.id, $('waterHistory'));
+    if (p.kind === 'storage') addWaterHistory(p.id, q('.js-history'));
+    reports.unshift(r);
+    $('reportBody').prepend(el);
+    while (reports.length > MAX_REPORTS) closeReport(reports[reports.length - 1]);
     openPanel('panel-report');
-    status.report = { name: p.name, kind: p.kind };
+    layoutReports();
   }
+  $('reportsClear').addEventListener('click', () => { while (reports.length) closeReport(reports[0]); });
+  window.__floodOpenStorage = (index) => {
+    const f = nat.data && nat.data.storages[index || 0];
+    if (f) openReport(f);
+    return !!f;
+  };
   function stateLayerFor(st) {
     const code = String(st || '').toUpperCase();
     const norm = { QUEENSLAND: 'QLD', 'NEW SOUTH WALES': 'NSW' }[code] || code;
@@ -1852,15 +2080,17 @@
       await nextFrame();
       const col = Math.round(((lon - bounds[0]) / (bounds[2] - bounds[0])) * grid.W);
       const row = Math.round(((bounds[3] - lat) / (bounds[3] - bounds[1])) * grid.H);
+      const key = `local-${++localCount}`;
       state.areaMeta = {
-        id: 'local', local: true, kind: o.kind, name: o.name, bounds_lonlat: bounds,
+        id: 'local', areaKey: key, local: true, kind: o.kind, name: o.name, bounds_lonlat: bounds,
         gauge: { col, row }, streamAreaKm2: Math.max(0.5, Math.min(4, (grid.W * grid.H * grid.cell * grid.cell) / 1e6 * 0.004)),
         source: 'Terrain: Geoscience Australia 1-second (about 30 m) hydrologically enforced elevation model (DEM-H), CC BY 4.0, read live from GA.',
       };
-      let op = $('area').querySelector('option[value="local"]');
-      if (!op) { op = document.createElement('option'); op.value = 'local'; $('area').insertBefore(op, $('area').children[1] || null); }
+      const op = document.createElement('option');
+      op.value = key;
       op.textContent = `Modelled: ${o.name}`;
-      $('area').value = 'local';
+      $('area').insertBefore(op, $('area').children[1] || null);
+      $('area').value = key;
       useGrid(grid, 'local', { events: false });
       if (o.kind === 'coast') {
         ctl.bayLevel.value = 1.5;
@@ -1869,7 +2099,7 @@
         syncOutputs();
         runScenario();
       }
-      status.local = { ok: true, W: grid.W, H: grid.H, cell: Math.round(grid.cell), ms: Math.round(performance.now() - t0), kind: o.kind };
+      status.local = { ok: true, key, W: grid.W, H: grid.H, cell: Math.round(grid.cell), ms: Math.round(performance.now() - t0), kind: o.kind };
       openPanel('panel-scenario');
       say(o.kind === 'coast'
         ? 'Coastal model ready. Set the bay level and sea-level rise in Scenario.'
