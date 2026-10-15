@@ -853,16 +853,12 @@
     { name: 'Moreton Bay overland flow paths (council)', type: 'feature', minZoom: 12,
       url: 'https://services-ap1.arcgis.com/152ojN3Ts9H3cdtl/ArcGIS/rest/services/OM_Overland_Flow_Path_WebMercator_OpenData/FeatureServer/0',
       attribution: 'Overland flow paths &copy; City of Moreton Bay (planning scheme overlay)',
-      legend: 'Moreton Bay overland flow paths (planning scheme)', swatch: '#7b4fc9', test: [-27.2, 153.0] },
+      legend: 'Moreton Bay overland flow paths (planning scheme)', swatch: '#7b4fc9', test: [-27.075, 152.965] },
     { name: 'Sunshine Coast overland flow, 1% chance (council)', type: 'map', minZoom: 12,
       url: 'https://geoimage.scc.qld.gov.au/arcgis/rest/services/Emergency/FloodMapping_IndividualStudies_OverlandFlowModel_scrc/MapServer',
       pick: (l) => l.id < 57 && !(l.subLayerIds && l.subLayerIds.length) && /(1\s*%|1 in 100)/i.test(l.name) && /current/i.test(l.name),
       attribution: 'Overland flow model &copy; Sunshine Coast Council',
       legend: 'Sunshine Coast overland flow model, 1% annual chance, current climate (study areas only)', swatch: '#7b4fc9', test: [-26.66, 153.06] },
-    { name: 'Randwick overland flow paths (council)', type: 'map', minZoom: 13,
-      url: 'https://mapservices.randwick.nsw.gov.au/arcgis/rest/services/intStormwater/OverlandFlowPath/MapServer',
-      attribution: 'Overland flow paths &copy; Randwick City Council',
-      legend: 'Randwick overland flow paths', swatch: '#7b4fc9', test: [-33.92, 151.24] },
   ];
   function makeCouncilOverlay(o) {
     const esri = window.L && window.L.esri;

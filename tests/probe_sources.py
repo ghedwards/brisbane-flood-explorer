@@ -44,8 +44,6 @@ PROBES = {
         "https://services-ap1.arcgis.com/152ojN3Ts9H3cdtl/ArcGIS/rest/services/OM_Overland_Flow_Path_WebMercator_OpenData/FeatureServer/0/query?geometry=152.93,-27.10,153.00,-27.05&geometryType=esriGeometryEnvelope&inSR=4326&spatialRel=esriSpatialRelIntersects&returnCountOnly=true&f=json",
     "Sunshine Coast overland flow (layer list)":
         "https://geoimage.scc.qld.gov.au/arcgis/rest/services/Emergency/FloodMapping_IndividualStudies_OverlandFlowModel_scrc/MapServer/layers?f=json",
-    "Randwick overland flow (export)":
-        "https://mapservices.randwick.nsw.gov.au/arcgis/rest/services/intStormwater/OverlandFlowPath/MapServer/export?bbox=151.22,-33.94,151.26,-33.90&bboxSR=4326&size=256,256&f=json",
     "Brisbane council flood layers (check)":
         "https://services2.arcgis.com/dEKgZETqwmDAh1rP/ArcGIS/rest/services/Flood_Awareness_Creek/FeatureServer/0/query?where=1%3D1&resultRecordCount=1&f=geojson",
 }
