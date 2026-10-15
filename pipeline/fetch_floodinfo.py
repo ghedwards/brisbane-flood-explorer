@@ -38,6 +38,8 @@ FLOODCLASS_PAGES = [
     "https://www.bom.gov.au/nt/flood/floodclass.shtml",
 ]
 
+FTP_FWO = "ftp://ftp.bom.gov.au/anon/gen/fwo/"
+
 WARNING_FEEDS = {
     "NSW": "https://www.bom.gov.au/fwo/IDZ00054.warnings_nsw.xml",
     "NT": "https://www.bom.gov.au/fwo/IDZ00055.warnings_nt.xml",
@@ -148,18 +150,26 @@ def main(out_dir):
         except Exception as e:  # noqa: BLE001 - a missing page is normal
             notes.append(f"{url.split('/')[3]}:{url.rsplit('/', 1)[1]}=none ({str(e)[-60:]})")
     warnings, werr = [], []
+    via = {}
     for st, url in WARNING_FEEDS.items():
-        try:
-            warnings += parse_rss(http_text(url), st)
-        except Exception as e:  # noqa: BLE001
-            werr.append(f"{st}: {e}")
+        # the Bureau's website refuses many cloud servers; the same feeds
+        # are mirrored on its public FTP server
+        for src in (url, FTP_FWO + url.rsplit("/", 1)[1]):
+            try:
+                warnings += parse_rss(http_text(src), st)
+                via[st] = "ftp" if src.startswith("ftp") else "web"
+                break
+            except Exception as e:  # noqa: BLE001
+                err = f"{st}: {e}"
+        else:
+            werr.append(err)
     now = dt.datetime.now(dt.timezone.utc).replace(microsecond=0).isoformat()
     if classes:
         (out / "floodclass.json").write_text(json.dumps(classes, separators=(",", ":")))
     (out / "warnings.json").write_text(json.dumps({"fetched": now, "ok": len(werr) < len(WARNING_FEEDS),
                                                    "errors": werr, "warnings": warnings}, separators=(",", ":")))
     print(f"Flood info: {len(classes)} gauges with flood class levels ({', '.join(notes)}); "
-          f"{len(warnings)} current flood warnings; {len(werr)} feed errors")
+          f"{len(warnings)} current flood warnings; {len(werr)} feed errors; feeds via {via or 'none'}")
     for e in werr[:2]:
         print("warning:", e)
 

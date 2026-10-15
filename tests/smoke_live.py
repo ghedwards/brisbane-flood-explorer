@@ -514,11 +514,18 @@ def main() -> int:
             snap = status().get("snap") or {}
             stats = page.inner_text("#stats").replace("\n", " ") if loc.get("ok") else ""
             results.append({"id": pre["id"], "ok": bool(loc.get("ok")) and loc.get("key") != before,
-                            "ms": loc.get("ms"), "error": loc.get("error"), "snap": snap, "stats": stats[:120]})
+                            "ms": loc.get("ms"), "error": loc.get("error"), "snap": snap, "stats": stats[:120],
+                            "anchor": status().get("presetAnchor"), "lidar": loc.get("lidar"), "kind": pre.get("kind")})
             page.screenshot(path=f"smoke-preset-{pre['id']}.png")
             if pre["id"] == "echuca" and loc.get("ok"):
                 n_cls = page.evaluate("window.__floodApplyGaugeLevels ? window.__floodApplyGaugeLevels('major') : -1")
                 note("notice", f"Echuca major flood class applied at {n_cls} gauge(s); level points {status().get('levelPoints')}")
+        loose = [r["id"] for r in results if r.get("kind") == "river" and not ((r.get("anchor") or {}).get("gauge"))]
+        anchored = [f"{r['id']}→{r['anchor']['gauge']} ({r['anchor']['km']} km)" for r in results if (r.get("anchor") or {}).get("gauge")]
+        note("notice", f"Presets anchored to a BoM gauge: {len(anchored)}; not anchored: {', '.join(loose) or 'none'}")
+        note("notice", "Anchors: " + "; ".join(anchored)[:1800])
+        lid = [r["id"] for r in results if (r.get("lidar") or 0) >= 0.2]
+        note("notice", f"Presets on LiDAR terrain: {len(lid)} of {len(results)}")
         bad = [r for r in results if not r["ok"]]
         with open(os.environ.get("GITHUB_STEP_SUMMARY", os.devnull), "a") as fh:
             fh.write("### Presets\n" + "".join(f"- {json.dumps(r)}\n" for r in results))

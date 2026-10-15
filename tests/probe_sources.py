@@ -28,6 +28,10 @@ PROBES = {
         "https://services.ga.gov.au/gis/services/DEM_SRTM_1Second_Hydro_Enforced_2024/MapServer/WCSServer?service=WCS&version=1.0.0&request=GetCoverage&coverage=1&crs=EPSG:4326&bbox=" + BRIS + "&width=64&height=64&format=GeoTIFF",
     "GA 5 m LiDAR elevation (WCS GeoTIFF)":
         "https://services.ga.gov.au/gis/services/DEM_LiDAR_5m_2025/MapServer/WCSServer?service=WCS&version=1.0.0&request=GetCoverage&coverage=1&crs=EPSG:4326&bbox=" + BRIS + "&width=64&height=64&format=GeoTIFF",
+    "GA 5 m LiDAR (WCS, GDA94 request)":
+        "https://services.ga.gov.au/gis/services/DEM_LiDAR_5m_2025/MapServer/WCSServer?service=WCS&version=1.0.0&request=GetCoverage&coverage=1&crs=EPSG:4283&bbox=" + BRIS + "&width=64&height=64&format=GeoTIFF",
+    "GA 5 m LiDAR (WCS, GTiff format name)":
+        "https://services.ga.gov.au/gis/services/DEM_LiDAR_5m_2025/MapServer/WCSServer?service=WCS&version=1.0.0&request=GetCoverage&coverage=1&crs=EPSG:4326&bbox=" + BRIS + "&width=64&height=64&format=GTiff",
     "DEA water observations frequency (WCS GeoTIFF)":
         "https://ows.dea.ga.gov.au/?service=WCS&version=1.0.0&request=GetCoverage&coverage=ga_ls_wo_fq_myear_3&measurements=frequency&crs=EPSG:4326&bbox=" + BRIS + "&width=64&height=64&format=GeoTIFF",
     "Copernicus GLO-30 DEM (S3 COG range read)":
@@ -44,7 +48,10 @@ JS = """async ([url, range]) => {
     const r = await fetch(url, range ? { headers: { Range: 'bytes=0-1023' } } : {});
     const buf = await r.arrayBuffer();
     let sample = '';
-    try { sample = new TextDecoder().decode(buf.slice(0, 160)).replace(/\\s+/g, ' '); } catch (e) {}
+    try {
+      const txt = new TextDecoder().decode(buf.slice(0, 4000));
+      sample = (/html/i.test(r.headers.get('content-type') || '') ? txt.replace(/<style[\\s\\S]*?<\\/style>/gi, '').replace(/<[^>]+>/g, ' ') : txt.slice(0, 160)).replace(/\\s+/g, ' ').slice(0, 300);
+    } catch (e) {}
     return { ok: r.ok, status: r.status, type: r.headers.get('content-type'), bytes: buf.byteLength,
              ms: Math.round(performance.now() - t0), sample };
   } catch (e) {

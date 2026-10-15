@@ -220,6 +220,29 @@
     return op;
   }
 
+  // The Bureau gauge a river preset should be modelled from: one within
+  // 8 km whose name or basin mentions the preset's river, else the nearest
+  // forecast or information gauge within 3 km.
+  function presetGauge(p) {
+    if (!nat.data) return null;
+    const river = (p.name.split(',')[1] || '').replace(/\(.*\)/, '').trim().toLowerCase();
+    const token = river.replace(/\b(river|creek|r)\b/g, '').trim().split(/\s+/)[0] || '';
+    const rank = { forecast: 0, information: 1, river: 2 };
+    let best = null;
+    for (const f of nat.data.gauges) {
+      const q = f.properties;
+      if (q.kind === 'tide') continue;
+      const km = kmBetween([f.geometry.coordinates[1], f.geometry.coordinates[0]], [p.lat, p.lon]);
+      if (km > 8) continue;
+      const text = `${q.name || ''} ${q.basin || ''}`.toLowerCase();
+      const named = token.length > 2 && text.includes(token);
+      if (!named && (km > 3 || q.kind === 'river')) continue;
+      const score = (named ? 0 : 100) + (rank[q.kind] ?? 3) * 3 + km;
+      if (!best || score < best.score) best = { f, km, score, named };
+    }
+    return best;
+  }
+
   async function loadArea(id) {
     if (areaReg.has(id)) { activateArea(id, { fit: true }); return; }
     if (id.startsWith('preset:')) {
@@ -228,7 +251,17 @@
       const done = Array.from(areaReg.values()).find((a) => a.areaMeta && a.areaMeta.presetId === p.id);
       if (done) { activateArea(done.key, { fit: true }); openPanel('panel-scenario'); return; }
       if (!state.lmap || $('lmap').hidden) await enterNational({ fit: false });
-      await modelHere(p.lat, p.lon, { kind: p.kind, name: p.name.replace(/ \((NSW|Qld|Vic|Tas|SA|NT|WA)\)$/, ''), presetId: p.id });
+      if (!nat.data) await loadNationalData();
+      const name = p.name.replace(/ \((NSW|Qld|Vic|Tas|SA|NT|WA)\)$/, '');
+      // anchor river presets to the real Bureau gauge on that river, so the
+      // model starts on the channel and gets the gauge's report and levels
+      const g = p.kind === 'river' ? presetGauge(p) : null;
+      status.presetAnchor = { id: p.id, gauge: g ? g.f.properties.name : null, km: g ? Math.round(g.km * 10) / 10 : null };
+      let rep = null;
+      if (g) rep = openReport(g.f, { select: false });
+      await modelHere(g ? g.f.geometry.coordinates[1] : p.lat, g ? g.f.geometry.coordinates[0] : p.lon, {
+        kind: p.kind, name, presetId: p.id, reportId: rep ? rep.id : null, center: [p.lat, p.lon],
+      });
       return;
     }
     if (id === 'australia') {
@@ -2443,7 +2476,8 @@
     status.report = { count: n, names: reports.map((x) => x.name), active: r ? r.name : null };
   }
 
-  function openReport(f) {
+  function openReport(f, opts) {
+    const select = !opts || opts.select !== false;
     nat.picked = f;
     const p = f.properties;
     const [lon, lat] = f.geometry.coordinates;
@@ -3330,10 +3364,13 @@
   };
 
   // Read one GeoTIFF window from a GA elevation WCS.
-  async function fetchRaster(base, box, W, H) {
+  const wcsUrl = (base, box, W, H, crs, fmt) => {
     const [w, s, e, n] = box;
-    const url = `${base}?service=WCS&version=1.0.0&request=GetCoverage&coverage=1&crs=EPSG:4326`
-      + `&bbox=${w.toFixed(6)},${s.toFixed(6)},${e.toFixed(6)},${n.toFixed(6)}&width=${W}&height=${H}&format=GeoTIFF`;
+    return `${base}?service=WCS&version=1.0.0&request=GetCoverage&coverage=1&crs=${crs || 'EPSG:4326'}`
+      + `&bbox=${w.toFixed(6)},${s.toFixed(6)},${e.toFixed(6)},${n.toFixed(6)}&width=${W}&height=${H}&format=${fmt || 'GeoTIFF'}`;
+  };
+  async function fetchRaster(base, box, W, H, url0) {
+    const url = url0 || wcsUrl(base, box, W, H);
     // GA's service occasionally drops a request (its error replies carry no
     // CORS header, so the browser reports a network failure): try again
     let r = null;
@@ -3389,12 +3426,21 @@
   // buildings or trees in it, unlike the 30 m model.
   const LIDAR_WCS = 'https://services.ga.gov.au/gis/services/DEM_LiDAR_5m_2025/MapServer/WCSServer';
   const LIDAR_PREF = 'floodExplorer.lidar';
+  let lidarVariant = null;
   const useLidar = () => { try { return localStorage.getItem(LIDAR_PREF) !== 'off'; } catch (e) { return true; } };
   async function withLidar(grid, bounds, halfKm) {
     const cellL = halfKm <= 10 ? 15 : grid.cell;          // 15 m for 20 km models
     const W = Math.round((bounds[2] - bounds[0]) * 111320 * Math.cos((((bounds[1] + bounds[3]) / 2) * Math.PI) / 180) / cellL);
     const H = Math.round((bounds[3] - bounds[1]) * 110574 / cellL);
-    const r = await fetchRaster(LIDAR_WCS, bounds, W, H);
+    // the request format the LiDAR service accepts, found once per visit
+    const variants = [[null, null], ['EPSG:4283', null], [null, 'GTiff'], ['EPSG:4283', 'GTiff']];
+    let r = null, lastErr = null;
+    const order = lidarVariant != null ? [lidarVariant] : variants.map((_, i) => i);
+    for (const i of order) {
+      try { r = await fetchRaster(LIDAR_WCS, bounds, W, H, wcsUrl(LIDAR_WCS, bounds, W, H, variants[i][0], variants[i][1])); lidarVariant = i; break; } catch (err) { lastErr = err; }
+    }
+    status.lidarVariant = lidarVariant;
+    if (!r) throw lastErr || new Error('no LiDAR');
     const { iw, ih, data, nd } = r;
     const N = iw * ih, dem = new Float32Array(N), valid = new Uint8Array(N);
     let have = 0;

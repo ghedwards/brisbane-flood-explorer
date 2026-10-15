@@ -19,18 +19,18 @@ concurrency:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
 
       - name: Test the flood model
         run: node --test tests/core.test.js
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
           cache: pip
@@ -45,7 +45,7 @@ jobs:
       # Terrain only needs rebuilding when the area or the pipeline changes.
       - name: Restore built terrain
         id: terrain
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             work/brisbane/*.tif
@@ -60,7 +60,7 @@ jobs:
 
       - name: Cache DEM tiles
         if: steps.terrain.outputs.cache-hit != 'true'
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: work/brisbane/tiles
           key: glo30-${{ hashFiles('config/brisbane.json') }}
@@ -102,7 +102,7 @@ jobs:
       # Dam water history builds up across runs: restore the latest copy,
       # spend at most ~5 minutes filling in or refreshing dams, save again.
       - name: Restore dam water history
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v6
         with:
           path: cache/waterhistory.json
           key: waterhistory-${{ github.run_id }}
@@ -121,7 +121,7 @@ jobs:
 
       - name: Save dam water history
         if: always() && hashFiles('cache/waterhistory.json') != ''
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v6
         with:
           path: cache/waterhistory.json
           key: waterhistory-${{ github.run_id }}
@@ -136,7 +136,7 @@ jobs:
 
       - name: Restore council flood images
         id: council
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: cache/council
           key: council-${{ steps.month.outputs.month }}-${{ hashFiles('pipeline/render_council_layers.py') }}
@@ -156,7 +156,7 @@ jobs:
 
       - name: Restore DEA national images
         id: dea
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: cache/dea
           key: dea-${{ steps.month.outputs.month }}-${{ hashFiles('pipeline/render_dea_mosaic.py') }}
@@ -198,28 +198,28 @@ jobs:
           grep '^warning:' wh.log 2>/dev/null | head -2 | sed 's/^warning:/::warning::Water history: /' || true
           grep '^warning:' national.log 2>/dev/null | head -3 | sed 's/^warning:/::warning::National data: /' || true
 
-      - uses: actions/configure-pages@v5
+      - uses: actions/configure-pages@v6
 
-      - uses: actions/upload-pages-artifact@v3
+      - uses: actions/upload-pages-artifact@v5
         with:
           path: site
 
   deploy:
     needs: build
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5
 
   smoke-test:
     needs: deploy
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - name: Install browser
@@ -233,7 +233,7 @@ jobs:
       - name: Probe national data sources from the browser
         if: always()
         run: python tests/probe_sources.py "https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: smoke-screenshots
