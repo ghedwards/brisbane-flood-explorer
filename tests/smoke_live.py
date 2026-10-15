@@ -519,6 +519,37 @@ def main() -> int:
         p2.screenshot(path="smoke-share.png")
         p2.close()
 
+        # ---- impact counts and recorded-flood accuracy at Rockhampton
+        before = (status().get("local") or {}).get("key")
+        page.select_option("#area", "preset:rockhampton")
+        try:
+            page.wait_for_function(f"window.__floodStatus.local && window.__floodStatus.local.ok !== undefined && window.__floodStatus.local.key !== {json.dumps(before)}", timeout=90_000)
+        except Exception:
+            pass
+        try:
+            recs = page.evaluate("window.__floodFindRecorded()")
+        except Exception as e:
+            recs = f"error: {e}"
+        note("notice", f"Recorded floods at Rockhampton: {recs}")
+        if not (isinstance(recs, list) and recs):
+            failures.append(f"no recorded floods found at Rockhampton: {recs}")
+        else:
+            try:
+                fit = page.evaluate("id => window.__floodFitRecorded(id)", recs[0])
+            except Exception as e:
+                fit = {"error": str(e)[:200]}
+            note("notice", f"Best match to {recs[0]}: {json.dumps(fit)}")
+            if not fit or fit.get("error") or fit.get("csi", 0) <= 0:
+                failures.append(f"matching the recorded flood failed: {fit}")
+        try:
+            imp = page.evaluate("window.__floodCountImpact()")
+        except Exception as e:
+            imp = {"error": str(e)[:200]}
+        note("notice" if imp and imp.get("buildings") else "warning", f"Impact at Rockhampton: {json.dumps(imp)}")
+        if imp and imp.get("error") and "OpenStreetMap" not in imp.get("error", "") and "Failed to fetch" not in imp.get("error", ""):
+            failures.append(f"impact count failed: {imp}")
+        page.screenshot(path="smoke-impact.png")
+
         # ---- on a phone, a swipe scrolls the Layers panel
         mctx = browser.new_context(viewport={"width": 390, "height": 844}, has_touch=True, is_mobile=True)
         mp = mctx.new_page()

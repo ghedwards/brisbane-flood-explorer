@@ -534,6 +534,7 @@
 
   /* -------------------------------------------------------------- model */
 
+  let impactT = 0;
   function runScenario() {
     const a = state.a;
     if (!a) return;
@@ -563,6 +564,8 @@
     drawProfile(s);
     renderNotice();
     saveSessionSoon();
+    clearTimeout(impactT);
+    impactT = setTimeout(() => { renderImpact(); renderRecorded(); }, 250);
   }
 
   // Which sides of the model window the flood runs into (ignoring the sea
@@ -845,6 +848,12 @@
       dynamicLayers: [{ id: 1, source: { type: 'mapLayer', mapLayerId: 1 }, minScale: 0, maxScale: 0 }],
       attribution: 'Flood planning &copy; State of New South Wales (Department of Planning), from local environmental plans',
       legend: 'NSW flood planning areas from council planning schemes', swatch: '#3b6fb6' },
+    { name: 'Queensland recorded floods, 1974–2019 (state)', state: 'QLD-REC',
+      url: 'https://spatial-gis.information.qld.gov.au/arcgis/rest/services/InlandWaters/FloodLines/MapServer',
+      layers: [12, 13, 14, 15, 16, 17, 18, 19, 20], opacity: 0.45, minZoom: 6,
+      dynamicLayers: [12, 13, 14, 15, 16, 17, 18, 19, 20].map((id) => ({ id, source: { type: 'mapLayer', mapLayerId: id }, minScale: 0, maxScale: 0 })),
+      attribution: 'Recorded flood lines &copy; State of Queensland',
+      legend: 'Queensland recorded flood extents (1974 Brisbane, 2010–13 Bundaberg, 2011 towns, 2017 Fitzroy and Logan, 2019 west)', swatch: '#d9480f' },
   ];
 
   // Council overland-flow mapping published as open map services (shown
@@ -2388,7 +2397,7 @@
   function showScenarioEmpty(empty) {
     scenarioEmpty = empty;
     Array.from($('scenarioEmpty').parentElement.children).forEach((el) => {
-      if (el.id !== 'scenarioEmpty' && el.id !== 'scenarioModel' && el.id !== 'edgeNote' && el.id !== 'levelPointsSet' && el.id !== 'checkSet' && el.id !== 'downloadSet' && el.id !== 'stormSet' && el.id !== 'riverSet') el.hidden = empty || (el.id === 'eventsSet' && !state.eventsApply);
+      if (el.id !== 'scenarioEmpty' && el.id !== 'scenarioModel' && el.id !== 'edgeNote' && el.id !== 'levelPointsSet' && el.id !== 'checkSet' && el.id !== 'downloadSet' && el.id !== 'stormSet' && el.id !== 'riverSet' && el.id !== 'impactSet' && el.id !== 'recordedSet') el.hidden = empty || (el.id === 'eventsSet' && !state.eventsApply);
     });
     if (empty) { $('stats').innerHTML = ''; state.edges = []; }
     renderEdgeNote();
@@ -2953,6 +2962,10 @@
     const local = state.a && state.geo;
     set.hidden = !local || scenarioEmpty || ctl.floodType.value === 'flash';
     $('checkSet').hidden = !local || scenarioEmpty;
+    $('impactSet').hidden = !local || scenarioEmpty;
+    $('recordedSet').hidden = !local || scenarioEmpty;
+    clearTimeout(impactT);
+    impactT = setTimeout(() => { renderImpact(); renderRecorded(); }, 250);
     $('downloadSet').hidden = !local || scenarioEmpty;
     if (set.hidden) return;
     const sc = $('satCheck');
@@ -3468,6 +3481,351 @@
   $('dlGeojson').addEventListener('click', downloadGeoJSON);
   $('dlReport').addEventListener('click', printableReport);
   window.__floodDepthTiffBytes = () => { const a = state.a; return a && state.run ? geoTiffBytes(new Float32Array(a.N), a.W, a.H, state.geo, -9999).byteLength : -1; };
+
+  /* ---------- shared: ArcGIS queries and drawing polygons onto a model grid */
+  const degPerM = 1 / 111320;
+  async function esriFeatures(layerUrl, g, opts) {
+    const o = opts || {};
+    const out = [];
+    for (let offset = 0, page = 0; page < 20; page++) {
+      const params = new URLSearchParams({
+        where: o.where || '1=1', geometry: `${g.west},${g.south},${g.east},${g.north}`, geometryType: 'esriGeometryEnvelope',
+        inSR: '4326', spatialRel: 'esriSpatialRelIntersects', outSR: '4326', outFields: o.fields || 'OBJECTID',
+        returnGeometry: 'true', f: 'json', resultOffset: String(offset), resultRecordCount: String(o.page || 1000),
+      });
+      if (o.simplify) params.set('maxAllowableOffset', String(o.simplify));
+      const r = await fetch(`${layerUrl}/query?${params}`);
+      if (!r.ok) throw new Error(`${r.status}`);
+      const j = await r.json();
+      if (j.error) throw new Error(j.error.message || 'query failed');
+      out.push(...(j.features || []));
+      if (!j.exceededTransferLimit || !(j.features || []).length) break;
+      offset += j.features.length;
+    }
+    return out;
+  }
+  // Draw polygons (Esri rings, lon/lat) onto a W×H canvas over bounds g.
+  function drawRings(features, g, W, H, colorOf) {
+    const cv = document.createElement('canvas');
+    cv.width = W; cv.height = H;
+    const ctx = cv.getContext('2d');
+    ctx.imageSmoothingEnabled = false;
+    const sx = W / (g.east - g.west), sy = H / (g.north - g.south);
+    features.forEach((f, i) => {
+      const rings = f.geometry && f.geometry.rings;
+      if (!rings) return;
+      ctx.beginPath();
+      for (const ring of rings) ring.forEach(([x, y], k) => {
+        const px = (x - g.west) * sx, py = (g.north - y) * sy;
+        if (k) ctx.lineTo(px, py); else ctx.moveTo(px, py);
+      });
+      ctx.fillStyle = colorOf(f, i);
+      ctx.fill('evenodd');
+    });
+    return ctx.getImageData(0, 0, W, H).data;
+  }
+
+  /* ---------- impact: buildings, roads, key sites and people affected */
+  // Buildings, roads and key sites come from OpenStreetMap (Overpass API);
+  // people from the ABS 2021 Census by SA1, spread across each SA1's
+  // buildings. Counts are for the active model and current scenario.
+  const OVERPASS = ['https://overpass-api.de/api/interpreter', 'https://overpass.kumi.systems/api/interpreter'];
+  const ABS_SA1 = 'https://geo.abs.gov.au/arcgis/rest/services/Hosted/ABS_2021_Census_G01_SA1/FeatureServer/0';
+  const SITE_KINDS = {
+    hospital: 'Hospital', clinic: 'Clinic', doctors: 'Doctors', school: 'School', kindergarten: 'Kindergarten', childcare: 'Childcare',
+    nursing_home: 'Aged care', fire_station: 'Fire station', police: 'Police', ambulance_station: 'Ambulance', community_centre: 'Community centre',
+  };
+  const ROAD_TYPES = 'motorway|trunk|primary|secondary|tertiary|unclassified|residential|living_street';
+  async function overpass(q) {
+    let last = null;
+    for (const url of OVERPASS) {
+      try {
+        const r = await fetch(url, { method: 'POST', body: new URLSearchParams({ data: q }) });
+        if (r.ok) return await r.json();
+        last = new Error(`OpenStreetMap service returned ${r.status}`);
+      } catch (err) { last = err; }
+    }
+    throw last || new Error('OpenStreetMap service unavailable');
+  }
+  async function loadImpactData(area) {
+    const g = area.geo || state.geo;
+    const bb = `${g.south},${g.west},${g.north},${g.east}`;
+    const q = `[out:json][timeout:120];
+      way["building"](${bb});out ids center qt;
+      way["building"~"^(house|residential|detached|semidetached_house|terrace|apartments|bungalow|dormitory|duplex|cabin)$"](${bb});out ids qt;
+      way["highway"~"^(${ROAD_TYPES})(_link)?$"](${bb});out tags geom qt;
+      nwr["amenity"~"^(${Object.keys(SITE_KINDS).join('|')})$"](${bb});out tags center qt;
+      nwr["social_facility"~"^(nursing_home|assisted_living)$"](${bb});out tags center qt;`;
+    const osm = await overpass(q);
+    const els = osm.elements || [];
+    // the first block has centres (buildings), the second ids only (homes)
+    const bIdx = new Map(), bx = [], by = [], homes = new Set();
+    const roads = [], sites = [];
+    for (const e of els) {
+      if (e.type === 'way' && e.center && !e.tags) { if (!bIdx.has(e.id)) { bIdx.set(e.id, bx.length); bx.push(e.center.lon); by.push(e.center.lat); } } else if (e.type === 'way' && !e.center && !e.tags && !e.geometry) homes.add(e.id);
+      else if (e.tags && e.tags.highway && e.geometry) roads.push({ name: e.tags.name || e.tags.ref || '', type: e.tags.highway, pts: e.geometry });
+      else if (e.tags && (e.tags.amenity || e.tags.social_facility)) {
+        const ll = e.center || (e.lat != null ? { lat: e.lat, lon: e.lon } : null);
+        const kind = SITE_KINDS[e.tags.amenity] || (e.tags.social_facility ? 'Aged care' : null);
+        if (ll && kind) sites.push({ name: e.tags.name || kind, kind, lat: ll.lat, lon: ll.lon });
+      }
+    }
+    const isHome = new Uint8Array(bx.length);
+    for (const [id, i] of bIdx) if (homes.has(id)) isHome[i] = 1;
+    // people: ABS SA1 populations (optional)
+    let sa1 = null;
+    try {
+      const feats = await esriFeatures(ABS_SA1, g, { fields: '*', simplify: 20 * degPerM, page: 1000 });
+      const key = feats.length && Object.keys(feats[0].attributes || {}).find((k) => /^tot_p_p$/i.test(k));
+      if (key) sa1 = { feats, pop: feats.map((f) => Number(f.attributes[key]) || 0) };
+    } catch (err) { sa1 = null; }
+    return { bx: Float64Array.from(bx), by: Float64Array.from(by), isHome, roads, sites, sa1, fetched: Date.now() };
+  }
+  function cellOf(lat, lon) {
+    const g = state.geo, a = state.a;
+    const x = Math.floor(((lon - g.west) / (g.east - g.west)) * a.W), y = Math.floor(((g.north - lat) / (g.north - g.south)) * a.H);
+    return x < 0 || y < 0 || x >= a.W || y >= a.H ? -1 : y * a.W + x;
+  }
+  function computeImpact(d) {
+    const a = state.a, run = state.run;
+    if (!a || !run || !d) return null;
+    const depthAt = (c) => (c >= 0 && run.wet[c] && !(a.ocean && a.ocean[c]) ? run.depth[c] : 0);
+    // buildings
+    const nB = d.bx.length;
+    let bWet = 0, bDeep = 0, hWet = 0;
+    const bCell = new Int32Array(nB), bFlood = new Uint8Array(nB);
+    for (let i = 0; i < nB; i++) {
+      const c = cellOf(d.by[i], d.bx[i]);
+      bCell[i] = c;
+      const z = depthAt(c);
+      if (z >= 0.15) { bWet++; bFlood[i] = 1; if (d.isHome[i]) hWet++; if (z >= 0.5) bDeep++; }
+    }
+    // people: each SA1's population spread over its buildings (or its land)
+    let people = null;
+    if (d.sa1) {
+      if (!d.sa1Grid || d.sa1Key !== state.areaKey + a.W) {
+        const px = drawRings(d.sa1.feats, state.geo, a.W, a.H, (f, i) => `rgb(${(i + 1) >> 16 & 255},${(i + 1) >> 8 & 255},${(i + 1) & 255})`);
+        const idg = new Int32Array(a.N).fill(-1);
+        for (let c = 0; c < a.N; c++) { const v = (px[4 * c] << 16) | (px[4 * c + 1] << 8) | px[4 * c + 2]; if (px[4 * c + 3] > 250 && v > 0 && v <= d.sa1.feats.length) idg[c] = v - 1; }
+        d.sa1Grid = idg; d.sa1Key = state.areaKey + a.W;
+      }
+      const nS = d.sa1.pop.length, tot = new Float64Array(nS), hit = new Float64Array(nS), land = new Float64Array(nS), wetL = new Float64Array(nS);
+      for (let i = 0; i < nB; i++) { const s = bCell[i] >= 0 ? d.sa1Grid[bCell[i]] : -1; if (s >= 0) { tot[s]++; if (bFlood[i]) hit[s]++; } }
+      for (let c = 0; c < a.N; c++) { const s = d.sa1Grid[c]; if (s >= 0 && !(a.ocean && a.ocean[c])) { land[s]++; if (depthAt(c) >= 0.15) wetL[s]++; } }
+      people = 0;
+      for (let s = 0; s < nS; s++) people += d.sa1.pop[s] * (tot[s] > 0 ? hit[s] / tot[s] : (land[s] ? wetL[s] / land[s] : 0));
+    }
+    // roads: length under more than 0.3 m of water (impassable to cars)
+    const cutBy = new Map();
+    let cutKm = 0, roadKm = 0;
+    for (const rd of d.roads) {
+      let cut = 0;
+      for (let k = 1; k < rd.pts.length; k++) {
+        const p0 = rd.pts[k - 1], p1 = rd.pts[k];
+        const len = Math.hypot((p1.lon - p0.lon) * Math.cos((p0.lat * Math.PI) / 180), p1.lat - p0.lat) * 111.32;
+        roadKm += len;
+        const steps = Math.max(1, Math.ceil((len * 1000) / a.cell));
+        let wetSteps = 0;
+        for (let t = 0; t < steps; t++) {
+          const f = (t + 0.5) / steps;
+          if (depthAt(cellOf(p0.lat + (p1.lat - p0.lat) * f, p0.lon + (p1.lon - p0.lon) * f)) >= 0.3) wetSteps++;
+        }
+        cut += (len * wetSteps) / steps;
+      }
+      if (cut > 0) { cutKm += cut; const key = rd.name || `(unnamed ${rd.type})`; cutBy.set(key, (cutBy.get(key) || 0) + cut); }
+    }
+    const worstRoads = Array.from(cutBy.entries()).filter(([n]) => !n.startsWith('(unnamed')).sort((x, y) => y[1] - x[1]).slice(0, 8);
+    // key sites
+    const sitesHit = d.sites.map((s) => ({ ...s, depth: depthAt(cellOf(s.lat, s.lon)) })).filter((s) => s.depth >= 0.15).sort((x, y) => y.depth - x.depth);
+    return { buildings: nB, bWet, bDeep, hWet, homesTagged: d.isHome.reduce((x, y) => x + y, 0), people, cutKm, roadKm, worstRoads, sites: d.sites.length, sitesHit };
+  }
+  let impactLayer = null;
+  function renderImpact() {
+    const box = $('impactBox');
+    const area = state.areaKey && areaReg.get(state.areaKey);
+    if (!box || !area) return;
+    const d = area.impact;
+    if (!d) { box.innerHTML = ''; status.impact = null; if (impactLayer) impactLayer.clearLayers(); return; }
+    if (d.error) { box.innerHTML = `<p class="hint">Couldn't fetch what's here: ${escapeHtml(d.error)}.</p>`; return; }
+    const r = computeImpact(d);
+    if (!r) return;
+    status.impact = { buildings: r.buildings, bWet: r.bWet, people: r.people == null ? null : Math.round(r.people), cutKm: Math.round(r.cutKm * 10) / 10, sites: r.sites, sitesHit: r.sitesHit.length };
+    const n = (x) => Math.round(x).toLocaleString('en-AU');
+    box.innerHTML = `<div class="stats">
+        <div class="stat"><div class="label">Buildings flooded</div><div class="v">${n(r.bWet)}<small> of ${n(r.buildings)}</small></div></div>
+        <div class="stat"><div class="label">People affected</div><div class="v">${r.people == null ? '–' : `≈${n(r.people)}`}</div></div>
+        <div class="stat"><div class="label">Roads cut</div><div class="v">${r.cutKm.toFixed(1)}<small>km</small></div></div>
+        <div class="stat"><div class="label">Key sites flooded</div><div class="v">${r.sitesHit.length}<small> of ${r.sites}</small></div></div></div>
+      <p class="hint">Flooded means at least 15 cm of water at the building or site; ${n(r.bDeep)} buildings have more than 50 cm${r.homesTagged ? `; ${n(r.hWet)} of the flooded buildings are mapped as homes` : ''}. Roads are cut where water is over 30 cm deep.</p>
+      ${r.worstRoads.length ? `<p><strong>Roads cut:</strong> ${r.worstRoads.map(([nm, km]) => `${escapeHtml(nm)} (${km < 1 ? `${Math.round(km * 1000)} m` : `${km.toFixed(1)} km`})`).join(', ')}</p>` : ''}
+      ${r.sitesHit.length ? `<p><strong>Key sites:</strong> ${r.sitesHit.slice(0, 12).map((s) => `${escapeHtml(s.name)} <small>(${s.kind.toLowerCase()}, ${s.depth.toFixed(1)} m)</small>`).join('; ')}${r.sitesHit.length > 12 ? ` and ${r.sitesHit.length - 12} more` : ''}</p>` : ''}
+      <p class="hint">Buildings, roads and sites: © OpenStreetMap contributors (ODbL), complete only where mapped. People: ABS 2021 Census by SA1, spread across each area's buildings${r.people == null ? ' (not available here right now)' : ''}. Estimates for screening only.</p>`;
+    // mark flooded key sites on the map
+    if (state.lmap) {
+      if (!impactLayer) impactLayer = window.L.layerGroup().addTo(state.lmap);
+      impactLayer.clearLayers();
+      r.sitesHit.forEach((s) => window.L.circleMarker([s.lat, s.lon], { radius: 7, color: '#c62828', weight: 2.5, fillColor: '#fff', fillOpacity: 0.9 })
+        .bindTooltip(`${s.name}: ${s.kind}, ${s.depth.toFixed(1)} m of water`).addTo(impactLayer));
+    }
+  }
+  async function countImpact() {
+    const area = state.areaKey && areaReg.get(state.areaKey);
+    if (!area || !state.a) return null;
+    const box = $('impactBox');
+    box.innerHTML = '<p class="hint">Fetching buildings, roads and key sites from OpenStreetMap, and population from the ABS…</p>';
+    status.impact = { loading: true };
+    try { area.impact = await loadImpactData(area); } catch (err) { area.impact = { error: String(err.message || err) }; status.impact = { error: area.impact.error }; }
+    renderImpact();
+    return status.impact;
+  }
+  $('impactBtn').addEventListener('click', () => countImpact());
+  window.__floodCountImpact = countImpact;
+
+  /* ---------- accuracy: compare with recorded floods */
+  const QLD_FLOODLINES = 'https://spatial-gis.information.qld.gov.au/arcgis/rest/services/InlandWaters/FloodLines/MapServer';
+  const BCC_FS = 'https://services2.arcgis.com/dEKgZETqwmDAh1rP/ArcGIS/rest/services';
+  const RECORDED = [
+    { id: 'bcc2022', name: 'February 2022, Brisbane River and creeks (Brisbane City Council)', url: `${BCC_FS}/Flood_Awareness_Historic_Brisbane_River_and_Creek_Floods_Feb2022/FeatureServer/0` },
+    { id: 'bcc2011', name: 'January 2011, Brisbane River (Brisbane City Council)', url: `${BCC_FS}/Flood_Awareness_Historic_Brisbane_River_Floods_Jan2011/FeatureServer/0` },
+    { id: 'bcc1974', name: 'January 1974, Brisbane River (Brisbane City Council)', url: `${BCC_FS}/Flood_Awareness_Historic_Brisbane_River_Floods_Jan1974/FeatureServer/0` },
+    { id: 'q1974', name: '1974 flood line, Brisbane and Bremer rivers (Qld)', url: `${QLD_FLOODLINES}/12` },
+    { id: 'q2010b', name: '2010 flood line, Bundaberg (Qld)', url: `${QLD_FLOODLINES}/13` },
+    { id: 'q2011j', name: 'January 2011 flood lines, Queensland towns', url: `${QLD_FLOODLINES}/14` },
+    { id: 'q2011a', name: 'April 2011 flood lines, Queensland towns', url: `${QLD_FLOODLINES}/15` },
+    { id: 'q2012', name: '2012 flood lines, south-west Queensland towns', url: `${QLD_FLOODLINES}/16` },
+    { id: 'q2013b', name: '2013 flood line, Bundaberg (Qld)', url: `${QLD_FLOODLINES}/17` },
+    { id: 'q2017f', name: '2017 flood line, Fitzroy River (Qld)', url: `${QLD_FLOODLINES}/18` },
+    { id: 'q2017l', name: '2017 flood line, Logan and Albert rivers (Qld)', url: `${QLD_FLOODLINES}/19` },
+    { id: 'q2019w', name: '2019 flood lines, western Queensland', url: `${QLD_FLOODLINES}/20` },
+  ];
+  async function findRecorded() {
+    const g = state.geo, area = state.areaKey && areaReg.get(state.areaKey);
+    if (!g || !area) return [];
+    const box = $('recordedBox');
+    box.innerHTML = '<p class="hint">Looking for recorded flood outlines here…</p>';
+    const found = [];
+    await Promise.all(RECORDED.map(async (rec) => {
+      try {
+        const p = new URLSearchParams({ where: '1=1', geometry: `${g.west},${g.south},${g.east},${g.north}`, geometryType: 'esriGeometryEnvelope', inSR: '4326', spatialRel: 'esriSpatialRelIntersects', returnCountOnly: 'true', f: 'json' });
+        const j = await (await fetch(`${rec.url}/query?${p}`)).json();
+        if (j.count > 0) found.push(rec);
+      } catch (err) { /* service down: skip */ }
+    }));
+    found.sort((x, y) => RECORDED.indexOf(x) - RECORDED.indexOf(y));
+    area.recorded = found;
+    status.recorded = found.map((r) => r.id);
+    renderRecorded();
+    return status.recorded;
+  }
+  function renderRecorded() {
+    const box = $('recordedBox'), area = state.areaKey && areaReg.get(state.areaKey);
+    if (!box || !area || !area.recorded) { if (box) box.innerHTML = ''; return; }
+    if (!area.recorded.length) { box.innerHTML = '<p class="hint">No recorded flood outlines are published for this area in the sources the app knows (Queensland flood lines and Brisbane City Council).</p>'; return; }
+    box.innerHTML = area.recorded.map((r) => `<div class="rec-row"><span>${escapeHtml(r.name)}</span>
+      <span class="downloads"><button type="button" class="btn small" data-rec-score="${r.id}">Score this scenario</button><button type="button" class="btn small" data-rec-fit="${r.id}">Find the matching level</button></span>
+      <div class="rec-out" id="recOut-${r.id}">${area.recScores && area.recScores[r.id] ? area.recScores[r.id] : ''}</div></div>`).join('')
+      + '<p class="hint">Scored only around the recorded outline (within about 500 m of it), on land, so areas the survey didn\'t cover don\'t count against the model.</p>';
+    box.querySelectorAll('[data-rec-score]').forEach((b) => b.addEventListener('click', () => scoreRecorded(b.dataset.recScore)));
+    box.querySelectorAll('[data-rec-fit]').forEach((b) => b.addEventListener('click', () => fitRecorded(b.dataset.recFit)));
+  }
+  async function recordedMask(rec) {
+    const area = state.areaKey && areaReg.get(state.areaKey), a = state.a, g = state.geo;
+    area.recMasks = area.recMasks || {};
+    const key = `${rec.id}:${a.W}`;
+    if (area.recMasks[key]) return area.recMasks[key];
+    const feats = await esriFeatures(rec.url, g, { simplify: (a.cell / 2) * degPerM });
+    const px = drawRings(feats, g, a.W, a.H, () => '#000');
+    const flood = new Uint8Array(a.N);
+    for (let c = 0; c < a.N; c++) flood[c] = px[4 * c + 3] > 127 ? 1 : 0;
+    // scoring region: within ~500 m of the recorded flood
+    const r = Math.max(1, Math.round(500 / a.cell));
+    const near = new Uint8Array(a.N);
+    const tmp = new Uint8Array(a.N);
+    for (let y = 0; y < a.H; y++) { let last = -1e9; for (let x = 0; x < a.W; x++) { if (flood[y * a.W + x]) last = x; tmp[y * a.W + x] = x - last <= r ? 1 : 0; } last = 1e9; for (let x = a.W - 1; x >= 0; x--) { if (flood[y * a.W + x]) last = x; if (last - x <= r) tmp[y * a.W + x] = 1; } }
+    for (let x = 0; x < a.W; x++) { let last = -1e9; for (let y = 0; y < a.H; y++) { if (tmp[y * a.W + x]) last = y; near[y * a.W + x] = y - last <= r ? 1 : 0; } last = 1e9; for (let y = a.H - 1; y >= 0; y--) { if (tmp[y * a.W + x]) last = y; if (last - y <= r) near[y * a.W + x] = 1; } }
+    area.recMasks[key] = { flood, near, features: feats.length };
+    return area.recMasks[key];
+  }
+  function scoreRun(a, run, m) {
+    let hit = 0, miss = 0, fa = 0;
+    for (let c = 0; c < a.N; c++) {
+      if (!m.near[c] || (a.ocean && a.ocean[c]) || a.stream[c]) continue;
+      const w = run.wet[c] === 1, f = m.flood[c] === 1;
+      if (w && f) hit++; else if (f) miss++; else if (w) fa++;
+    }
+    const csi = hit + miss + fa ? hit / (hit + miss + fa) : 0;
+    return { hit, miss, fa, csi, captured: hit + miss ? hit / (hit + miss) : 0, extra: hit + fa ? fa / (hit + fa) : 0 };
+  }
+  const scoreText = (s, km2) => `<strong>Agreement ${Math.round(s.csi * 100)}/100.</strong> The scenario floods ${Math.round(s.captured * 100)}% of the recorded flood; ${Math.round(s.extra * 100)}% of what it floods nearby was dry in the record (${(s.fa * km2).toFixed(2)} km²).`;
+  async function scoreRecorded(id) {
+    const rec = RECORDED.find((r) => r.id === id), area = state.areaKey && areaReg.get(state.areaKey);
+    if (!rec || !area || !state.run) return null;
+    const out = $(`recOut-${id}`);
+    if (out) out.innerHTML = '<p class="hint">Fetching the recorded outline…</p>';
+    try {
+      const m = await recordedMask(rec);
+      const s = scoreRun(state.a, state.run, m);
+      const html = `<p>${scoreText(s, (state.a.cell * state.a.cell) / 1e6)}</p>`;
+      area.recScores = area.recScores || {};
+      area.recScores[id] = html;
+      if (out) out.innerHTML = html;
+      status.recScore = { id, csi: Math.round(s.csi * 100) / 100, captured: Math.round(s.captured * 100) / 100 };
+      return status.recScore;
+    } catch (err) {
+      if (out) out.innerHTML = `<p class="hint">Couldn't fetch the recorded outline: ${escapeHtml(err.message || String(err))}.</p>`;
+      status.recScore = { id, error: String(err.message || err) };
+      return status.recScore;
+    }
+  }
+  // Calibrate: try river levels at the gauge and keep the one whose flood
+  // best matches the recorded outline.
+  async function fitRecorded(id) {
+    const rec = RECORDED.find((r) => r.id === id), area = state.areaKey && areaReg.get(state.areaKey);
+    const a = state.a;
+    if (!rec || !area || !a || state.gauge < 0) return null;
+    const out = $(`recOut-${id}`);
+    if (out) out.innerHTML = '<p class="hint">Trying river levels against the recorded flood…</p>';
+    try {
+      const m = await recordedMask(rec);
+      const s0 = scenario();
+      const bed = a.dem[state.gauge];
+      const tryLevel = (lv) => scoreRun(a, F.inundate(a, Object.assign({}, s0, { gaugeLevel: lv })), m);
+      let best = { lv: s0.gaugeLevel, s: tryLevel(s0.gaugeLevel) };
+      for (let lv = bed + 0.5; lv <= bed + 20; lv += 0.5) {
+        const s = tryLevel(lv);
+        if (s.csi > best.s.csi) best = { lv, s };
+        if (lv % 2 < 0.5) await nextFrame();
+      }
+      for (let lv = best.lv - 0.45; lv <= best.lv + 0.45; lv += 0.05) {
+        const s = tryLevel(lv);
+        if (s.csi > best.s.csi) best = { lv, s };
+      }
+      const lvR = Math.round(best.lv * 100) / 100;
+      const html = `<p>Best match: river at <strong>${lvR.toFixed(2)} m</strong> at the gauge (${(lvR - bed).toFixed(1)} m above the river surface in the elevation data). ${scoreText(best.s, (a.cell * a.cell) / 1e6)}</p>
+        <button type="button" class="btn small" data-use-level="${lvR}">Use this level</button>`;
+      area.recScores = area.recScores || {};
+      area.recScores[id] = html;
+      if (out) {
+        out.innerHTML = html;
+        out.querySelector('[data-use-level]').addEventListener('click', () => {
+          ctl.gaugeLevel.min = Math.min(parseFloat(ctl.gaugeLevel.min), Math.floor(lvR - 1));
+          ctl.gaugeLevel.max = Math.max(parseFloat(ctl.gaugeLevel.max), Math.ceil(lvR + 2));
+          ctl.gaugeLevel.value = lvR; ctl.extra.value = 0; ctl.floodType.value = ctl.floodType.value === 'flash' ? 'river' : ctl.floodType.value;
+          state.base = null; syncOutputs(); runScenario();
+        });
+      }
+      status.recFit = { id, level: lvR, csi: Math.round(best.s.csi * 100) / 100, captured: Math.round(best.s.captured * 100) / 100 };
+      return status.recFit;
+    } catch (err) {
+      if (out) out.innerHTML = `<p class="hint">Couldn't compare: ${escapeHtml(err.message || String(err))}.</p>`;
+      status.recFit = { id, error: String(err.message || err) };
+      return status.recFit;
+    }
+  }
+  $('recordedBtn').addEventListener('click', () => findRecorded());
+  window.__floodFindRecorded = findRecorded;
+  window.__floodScoreRecorded = scoreRecorded;
+  window.__floodFitRecorded = fitRecorded;
 
   /* ---------- on-demand flood modelling */
 

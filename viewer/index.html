@@ -87,6 +87,9 @@ body {
 .search-results button:hover, .search-results button:focus { background: var(--surface-2); }
 .search-results small { display: block; color: var(--muted); }
 .downloads { display: flex; flex-wrap: wrap; gap: 6px; }
+.rec-row { display: grid; gap: 6px; padding: 8px 0; border-top: 1px solid var(--line); font-size: 13px; }
+.rec-out p { margin: 0 0 6px; }
+#impactBox p { font-size: 13px; margin: 8px 0 0; }
 .topbar {
   position: fixed; z-index: 1000; top: var(--top); left: var(--left);
   max-width: calc(100vw - var(--left) - var(--right) - var(--rail) - var(--gap));
@@ -517,6 +520,18 @@ details > div { display: grid; gap: 14px; }
       <div id="levelPoints"></div>
       <div class="link-row"><button type="button" class="btn small" id="addLevelPoint" aria-pressed="false">Add a level point</button></div>
       <p class="hint" id="levelPointsHint">Pin the water level at more places along the river, such as another gauge or a flood mark; the surface runs straight between them.</p>
+    </fieldset>
+
+    <fieldset id="impactSet">
+      <legend class="label">What's affected</legend>
+      <div class="link-row"><button type="button" class="btn small" id="impactBtn">Count buildings, people, roads and key sites</button></div>
+      <div id="impactBox"></div>
+    </fieldset>
+
+    <fieldset id="recordedSet">
+      <legend class="label">Check against recorded floods</legend>
+      <div class="link-row"><button type="button" class="btn small" id="recordedBtn">Find recorded floods here</button></div>
+      <div id="recordedBox"></div>
     </fieldset>
 
     <fieldset id="checkSet">
