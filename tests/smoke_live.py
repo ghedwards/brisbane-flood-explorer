@@ -37,6 +37,22 @@ def main() -> int:
                                    " && window.__floodStatus.national.loaded && window.__floodStatus.mode === 'map'",
                                    timeout=60_000)
             nat = status().get("national", {})
+            # fluid wheel zoom: zooms in around the cursor in small steps
+            z0 = page.evaluate("window.__floodZoom()")
+            page.mouse.move(640, 450)
+            for _ in range(3):
+                page.mouse.wheel(0, -120)
+                page.wait_for_timeout(60)
+            page.wait_for_timeout(1200)
+            z1 = page.evaluate("window.__floodZoom()")
+            print(f"Wheel zoom: {z0} -> {z1}")
+            if not (z1 > z0 + 0.5 and z1 < z0 + 3):
+                failures.append(f"smooth wheel zoom did not zoom in as expected: {z0} -> {z1}")
+            page.mouse.move(640, 450)
+            for _ in range(3):
+                page.mouse.wheel(0, 120)
+                page.wait_for_timeout(60)
+            page.wait_for_timeout(1200)
             note("notice", f"National view: {json.dumps(nat)}")
             if not nat.get("gauges"):
                 failures.append("the national view has no gauges")

@@ -826,8 +826,9 @@
     const bounds = L.latLngBounds([b[1], b[0]], [b[3], b[2]]);
     if (!state.lmap) await loadDeaMosaic();
     if (!state.lmap) {
-      // smooth wheel zoom: small fractional steps rather than whole levels
-      const m = L.map('lmap', { minZoom: 4, zoomSnap: 0.1, zoomDelta: 0.5, wheelPxPerZoomLevel: 110, wheelDebounceTime: 20, zoomControl: false, preferCanvas: false });
+      // the wheel is handled by smoothWheelZoom below (continuous zoom)
+      const m = L.map('lmap', { minZoom: 4, zoomSnap: 0, zoomDelta: 0.5, scrollWheelZoom: false, zoomControl: false, preferCanvas: false });
+      enableSmoothWheelZoom(L, m);
       if (!finePointer()) { /* pinch to zoom on touch screens */ } else L.control.zoom({ position: 'bottomright' }).addTo(m);
       const layers = {};
       status.basemaps = {};
@@ -868,6 +869,7 @@
       window.__floodTestZoom = (lat, lng, z) => m.setView([lat, lng], z, { animate: false });
       // simulate a tap on the map (not on a marker) at a place, for tests
       window.__floodTapAt = (lat, lng) => m.fire('click', { latlng: L.latLng(lat, lng) });
+      window.__floodZoom = () => m.getZoom();
       window.__floodSetOverlay = (name, on) => {
         const l = layerRegistry.overlays[name];
         if (!l) return false;
@@ -901,6 +903,50 @@
     return true;
   }
 
+
+  // Fluid wheel / trackpad zoom. Leaflet's own wheel zoom jumps in animated
+  // steps; this eases the zoom toward a target every frame, keeping the
+  // point under the cursor still (the approach of Leaflet.SmoothWheelZoom).
+  function enableSmoothWheelZoom(L, map) {
+    const el = map.getContainer();
+    let goal = null, raf = 0, endT = 0, mouse = null, anchor = null, moved = false;
+    const PX_PER_LEVEL = 260;   // wheel pixels for one zoom level
+    function frame() {
+      const z = map.getZoom();
+      let next = z + (goal - z) * 0.28;
+      if (Math.abs(goal - next) < 0.002) next = goal;
+      const delta = mouse.subtract(map.getSize().divideBy(2));
+      const center = map.unproject(map.project(anchor, next).subtract(delta), next);
+      if (!moved) { map._moveStart(true, false); moved = true; }
+      map._move(center, next);
+      if (next !== goal) raf = requestAnimationFrame(frame);
+      else raf = 0;
+    }
+    function finish() {
+      if (raf) { endT = setTimeout(finish, 60); return; }
+      goal = null;
+      if (moved) map._moveEnd(true);
+      moved = false;
+    }
+    L.DomEvent.on(el, 'wheel', (e) => {
+      L.DomEvent.preventDefault(e);
+      L.DomEvent.stopPropagation(e);
+      if (map._animatingZoom) return;
+      const px = e.deltaMode === 1 ? e.deltaY * 40 : e.deltaMode === 2 ? e.deltaY * 800 : e.deltaY;
+      const pinch = e.ctrlKey;           // trackpad pinch arrives as ctrl+wheel
+      if (goal == null) {
+        map.stop();
+        goal = map.getZoom();
+      }
+      mouse = map.mouseEventToContainerPoint(e);
+      anchor = map.containerPointToLatLng(mouse);
+      goal = Math.max(map.getMinZoom(), Math.min(Math.min(map.getMaxZoom(), 20), goal - px / (pinch ? 100 : PX_PER_LEVEL)));
+      if (!raf) raf = requestAnimationFrame(frame);
+      clearTimeout(endT);
+      endT = setTimeout(finish, 180);
+    });
+    status.smoothWheel = true;
+  }
 
   function finePointer() {
     try { return window.matchMedia('(pointer: fine)').matches; } catch (e) { return true; }
