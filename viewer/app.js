@@ -3750,6 +3750,16 @@
         if (edge && dryNode[n]) { reach[n] = 1; q.push(n); }
       }
       for (let h = 0; h < q.length; h++) for (const m of adj[q[h]]) if (!reach[m]) { reach[m] = 1; q.push(m); }
+      // roads that don't join the edge even when everything is dry (private
+      // roads, mapping gaps) aren't cut off by the flood
+      if (!net.dryReach) {
+        const all = Array.from({ length: nN }, () => []);
+        net.edges.forEach(([u, v]) => { all[u].push(v); all[v].push(u); });
+        const dr = new Uint8Array(nN), q2 = [];
+        for (let n = 0; n < nN; n++) if (net.lat[n] < g.south + my || net.lat[n] > g.north - my || net.lon[n] < g.west + mx || net.lon[n] > g.east - mx) { dr[n] = 1; q2.push(n); }
+        for (let h = 0; h < q2.length; h++) for (const m of all[q2[h]]) if (!dr[m]) { dr[m] = 1; q2.push(m); }
+        net.dryReach = dr;
+      }
       net.edges.forEach(([u, v, ri], k) => {
         if (!edgeDry[k]) cutEdges.push([u, v]);
         else if (!reach[u] || !reach[v]) islandEdges.push([u, v]);
@@ -3766,7 +3776,7 @@
           const dd = (net.lat[n] - d.by[i]) ** 2 + ((net.lon[n] - d.bx[i]) * 0.9) ** 2;
           if (dd < bd) { bd = dd; best = n; }
         }
-        if (best >= 0 && dryNode[best] && !reach[best]) { isoB[i] = 1; isolatedB++; }
+        if (best >= 0 && dryNode[best] && !reach[best] && net.dryReach[best]) { isoB[i] = 1; isolatedB++; }
       }
       isolatedPeopleW = isoB;
     }
@@ -4329,6 +4339,10 @@
         if (dd < bd) { bd = dd; bNode[i] = n; }
       }
     }
+    // places whose roads never reach the edge, even when dry, don't count
+    const dryReach = new Uint8Array(nN), q0 = [];
+    for (let n = 0; n < nN; n++) if (exit[n]) { dryReach[n] = 1; q0.push(n); }
+    for (let h = 0; h < q0.length; h++) for (const [m] of adj[q0[h]]) if (!dryReach[m]) { dryReach[m] = 1; q0.push(m); }
     const isoSteps = new Int16Array(nB), firstIso = new Int16Array(nB).fill(-1);
     const isoCount = new Int32Array(K), floodCount = new Int32Array(K), closedCount = new Int32Array(K);
     const reach = new Uint8Array(nN), q = new Int32Array(nN);
@@ -4345,7 +4359,7 @@
       closedCount[k] = closed;
       for (let i = 0; i < nB; i++) {
         if (wetAt(bCell[i], k)) { floodCount[k]++; continue; }
-        if (bNode[i] >= 0 && !reach[bNode[i]]) { isoCount[k]++; isoSteps[i]++; if (firstIso[i] < 0) firstIso[i] = k; }
+        if (bNode[i] >= 0 && !reach[bNode[i]] && dryReach[bNode[i]]) { isoCount[k]++; isoSteps[i]++; if (firstIso[i] < 0) firstIso[i] = k; }
       }
     }
     const toH = (k) => Math.round(tl.t0 + k * tl.step);
@@ -4387,7 +4401,7 @@
       <div class="time-ctl"><span class="time-label" id="tlLabel"></span>
         <button type="button" class="btn small" id="tlPlay">Play</button>
         <input type="range" id="tlSlider" min="0" max="${K - 1}" step="1" value="${state.timeStep}" aria-label="Time"></div>
-      ${ac ? `<p><strong>Roads:</strong> ${ac.roads.length ? `the first closes at ${hoursLabel(ac.firstClose)} (${escapeHtml(ac.roads[0].name)}). ${ac.roads.slice(0, 8).map((r) => `${escapeHtml(r.name)} ${hoursLabel(r.closes)} to ${hoursLabel(r.reopens)}`).join('; ')}${ac.roads.length > 8 ? `; and ${ac.roads.length - 8} more` : ''}.` : 'no named road goes under more than 30 cm of water.'}</p>
+      ${ac ? `<p><strong>Roads:</strong> ${ac.roads.length ? `the first closes at ${hoursLabel(ac.firstClose)} (${escapeHtml(ac.roads[0].name)})${ac.firstClose < 0 ? ', before the gauge starts rising: places upstream see the flood first' : ''}. ${ac.roads.slice(0, 8).map((r) => `${escapeHtml(r.name)} ${hoursLabel(r.closes)} to ${hoursLabel(r.reopens)}`).join('; ')}${ac.roads.length > 8 ? `; and ${ac.roads.length - 8} more` : ''}.` : 'no named road goes under more than 30 cm of water.'}</p>
         <p><strong>Cut off:</strong> ${ac.maxIso ? `up to ${n(ac.maxIso)} dry buildings have no dry road out, at ${hoursLabel(ac.maxIsoAt)}; the longest any is cut off is about ${ac.longest} hours.` : 'no dry building loses its last dry road out.'}</p>`
     : '<p class="hint">Count what\'s affected to see road closures and places cut off.</p>'}`;
     const slider = $('tlSlider');

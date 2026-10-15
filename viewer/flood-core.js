@@ -560,9 +560,10 @@
 
     const junc = new Int32Array(N).fill(-1);
     const wse = new Float64Array(N).fill(NaN);
-    // highest ground between a stream cell and the controlled channel it
-    // joins: backwater can't pass a rise above its own level (a levee, a
-    // weir, a bank between a drain and the river)
+    // highest levee between a stream cell and the controlled channel it
+    // joins: backwater can't pass a levee crest above its own level. (Only
+    // levees count: road embankments over creeks have culverts.)
+    const lev = s.levee || null;
     const crest = new Float64Array(N).fill(-Infinity);
     for (let j = 0; j < nOrder; j++) {
       const c = order[j];
@@ -571,8 +572,10 @@
       const r = rec[c];
       junc[c] = gate[c] ? -2 : (r >= 0 && stream[r]) ? junc[r] : -1;
       if (junc[c] >= 0) {
-        crest[c] = Math.max(crest[r], onPath[r] ? -Infinity : a.dem[r]);
-        if (crest[c] > wse[junc[c]]) junc[c] = -2;
+        if (lev) {
+          crest[c] = Math.max(crest[r], lev[r] || lev[c] ? a.dem[lev[c] ? c : r] : -Infinity);
+          if (crest[c] > wse[junc[c]]) junc[c] = -2;
+        }
       }
       if (junc[c] === -2) wse[c] = a.dem[c];
       else if (junc[c] >= 0) wse[c] = wse[junc[c]] + grad * (chain[c] - chain[junc[c]]);
