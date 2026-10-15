@@ -2797,10 +2797,85 @@
     $('levelPoints').querySelectorAll('[data-lp-drop]').forEach((b) => b.addEventListener('click', () => {
       state.controls.splice(+b.dataset.lpDrop, 1); state.base = null; runScenario(); renderLevelPoints();
     }));
+    const nb = overlappingAreas().length;
+    let jb = $('joinModels');
+    if (!jb) {
+      jb = document.createElement('button');
+      jb.type = 'button'; jb.className = 'btn small'; jb.id = 'joinModels';
+      jb.addEventListener('click', () => joinNeighbours());
+      $('addLevelPoint').after(jb);
+    }
+    jb.hidden = !nb;
+    jb.textContent = `Match ${nb} overlapping model${nb === 1 ? '' : 's'} to this level`;
     $('addLevelPoint').setAttribute('aria-pressed', String(!!state.addingPoint));
     $('addLevelPoint').textContent = state.addingPoint ? 'Tap the river on the map…' : 'Add a level point';
   }
   $('addLevelPoint').addEventListener('click', () => { state.addingPoint = !state.addingPoint; renderLevelPoints(); });
+
+  // Joining models: where models overlap, the active one's water level on
+  // the main channel inside the overlap becomes a level point in each
+  // neighbour, and so on outward, so the surface is continuous across seams.
+  const geoOverlap = (g1, g2) => g1 && g2 && g1.west < g2.east && g1.east > g2.west && g1.south < g2.north && g1.north > g2.south;
+  function overlappingAreas() {
+    const me = state.areaKey && areaReg.get(state.areaKey);
+    if (!me || !state.geo) return [];
+    return Array.from(areaReg.values()).filter((b) => b !== me && geoOverlap(state.geo, b.geo));
+  }
+  function seamPoint(geoB) {
+    // the main channel of the active model inside the overlap with geoB
+    const a = state.a, g = state.geo, run = state.run;
+    if (!a || !run) return null;
+    const x0 = Math.max(0, Math.floor(((Math.max(g.west, geoB.west) - g.west) / (g.east - g.west)) * a.W));
+    const x1 = Math.min(a.W - 1, Math.ceil(((Math.min(g.east, geoB.east) - g.west) / (g.east - g.west)) * a.W));
+    const y0 = Math.max(0, Math.floor(((g.north - Math.min(g.north, geoB.north)) / (g.north - g.south)) * a.H));
+    const y1 = Math.min(a.H - 1, Math.ceil(((g.north - Math.max(g.south, geoB.south)) / (g.north - g.south)) * a.H));
+    let best = -1, bestAcc = -1;
+    for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) {
+      const i = y * a.W + x;
+      if (a.stream[i] && a.acc[i] > bestAcc && Number.isFinite(run.level[i])) { bestAcc = a.acc[i]; best = i; }
+    }
+    if (best < 0) return null;
+    const [lat, lon] = cellLatLng(best);
+    return { lat, lon, level: run.level[best] };
+  }
+  let joining = false;
+  async function joinNeighbours() {
+    const start = state.areaKey && areaReg.get(state.areaKey);
+    if (!start || !state.run || joining) return 0;
+    joining = true;
+    let count = 0;
+    try {
+      const done = new Set([start.key]);
+      const queue = [start.key];
+      while (queue.length) {
+        const k = queue.shift();
+        if (state.areaKey !== k) { activateArea(k); await state.ready; }
+        const from = areaReg.get(k);
+        const plans = overlappingAreas().filter((b) => !done.has(b.key)).map((b) => ({ b, pt: seamPoint(b.geo) })).filter((x) => x.pt);
+        for (const { b, pt } of plans) {
+          activateArea(b.key);
+          await state.ready;
+          if (!state.a) continue;
+          const cell = streamCellAt(pt.lat, pt.lon);
+          if (cell < 0) continue;
+          state.controls = (state.controls || []).filter((c) => c.join !== from.key)
+            .concat([{ cell, level: Math.round(pt.level * 100) / 100, label: `Joined to ${from.n}. ${from.name}`, join: from.key }]);
+          state.base = null;
+          runScenario();
+          done.add(b.key);
+          queue.push(b.key);
+          count++;
+        }
+      }
+    } finally {
+      if (state.areaKey !== start.key) { activateArea(start.key); await state.ready; }
+      joining = false;
+    }
+    say(count ? `Matched ${count} overlapping model${count === 1 ? '' : 's'} to this water level.` : 'No overlapping model shares a river channel with this one.');
+    status.joined = count;
+    return count;
+  }
+  window.__floodJoinNeighbours = joinNeighbours;
   function addLevelPointAt(latlng) {
     const s0 = streamCellAt(latlng.lat, latlng.lng);
     state.addingPoint = false;

@@ -419,6 +419,18 @@ def main() -> int:
         if not (study and study.get("ok") and study.get("models", 0) >= 2 and study.get("gauges", 0) >= 1):
             failures.append(f"area study failed: {study}")
         page.screenshot(path="smoke-study.png")
+        # neighbouring models in the study can be joined into one water surface
+        try:
+            infos = page.evaluate("window.__floodAreaInfo()")
+            if infos:
+                page.evaluate("k => window.__floodActivateArea(k)", infos[-1]["key"])
+                page.wait_for_timeout(1500)
+            joined = page.evaluate("window.__floodJoinNeighbours()")
+        except Exception as e:
+            joined = f"error: {e}"
+        note("notice", f"Joined overlapping models: {joined}")
+        if not isinstance(joined, int) or joined < 1:
+            failures.append(f"joining overlapping study models failed: {joined}")
         studies = page.evaluate("window.__floodStudies ? window.__floodStudies() : []")
         stored = page.evaluate("(() => { try { return JSON.parse(localStorage.getItem('floodExplorer.studies.v1') || '[]').length; } catch (e) { return -1; } })()")
         rows = page.locator("#placesCard [data-study]").count()
