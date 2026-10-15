@@ -101,29 +101,77 @@
     if (text) $('busy').textContent = text;
   }
 
+  // One-tap places to model: a point on the river near the town's flood
+  // gauge, or on the shore for coasts. The model snaps to the main channel.
+  const PRESETS = [
+    { id: 'lismore', name: 'Lismore, Wilsons River (NSW)', lat: -28.8090, lon: 153.2765, kind: 'river' },
+    { id: 'windsor', name: 'Windsor, Hawkesbury River (NSW)', lat: -33.6045, lon: 150.8225, kind: 'river' },
+    { id: 'grafton', name: 'Grafton, Clarence River (NSW)', lat: -29.6915, lon: 152.9355, kind: 'river' },
+    { id: 'kempsey', name: 'Kempsey, Macleay River (NSW)', lat: -31.0800, lon: 152.8380, kind: 'river' },
+    { id: 'wagga', name: 'Wagga Wagga, Murrumbidgee River (NSW)', lat: -35.1030, lon: 147.3680, kind: 'river' },
+    { id: 'rockhampton', name: 'Rockhampton, Fitzroy River (Qld)', lat: -23.3765, lon: 150.5125, kind: 'river' },
+    { id: 'gympie', name: 'Gympie, Mary River (Qld)', lat: -26.1835, lon: 152.6620, kind: 'river' },
+    { id: 'townsville', name: 'Townsville, Ross River (Qld)', lat: -19.2880, lon: 146.7900, kind: 'river' },
+    { id: 'maribyrnong', name: 'Maribyrnong River, Melbourne (Vic)', lat: -37.7760, lon: 144.8890, kind: 'river' },
+    { id: 'echuca', name: 'Echuca, Murray River (Vic)', lat: -36.1240, lon: 144.7520, kind: 'river' },
+    { id: 'launceston', name: 'Launceston, Tamar River (Tas)', lat: -41.4330, lon: 147.1430, kind: 'river' },
+    { id: 'katherine', name: 'Katherine, Katherine River (NT)', lat: -14.4660, lon: 132.2635, kind: 'river' },
+    { id: 'goldcoast', name: 'Gold Coast Broadwater (Qld)', lat: -27.9650, lon: 153.4100, kind: 'coast' },
+    { id: 'cairns', name: 'Cairns waterfront (Qld)', lat: -16.9200, lon: 145.7800, kind: 'coast' },
+    { id: 'portadelaide', name: 'Port Adelaide (SA)', lat: -34.8460, lon: 138.5050, kind: 'coast' },
+    { id: 'hobart', name: 'Hobart, Derwent estuary (Tas)', lat: -42.8820, lon: 147.3330, kind: 'coast' },
+  ];
+  window.__floodPresets = PRESETS;
+
+  function addGroup(sel, label, id) {
+    const g = document.createElement('optgroup');
+    g.label = label;
+    if (id) g.id = id;
+    sel.appendChild(g);
+    return g;
+  }
+  function addOption(parent, value, text) {
+    const op = document.createElement('option');
+    op.value = value; op.textContent = text;
+    parent.appendChild(op);
+    return op;
+  }
+
   async function listAreas() {
     const sel = $('area');
-    const opts = [{ id: 'sample', name: 'Sample terrain (illustrative)' }];
-    const national = { id: 'australia', name: 'Australia: tap a river, dam or coast' };
+    sel.innerHTML = '';
+    addOption(sel, 'australia', 'Australia: tap a river, dam or coast');
+    addGroup(sel, 'Your modelled places', 'modelledGroup').hidden = true;
+    const detailed = addGroup(sel, 'Detailed models');
     try {
       const r = await fetch('data/areas.json', { cache: 'no-cache' });
-      if (r.ok) {
-        const list = await r.json();
-        list.forEach((x) => opts.unshift({ id: x.id, name: x.name }));
-      }
+      if (r.ok) (await r.json()).forEach((x) => addOption(detailed, x.id, x.name.replace(/ \(Copernicus.*\)$/, '')));
     } catch (e) { /* no processed areas published yet */ }
-    opts.unshift(national);
-    sel.innerHTML = '';
-    for (const o of opts) {
-      const op = document.createElement('option');
-      op.value = o.id; op.textContent = o.name;
-      sel.appendChild(op);
-    }
-    return opts;
+    const rivers = addGroup(sel, 'Model a river town');
+    const coasts = addGroup(sel, 'Model a coast');
+    PRESETS.forEach((p) => addOption(p.kind === 'coast' ? coasts : rivers, `preset:${p.id}`, p.name));
+    addOption(addGroup(sel, 'Other'), 'sample', 'Sample terrain (illustrative)');
+    return [{ id: 'australia' }];
+  }
+
+  function addModelledOption(key, name) {
+    const g = $('modelledGroup');
+    g.hidden = false;
+    const op = addOption(g, key, name);
+    return op;
   }
 
   async function loadArea(id) {
     if (areaReg.has(id)) { activateArea(id, { fit: true }); return; }
+    if (id.startsWith('preset:')) {
+      const p = PRESETS.find((x) => `preset:${x.id}` === id);
+      if (!p) return;
+      const done = Array.from(areaReg.values()).find((a) => a.areaMeta && a.areaMeta.presetId === p.id);
+      if (done) { activateArea(done.key, { fit: true }); openPanel('panel-scenario'); return; }
+      if (!state.lmap || $('lmap').hidden) await enterNational({ fit: false });
+      await modelHere(p.lat, p.lon, { kind: p.kind, name: p.name.replace(/ \((NSW|Qld|Vic|Tas|SA|NT|WA)\)$/, ''), presetId: p.id });
+      return;
+    }
     if (id === 'australia') {
       setBusy(true, 'Loading the Australia-wide map…');
       try { await enterNational(); } finally { setBusy(false); }
@@ -231,8 +279,18 @@
       const s = F.snapToStream(a, x, y, 12);
       if (s >= 0) gauge = s;
     } else if (resetGauge && state.areaMeta && state.areaMeta.gauge) {
-      const s = F.snapToStream(a, state.areaMeta.gauge.col, state.areaMeta.gauge.row, 25);
+      const { col, row } = state.areaMeta.gauge;
+      // biggest channel within ~1 km, then the nearest cell at least 30% of it
+      let big = 0;
+      for (let dy = -33; dy <= 33; dy++) for (let dx = -33; dx <= 33; dx++) {
+        const x = col + dx, y = row + dy;
+        if (x < 0 || y < 0 || x >= a.W || y >= a.H) continue;
+        const i = y * a.W + x;
+        if (a.stream[i] && a.acc[i] > big) big = a.acc[i];
+      }
+      const s = F.snapToStream(a, col, row, 33, big * 0.3);
       if (s >= 0) gauge = s;
+      status.snap = { big, acc: s >= 0 ? a.acc[s] : null };
     }
     state.gauge = gauge;
     state.base = null;
@@ -1098,6 +1156,7 @@
     reports.forEach(refreshReportLink);
     const op = $('area').querySelector(`option[value="${CSS.escape(key)}"]`);
     if (op && area.areaMeta && area.areaMeta.local) op.remove();
+    if ($('modelledGroup') && !$('modelledGroup').children.length) $('modelledGroup').hidden = true;
     if (state.areaKey === key) {
       state.areaKey = null;
       if (!(opts && opts.quiet)) { $('area').value = 'australia'; enterNational({ fit: false }); }
@@ -1176,10 +1235,7 @@
   function placeAction(act, n) {
     const a = areaByNumber(n), r = reports.find((x) => x.n === n);
     if (act === 'report' && r) {
-      openPanel('panel-report');
-      r.el.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' });
-      r.el.classList.add('flash');
-      setTimeout(() => r.el.classList.remove('flash'), 900);
+      showReport(r);
     } else if (act === 'scenario' && a) {
       activateArea(a.key, { fit: true });
       openPanel('panel-scenario');
@@ -1887,10 +1943,30 @@
     return Math.hypot(x, y) * 6371;
   }
 
-  // Open reports stack up as cards (newest first), shown side by side on wide
-  // screens; each has a numbered marker on the map.
-  const MAX_REPORTS = 4;
+  // Reports are kept for every numbered place, but the panel shows one at a
+  // time (like the flood Scenario): pick another from Places, its map pin, or
+  // the ‹ › buttons. The Report button shows or hides the panel.
+  const MAX_REPORTS = 8;
   const reports = [];
+  let activeReport = null;
+
+  function showReport(r, opts) {
+    if (!r) return;
+    activeReport = r;
+    layoutReports();
+    if (!opts || opts.open !== false) openPanel('panel-report');
+    r.el.classList.add('flash');
+    setTimeout(() => r.el.classList.remove('flash'), 700);
+  }
+
+  function stepReport(dir) {
+    const list = reports.slice().sort((a, b) => a.n - b.n);
+    if (list.length < 2) return;
+    const i = list.indexOf(activeReport);
+    showReport(list[(i + dir + list.length) % list.length]);
+  }
+  $('reportPrev').addEventListener('click', () => stepReport(-1));
+  $('reportNext').addEventListener('click', () => stepReport(1));
 
   // Reports and modelled areas share one set of numbers: an area modelled
   // from report 2 is also 2. A number is free once neither uses it.
@@ -1912,6 +1988,10 @@
     if (i < 0) return;
     reports.splice(i, 1);
     r.el.remove();
+    if (activeReport === r) {
+      const list = reports.slice().sort((a, b) => a.n - b.n);
+      activeReport = list.find((x) => x.n > r.n) || list[list.length - 1] || null;
+    }
     if (r.pin && state.lmap) state.lmap.removeLayer(r.pin);
     if (!areaByNumber(r.n)) hiddenNums.delete(r.n);
     layoutReports();
@@ -1920,15 +2000,20 @@
 
   function layoutReports() {
     const n = reports.length;
-    const panel = $('panel-report');
-    panel.style.setProperty('--cols', String(Math.max(1, Math.min(n, isPhone() ? 1 : n))));
-    panel.classList.toggle('multi', n > 1);
-    $('h-report').textContent = n > 1 ? `Reports (${n})` : n === 1 ? reports[0].title : 'Reports';
-    $('reportsClear').hidden = n < 2;
-    if (!n) closePanel('panel-report');
+    if (!reports.includes(activeReport)) activeReport = reports[0] || null;
+    const r = activeReport;
+    reports.forEach((x) => { x.el.hidden = x !== r; });
+    $('reportEmpty').hidden = !!r;
+    $('h-report').textContent = r ? r.title : 'Report';
+    $('reportPlace').textContent = r ? `${r.n}. ${r.name || ''} · all places` : '';
+    $('reportPrev').hidden = $('reportNext').hidden = n < 2;
+    reports.forEach((x) => {
+      if (!x.pin) return;
+      x.pin.setIcon(numIcon(x.n, (GAUGE_STYLE[x.kind] || GAUGE_STYLE.river).color, x === r));
+    });
     reports.forEach(refreshReportLink);
     renderPlaces();
-    status.report = { count: n, names: reports.map((r) => r.name) };
+    status.report = { count: n, names: reports.map((x) => x.name), active: r ? r.name : null };
   }
 
   function openReport(f) {
@@ -1937,20 +2022,10 @@
     const [lon, lat] = f.geometry.coordinates;
     const id = `${p.kind}:${p.id}`;
     const existing = reports.find((r) => r.id === id);
-    if (existing) {
-      // already open: bring it to the front
-      reports.splice(reports.indexOf(existing), 1);
-      reports.unshift(existing);
-      $('reportBody').prepend(existing.el);
-      existing.el.classList.add('flash');
-      setTimeout(() => existing.el.classList.remove('flash'), 900);
-      openPanel('panel-report');
-      layoutReports();
-      return;
-    }
+    if (existing) { showReport(existing); return; }
     const st = GAUGE_STYLE[p.kind] || GAUGE_STYLE.river;
     const num = nextNumber();
-    let html = `<div class="card-head"><span class="pin-num" style="background:${st.color}">${num}</span><div style="min-width:0"><span class="kind">${escapeHtml(st.label)}</span><h3>${escapeHtml(p.name || 'Unnamed')}</h3></div><button type="button" class="close js-close" aria-label="Close this report">×</button></div>`;
+    let html = `<div class="card-head"><span class="pin-num" style="background:${st.color}">${num}</span><div style="min-width:0"><span class="kind">${escapeHtml(st.label)}</span><h3>${escapeHtml(p.name || 'Unnamed')}</h3></div><button type="button" class="close js-close" aria-label="Remove this report" title="Remove this report">×</button></div>`;
     const facts = [];
     if (p.kind === 'storage') {
       if (p.river) facts.push(['River', p.river]);
@@ -2026,7 +2101,7 @@
     if (state.lmap) {
       r.pin = window.L.marker([lat, lon], { icon: numIcon(num, st.color), keyboard: false, zIndexOffset: 1000 });
       if (!hiddenNums.has(num)) r.pin.addTo(state.lmap);
-      r.pin.on('click', () => { openPanel('panel-report'); el.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' }); });
+      r.pin.on('click', () => showReport(r));
     }
     q('.js-close').addEventListener('click', () => closeReport(r));
     q('.js-model').addEventListener('click', () => {
@@ -2047,13 +2122,15 @@
     const link = document.createElement('div');
     link.className = 'js-link';
     q('.actions').before(link);
-    reports.unshift(r);
-    $('reportBody').prepend(el);
-    while (reports.length > MAX_REPORTS) closeReport(reports[reports.length - 1]);
-    openPanel('panel-report');
-    layoutReports();
+    reports.push(r);
+    $('reportBody').appendChild(el);
+    // keep at most MAX_REPORTS: drop the oldest that has no flood model
+    while (reports.length > MAX_REPORTS) {
+      const drop = reports.find((x) => x !== r && !areaForReport(x)) || reports.find((x) => x !== r);
+      closeReport(drop);
+    }
+    showReport(r);
   }
-  $('reportsClear').addEventListener('click', () => { while (reports.length) closeReport(reports[0]); });
   window.__floodOpenStorage = (index) => {
     const f = nat.data && nat.data.storages[index || 0];
     if (f) openReport(f);
@@ -2229,14 +2306,11 @@
       const row = Math.round(((bounds[3] - lat) / (bounds[3] - bounds[1])) * grid.H);
       const key = `local-${++localCount}`;
       state.areaMeta = {
-        id: 'local', areaKey: key, local: true, kind: o.kind, name: o.name, bounds_lonlat: bounds, reportId: o.reportId || null,
+        id: 'local', areaKey: key, local: true, kind: o.kind, name: o.name, bounds_lonlat: bounds, reportId: o.reportId || null, presetId: o.presetId || null,
         gauge: { col, row }, streamAreaKm2: Math.max(0.5, Math.min(4, (grid.W * grid.H * grid.cell * grid.cell) / 1e6 * 0.004)),
         source: 'Terrain: Geoscience Australia 1-second (about 30 m) hydrologically enforced elevation model (DEM-H), CC BY 4.0, read live from GA.',
       };
-      const op = document.createElement('option');
-      op.value = key;
-      op.textContent = `Modelled: ${o.name}`;
-      $('area').insertBefore(op, $('area').children[1] || null);
+      addModelledOption(key, o.name);
       $('area').value = key;
       useGrid(grid, 'local', { events: false });
       if (o.kind === 'coast') {

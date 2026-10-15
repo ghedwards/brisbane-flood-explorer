@@ -1,6 +1,6 @@
-# Brisbane Flood Explorer
+# Flood Explorer
 
-A screening tool for river and coastal flooding on the lower Brisbane River. Pick a river level at the Brisbane City gauge, a bay level and a sea-level-rise allowance, and the map shows which land sits below the water surface and connects to the river, with depths.
+A screening tool for river and coastal flooding anywhere in Australia. Pick a river town or coast, or tap any gauge, dam or spot on the map; set a river level, a bay level and a sea-level-rise allowance, and the map shows which land sits below the water surface and connects to the river, with depths. A detailed model of the lower Brisbane River, with its historic flood peaks and council flood maps, is included.
 
 For the processed Brisbane area the flood layer sits on a pan-and-zoom street map: tap anywhere for ground level and water depth, tap the river to move the gauge, or jump to your location. It opens on Esri satellite imagery; switch between satellite, street, Queensland Government aerial and topographic, and other basemaps with the layer button. Satellite layers from Digital Earth Australia work anywhere in Australia: the latest Landsat/Sentinel-2 imagery in true colour or false-colour infrared, where water stands out dark against vegetation, and a map of how often satellites have seen water at each spot since 1987. Brisbane City Council's creek and overland-flow flood likelihood maps and the recorded 1974, 2011 and 2022 flood extents can be switched on from the same button, to compare the model with the council's studies and with what actually happened. The illustrative sample terrain is shown as a static picture.
 
@@ -11,6 +11,9 @@ The heavy terrain work is done by the hydrology tools that power [RustGIS](https
 > **Not for emergency or property decisions.** This is a screening model built on a 30 m surface model. Use [Brisbane City Council Flood Awareness Maps](https://fam.brisbane.qld.gov.au/) and [Bureau of Meteorology warnings](https://www.bom.gov.au/qld/warnings/) for real flood risk.
 
 ## Australia-wide view
+
+The menu at the top has one-tap presets: river towns with a history of flooding (Lismore, Windsor, Grafton, Kempsey, Wagga Wagga, Rockhampton, Gympie, Townsville, Maribyrnong, Echuca, Launceston, Katherine) and coasts (Gold Coast Broadwater, Cairns, Port Adelaide, Hobart). Picking one models it on the spot; places you've modelled are listed at the top of the menu, and the detailed Brisbane River model is under *Detailed models*.
+
 
 The app opens on a map of Australia:
 

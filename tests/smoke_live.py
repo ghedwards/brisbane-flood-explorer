@@ -293,6 +293,30 @@ def main() -> int:
         else:
             popup, after = "", s1
 
+        # ---- every preset in the menu models successfully
+        results = []
+        for pre in page.evaluate("window.__floodPresets || []"):
+            before = (status().get("local") or {}).get("key")
+            page.select_option("#area", f"preset:{pre['id']}")
+            try:
+                page.wait_for_function(f"window.__floodStatus.local && window.__floodStatus.local.ok !== undefined"
+                                       f" && (window.__floodStatus.local.ok === false || window.__floodStatus.local.key !== {json.dumps(before)})",
+                                       timeout=90_000)
+            except Exception:
+                pass
+            loc = status().get("local") or {}
+            snap = status().get("snap") or {}
+            stats = page.inner_text("#stats").replace("\n", " ") if loc.get("ok") else ""
+            results.append({"id": pre["id"], "ok": bool(loc.get("ok")) and loc.get("key") != before,
+                            "ms": loc.get("ms"), "error": loc.get("error"), "snap": snap, "stats": stats[:120]})
+            page.screenshot(path=f"smoke-preset-{pre['id']}.png")
+        bad = [r for r in results if not r["ok"]]
+        with open(os.environ.get("GITHUB_STEP_SUMMARY", os.devnull), "a") as fh:
+            fh.write("### Presets\n" + "".join(f"- {json.dumps(r)}\n" for r in results))
+        print("Presets:", json.dumps(results))
+        if bad:
+            failures.append(f"{len(bad)} preset(s) failed: " + "; ".join(f"{r['id']}: {r['error']}" for r in bad))
+
         page.screenshot(path="smoke.png", full_page=False)
         browser.close()
 

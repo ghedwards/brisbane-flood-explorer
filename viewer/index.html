@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Brisbane Flood Explorer</title>
-<meta name="description" content="Explore flood scenarios on the lower Brisbane River from gauge levels, bay levels and sea-level rise, using terrain processed with the RustGIS / GeoLibre hydrology tools.">
+<title>Flood Explorer</title>
+<meta name="description" content="Explore river and coastal flood scenarios anywhere in Australia: live gauges, dams and forecasts, and on-the-spot flood models from national elevation data and the RustGIS / GeoLibre hydrology tools.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,400..800&family=IBM+Plex+Mono:wght@400;500&display=swap">
@@ -194,6 +194,10 @@ details > div { display: grid; gap: 14px; }
 .head-title { display: grid; min-width: 0; }
 .sub-link, .link-btn { border: 0; background: none; padding: 0; color: var(--accent); font: 600 12.5px var(--font-body); cursor: pointer; text-align: left; }
 .sub-link:empty { display: none; }
+.map-fab { position: fixed; z-index: 999; right: calc(var(--right) + 10px); bottom: calc(var(--bottom) + 96px); width: 40px; height: 40px; border: 0; border-radius: 10px; display: grid; place-items: center; cursor: pointer; color: var(--ink); }
+.map-fab svg { width: 22px; height: 22px; stroke: currentColor; fill: none; stroke-width: 1.8; stroke-linecap: round; }
+@media (max-width: 760px) { .map-fab { bottom: calc(var(--bar) + env(safe-area-inset-bottom, 0px) + 70px); } body.sheet-open .map-fab { display: none; } }
+#reportPrev, #reportNext { font-size: 22px; }
 .tool .count { position: absolute; top: 2px; right: 6px; min-width: 16px; height: 16px; border-radius: 8px; padding: 0 4px; background: var(--gauge); color: #fff; font: 700 10px/16px var(--font-body); }
 .place-actions { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 6px; padding: 0 8px 8px 40px; }
 .place-actions .btn { padding: 5px 10px; font-size: 12.5px; }
@@ -230,13 +234,8 @@ details > div { display: grid; gap: 14px; }
 .bar > span { display: block; height: 100%; background: var(--accent); }
 .actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .btn.primary { background: var(--accent); color: var(--accent-ink); }
-/* report cards: stacked, or side by side in columns on wide screens */
-#panel-report { --cols: 1; width: min(calc(var(--cols) * 330px + 14px), calc(100vw - var(--rail) - 3 * var(--gap) - var(--right))); }
-.reports { grid-template-columns: repeat(var(--cols), minmax(0, 1fr)); align-items: start; gap: 12px; }
-#panel-report.multi .reports { overflow-x: auto; }
 .report-card { display: grid; gap: 12px; min-width: 0; align-content: start; }
-#panel-report.multi .report-card { border: 1px solid var(--line); border-radius: 10px; padding: 12px; background: var(--surface); }
-.report-card.flash { box-shadow: 0 0 0 3px var(--accent); transition: box-shadow .2s; }
+.report-card.flash { box-shadow: 0 0 0 3px var(--accent); border-radius: 8px; transition: box-shadow .2s; }
 .card-head { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 10px; align-items: start; }
 .card-head h3 { margin: 2px 0 0; font: 700 1.1rem/1.2 var(--font-display); font-stretch: 85%; overflow-wrap: anywhere; }
 .card-head .close { width: 28px; height: 28px; font-size: 16px; }
@@ -244,7 +243,6 @@ details > div { display: grid; gap: 14px; }
 .report-pin span { display: grid; place-items: center; width: 24px; height: 24px; border-radius: 50%; border: 2px solid #fff; box-shadow: 0 1px 4px rgba(0,0,0,.45); color: #fff; font: 700 12px Archivo, sans-serif; }
 .head-actions { display: inline-flex; gap: 6px; align-items: center; }
 .btn.small { padding: 4px 9px; font-size: 12.5px; }
-@media (max-width: 760px) { #panel-report { width: auto; --cols: 1; } }
 .popup-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
 .popup-actions button { font: 600 12.5px var(--font-body); border: 1px solid #0d5f8c; color: #0d5f8c; background: #fff; border-radius: 6px; padding: 4px 8px; cursor: pointer; }
 #floodhubBody { display: grid; gap: 10px; }
@@ -299,7 +297,7 @@ details > div { display: grid; gap: 14px; }
 </div>
 
 <header class="topbar float">
-  <h1>Brisbane <span>Flood</span> Explorer</h1>
+  <h1><span>Flood</span> Explorer</h1>
   <label class="small" for="area" hidden>Terrain</label>
   <select id="area" aria-label="Terrain"></select>
   <button type="button" class="pill" id="noticePill" data-open="panel-about">Screening only</button>
@@ -315,6 +313,10 @@ details > div { display: grid; gap: 14px; }
     Places
     <span class="count" id="placesCount" hidden></span>
   </button>
+  <button type="button" class="tool" data-open="panel-report" aria-pressed="false">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 3h7l4 4v14H7z"/><path d="M14 3v4h4M10 12h5M10 15h5M10 18h3"/></svg>
+    Report
+  </button>
   <button type="button" class="tool" data-open="panel-layers" aria-pressed="false">
     <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 3 8l9 5 9-5-9-5Z"/><path d="m3 13 9 5 9-5"/><path d="m3 17.5 9 4.5 9-4.5" opacity=".5"/></svg>
     Layers
@@ -328,10 +330,6 @@ details > div { display: grid; gap: 14px; }
     Forecast
     <span class="badge" id="forecastBadge" hidden></span>
   </button>
-  <button type="button" class="tool" id="locate">
-    <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg>
-    Locate
-  </button>
   <button type="button" class="tool" data-open="panel-about" aria-pressed="false">
     <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.5v.5"/></svg>
     About
@@ -344,7 +342,7 @@ details > div { display: grid; gap: 14px; }
   <div class="sheet-body">
     <div id="scenarioEmpty" class="empty" hidden>
       <p><strong>No area modelled yet.</strong></p>
-      <p class="hint">Model a place first: tap a river gauge, tide gauge or dam and choose <em>Model flooding here</em>, or tap anywhere on the map. Your places are listed under <button type="button" class="link-btn" data-open="panel-places">Places</button>. The detailed Lower Brisbane River model is in the menu at the top.</p>
+      <p class="hint">Model a place first: tap a river gauge, tide gauge or dam and choose <em>Model flooding here</em>, or tap anywhere on the map. Your places are listed under <button type="button" class="link-btn" data-open="panel-places">Places</button>. Or pick a river town or coast from the menu at the top to model it straight away.</p>
     </div>
     <div class="stats" id="stats"></div>
 
@@ -414,7 +412,7 @@ details > div { display: grid; gap: 14px; }
 <aside class="sheet float" id="panel-layers" data-panel data-side="right" aria-labelledby="h-layers" hidden>
   <div class="sheet-head"><h2 id="h-layers">Map layers</h2><button type="button" class="close" data-close aria-label="Close">×</button></div>
   <div class="sheet-body">
-    <p class="hint" id="layersStaticNote">Basemaps and extra layers are available on maps of real places, such as the Lower Brisbane River.</p>
+    <p class="hint" id="layersStaticNote">Basemaps and extra layers are available on maps of real places, such as Australia or any modelled place.</p>
     <div id="geoControls" hidden>
       <div class="sheet-body" style="padding:0">
         <fieldset>
@@ -456,10 +454,13 @@ details > div { display: grid; gap: 14px; }
 
 <!-- Report on a picked feature -->
 <aside class="sheet float" id="panel-report" data-panel data-side="right" aria-labelledby="h-report" hidden>
-  <div class="sheet-head"><h2 id="h-report">Report</h2>
-    <span class="head-actions"><button type="button" class="btn small" id="reportsClear" hidden>Close all</button>
-    <button type="button" class="close" data-close aria-label="Close">×</button></span></div>
-  <div class="sheet-body reports" id="reportBody"></div>
+  <div class="sheet-head"><div class="head-title"><h2 id="h-report">Report</h2><button type="button" class="sub-link" id="reportPlace" data-open="panel-places"></button></div>
+    <span class="head-actions"><button type="button" class="icon-btn" id="reportPrev" aria-label="Previous report" title="Previous report">‹</button><button type="button" class="icon-btn" id="reportNext" aria-label="Next report" title="Next report">›</button>
+    <button type="button" class="close" data-close aria-label="Hide the report panel">×</button></span></div>
+  <div class="sheet-body reports" id="reportBody">
+    <div class="places-empty" id="reportEmpty"><p><strong>No report open.</strong></p>
+      <p class="hint">Tap a flood gauge, tide gauge or dam on the map, or open one from <button type="button" class="link-btn" data-open="panel-places">Places</button>.</p></div>
+  </div>
 </aside>
 
 <!-- About -->
@@ -468,7 +469,7 @@ details > div { display: grid; gap: 14px; }
   <div class="sheet-body">
     <div class="notice" id="notice"></div>
     <p class="about-text">Set a river level at the gauge and a bay level, and the map shows land below that water surface that connects to the river. It is a screening tool, not a flood study: it ignores rainfall on the floodplain, stormwater, levees, bridges and how water moves over time.
-      For real flood risk use <a href="https://fam.brisbane.qld.gov.au/" target="_blank" rel="noopener">Brisbane City Council Flood Awareness Maps</a>
+      For real flood risk use your council's flood maps (for example <a href="https://fam.brisbane.qld.gov.au/" target="_blank" rel="noopener">Brisbane's Flood Awareness Maps</a>)
       and <a href="https://www.bom.gov.au/qld/warnings/" target="_blank" rel="noopener">Bureau of Meteorology warnings</a>.</p>
     <div class="sources" id="dataInfo"></div>
     <div class="downloads" id="downloads"></div>
@@ -499,6 +500,10 @@ details > div { display: grid; gap: 14px; }
 </div>
 
 <div class="readout float" id="readout" role="status" hidden></div>
+
+<button type="button" class="map-fab float" id="locate" aria-label="Show my location" title="My location">
+  <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg>
+</button>
 
 <script src="flood-core.js"></script>
 <script src="app.js"></script>
