@@ -66,6 +66,15 @@ def main() -> int:
         if not (nsw and nsw.get("features")):
             failures.append(f"NSW flood planning layer did not draw: {nsw}")
         page.screenshot(path="smoke-nsw.png")
+        # and zoomed out to the Sydney region, beyond the server's own limit
+        before_nsw = nsw.get("features", 0) if nsw else 0
+        page.evaluate("window.__floodTestZoom(-33.8, 151.0, 9)")
+        page.wait_for_timeout(8000)
+        nsw9 = page.evaluate("window.__floodStatus.overlays['NSW flood planning areas (state)'] || null")
+        note("notice", f"NSW layer at zoom 9: {json.dumps(nsw9)}")
+        if not (nsw9 and nsw9.get("features", 0) > before_nsw):
+            failures.append(f"NSW flood planning layer did not draw zoomed out: {nsw9}")
+        page.screenshot(path="smoke-nsw-z9.png")
         page.evaluate("([n]) => window.__floodSetOverlay(n, false)", ["NSW flood planning areas (state)"])
         for label, args in [("river", [-27.4741, 153.0305, {"kind": "river", "name": "Brisbane City"}]),
                             ("coast", [-27.37, 153.17, {"kind": "coast", "name": "Brisbane Bar"}])]:
@@ -155,7 +164,20 @@ def main() -> int:
             if names:
                 page.evaluate("n => window.__floodSetBasemap(n)", names[0])
 
-            # council flood layers: zoom to the city and switch each one on
+            # council likelihood layers zoomed out: pre-rendered images
+            page.evaluate("window.__floodTestZoom && window.__floodTestZoom(-27.47, 153.02, 11)")
+            page.wait_for_timeout(1500)
+            for name in ["Creek flooding likelihood (council)", "Overland flow likelihood (council)"]:
+                page.evaluate("([n]) => window.__floodSetOverlay(n, true)", [name])
+                page.wait_for_timeout(5000)
+                st = page.evaluate("n => window.__floodStatus.overlays[n] || {}", name)
+                note("notice" if st.get("image") else "error", f"Layer {name} at zoom 11: {json.dumps(st)}")
+                if not st.get("image"):
+                    failures.append(f"council layer '{name}' did not show its zoomed-out image")
+                safe = "".join(ch if ch.isalnum() else "-" for ch in name.lower())[:30]
+                page.screenshot(path=f"smoke-z11-{safe}.png")
+                page.evaluate("([n]) => window.__floodSetOverlay(n, false)", [name])
+            # council flood layers close in: switch each one on
             page.evaluate("window.__floodTestZoom && window.__floodTestZoom(-27.47, 153.02, 15)")
             page.wait_for_timeout(2000)
             ov = page.evaluate("Object.keys(window.__floodStatus.overlays || {})")

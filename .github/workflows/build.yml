@@ -37,7 +37,7 @@ jobs:
           cache-dependency-path: pipeline/requirements.txt
 
       - name: Test the data fetchers
-        run: python -m unittest tests/test_floodhub.py tests/test_national.py
+        run: python -m unittest tests/test_floodhub.py tests/test_national.py tests/test_council.py
 
       - name: Install Python packages
         run: pip install -r pipeline/requirements.txt
@@ -123,6 +123,30 @@ jobs:
       - name: Publish previous water history if this run fetched none
         if: steps.whfetch.outcome != 'success' && hashFiles('cache/waterhistory.json') != ''
         run: cp cache/waterhistory.json site/data/national/waterhistory.json
+
+      - name: Month for the council-image cache
+        id: month
+        run: echo "month=$(date -u +%Y-%m)" >> "$GITHUB_OUTPUT"
+
+      - name: Restore council flood images
+        id: council
+        uses: actions/cache@v4
+        with:
+          path: cache/council
+          key: council-${{ steps.month.outputs.month }}-${{ hashFiles('pipeline/render_council_layers.py') }}
+
+      - name: Render council flood images (monthly)
+        if: steps.council.outputs.cache-hit != 'true'
+        continue-on-error: true
+        timeout-minutes: 15
+        run: |
+          python pipeline/render_council_layers.py cache/council | tee council.log
+          python -c "import json,sys; m=json.load(open('cache/council/council.json')); sys.exit(0 if len(m['layers'])==2 else 1)" || rm -rf cache/council
+
+      - name: Publish council flood images
+        run: |
+          if [ -f cache/council/council.json ]; then mkdir -p site/data/council && cp cache/council/* site/data/council/; fi
+          echo "::notice::Council images: $(grep -E '^(creek|overland):|^warning' council.log 2>/dev/null | tr '\n' ' ' || echo 'from cache')"
 
       - name: Fetch Google Flood Hub forecasts
         id: floodhub

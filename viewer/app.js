@@ -524,8 +524,8 @@
   const BCC_ATTR = 'Flood awareness data &copy; <a href="https://data.brisbane.qld.gov.au/">Brisbane City Council</a>, <a href="https://creativecommons.org/licenses/by/4.0/">CC BY 4.0</a>';
   const LIKELIHOOD = { High: '#b3261e', Medium: '#e8710a', Low: '#f2c12e', 'Very Low': '#fff3a8' };
   const OVERLAYS = [
-    { name: 'Creek flooding likelihood (council)', service: 'Flood_Awareness_Creek', kind: 'likelihood', minZoom: 13 },
-    { name: 'Overland flow likelihood (council)', service: 'Flood_Awareness_Overland_Flow', kind: 'likelihood', minZoom: 14 },
+    { name: 'Creek flooding likelihood (council)', service: 'Flood_Awareness_Creek', kind: 'likelihood', minZoom: 13, image: 'creek' },
+    { name: 'Overland flow likelihood (council)', service: 'Flood_Awareness_Overland_Flow', kind: 'likelihood', minZoom: 14, image: 'overland' },
     { name: 'Recorded flood: Feb 2022 (river + creek)', service: 'Flood_Awareness_Historic_Brisbane_River_and_Creek_Floods_Feb2022', kind: 'outline', color: '#ff3d9a' },
     { name: 'Recorded flood: Jan 2011 (river)', service: 'Flood_Awareness_Historic_Brisbane_River_Floods_Jan2011', kind: 'outline', color: '#ffd400' },
     { name: 'Recorded flood: Jan 1974 (river)', service: 'Flood_Awareness_Historic_Brisbane_River_Floods_Jan1974', kind: 'outline', color: '#ff7a00' },
@@ -547,19 +547,22 @@
       legend: 'Queensland floodplain assessment: land that may be on a floodplain (statewide, broad scale)', swatch: '#4a7fc1' },
     { name: 'NSW flood planning areas (state)', state: 'NSW',
       url: 'https://mapprod3.environment.nsw.gov.au/arcgis/rest/services/Planning/Hazard/MapServer',
-      layers: [1], opacity: 0.6, minZoom: 13,
+      layers: [1], opacity: 0.6, minZoom: 6,
+      // the service hides this layer beyond 1:50,000; dynamic layers lift that
+      dynamicLayers: [{ id: 1, source: { type: 'mapLayer', mapLayerId: 1 }, minScale: 0, maxScale: 0 }],
       attribution: 'Flood planning &copy; State of New South Wales (Department of Planning), from local environmental plans',
-      legend: 'NSW flood planning areas from council planning schemes (zoom in to see)', swatch: '#3b6fb6' },
+      legend: 'NSW flood planning areas from council planning schemes', swatch: '#3b6fb6' },
   ];
 
   function makeStateOverlay(o) {
     const esri = window.L && window.L.esri;
     if (!esri) return null;
     const st = (status.overlays[o.name] = { features: 0, errors: 0 });
-    const layer = esri.dynamicMapLayer({
+    const layer = esri.dynamicMapLayer(Object.assign({
       url: o.url, layers: o.layers, opacity: o.opacity, attribution: o.attribution, f: 'image', format: 'png32',
       transparent: true, minZoom: o.minZoom || 0, zIndex: 4,
-    });
+    }, o.dynamicLayers ? { dynamicLayers: o.dynamicLayers } : {}));
+    if (o.minZoom) layer.zoomNote = { min: o.minZoom, text: 'state-wide view' };
     layer.on('load', () => { st.features++; });
     layer.on('requesterror', () => { st.errors++; });
     o.layer = layer;
@@ -569,12 +572,45 @@
 
   function makeWmsOverlay(L, o) {
     const st = (status.overlays[o.name] = { features: 0, errors: 0 });
-    const layer = deaWms(L, { layers: o.layers, styles: o.styles }, { attribution: DEA_ATTR, opacity: 0.75, maxZoom: 19, maxNativeZoom: 16, zIndex: 5 });
+    // DEA's server only draws this from about zoom 7 (regional scale)
+    const layer = deaWms(L, { layers: o.layers, styles: o.styles }, { attribution: DEA_ATTR, opacity: 0.75, maxZoom: 19, maxNativeZoom: 16, minZoom: 7, zIndex: 5 });
+    layer.zoomNote = { min: 7, text: 'regional view' };
     layer.on('tileload', () => { st.features++; });
     layer.on('tileerror', () => { st.errors++; });
     o.layer = layer;
     o.kind = 'wms';
     return layer;
+  }
+
+  // A layer that shows `low` below zoom `z` and `high` from zoom `z` up:
+  // a pre-rendered image for the whole area, and live detail close in.
+  function zoomSwitch(low, high, z, attribution) {
+    const L = window.L;
+    const Switch = L.Layer.extend({
+      onAdd(map) { this._map = map; map.on('zoomend', this._update, this); this._update(); },
+      onRemove(map) {
+        map.off('zoomend', this._update, this);
+        [low, high].forEach((l) => l && map.hasLayer(l) && map.removeLayer(l));
+      },
+      getAttribution() { return attribution; },
+      _update() {
+        const hi = this._map.getZoom() >= z || !low;
+        const want = hi ? high : low, other = hi ? low : high;
+        if (other && this._map.hasLayer(other)) this._map.removeLayer(other);
+        if (want && !this._map.hasLayer(want)) want.addTo(this._map);
+      },
+    });
+    return new Switch();
+  }
+
+  let councilImages = null;
+  async function loadCouncilImages() {
+    if (councilImages) return councilImages;
+    try {
+      const r = await fetch('data/council/council.json', { cache: 'no-cache' });
+      councilImages = r.ok ? await r.json() : { layers: {} };
+    } catch (e) { councilImages = { layers: {} }; }
+    return councilImages;
   }
 
   function makeOverlay(o) {
@@ -594,6 +630,19 @@
     layer.on('requesterror', () => { st.errors++; });
     if (o.kind === 'likelihood') {
       layer.bindPopup((l) => escapeHtml(`${o.name.replace(' (council)', '')}: ${l.feature.properties.FLOOD_RISK || 'unknown'} likelihood`));
+      const img = councilImages && councilImages.layers && councilImages.layers[o.image];
+      if (img) {
+        const b = img.bounds;
+        const pic = window.L.imageOverlay(`data/council/${img.file}`, [[b[1], b[0]], [b[3], b[2]]], {
+          opacity: 0.6, className: 'flood-layer', attribution: BCC_ATTR, zIndex: 3,
+        });
+        pic.on('load', () => { st.features++; st.image = true; });
+        pic.on('error', () => { st.errors++; });
+        o.layer = zoomSwitch(pic, layer, o.minZoom, BCC_ATTR);
+        o.layer.zoomNote = null;
+        return o.layer;
+      }
+      layer.zoomNote = { min: o.minZoom, text: 'detailed layer' };
     }
     o.layer = layer;
     return layer;
@@ -607,12 +656,12 @@
     if (on.some((o) => o.kind === 'likelihood')) {
       parts.push(...Object.entries(LIKELIHOOD).map(([k, c]) => `<span><i style="background:${c}"></i>${k} likelihood</span>`));
       const z = state.lmap.getZoom();
-      const hidden = on.filter((o) => o.minZoom && z < o.minZoom);
+      const hidden = on.filter((o) => o.layer.zoomNote && z < o.layer.zoomNote.min);
       if (hidden.length) parts.push(`<span class="hint">Zoom in to see ${hidden.map((o) => o.name.split(' ')[0].toLowerCase()).join(' and ')} layers</span>`);
     }
     STATE_OVERLAYS.filter((o) => o.layer && state.lmap.hasLayer(o.layer)).forEach((o) => {
       const z = state.lmap.getZoom();
-      parts.push(`<span><i style="background:${o.swatch};opacity:.6"></i>${escapeHtml(o.legend)}${o.minZoom && z < o.minZoom ? ' <em>(zoom in)</em>' : ''}</span>`);
+      parts.push(`<span><i style="background:${o.swatch};opacity:.6"></i>${escapeHtml(o.legend)}${o.layer.zoomNote && z < o.layer.zoomNote.min ? ' <em>(zoom in)</em>' : ''}</span>`);
     });
     NATIONAL_OVERLAYS.filter((o) => o.layer && state.lmap.hasLayer(o.layer)).forEach((o) => {
       parts.push(`<span><i style="background:linear-gradient(90deg,#e6f3fb,#5aa9d6,#08306b)"></i>${escapeHtml(o.legend)}</span>`);
@@ -678,10 +727,15 @@
       const layers = {};
       status.basemaps = {};
       for (const bm of BASEMAPS) {
-        const layer = bm.wms ? deaWms(L, bm.wms, bm.opts) : L.tileLayer(bm.url(), bm.opts);
+        const own = bm.wms ? deaWms(L, bm.wms, Object.assign({}, bm.opts, { minZoom: 6 })) : L.tileLayer(bm.url(), bm.opts);
         const st = (status.basemaps[bm.name] = { loaded: 0, errors: 0 });
-        layer.on('tileload', () => { st.loaded++; status.tilesLoaded++; });
-        layer.on('tileerror', () => { st.errors++; status.tileErrors++; });
+        own.on('tileload', () => { st.loaded++; status.tilesLoaded++; });
+        own.on('tileerror', () => { st.errors++; status.tileErrors++; });
+        // DEA renders from about zoom 6 (state scale); show Esri imagery
+        // underneath so the map is never blank when zoomed out
+        const layer = bm.wms
+          ? L.featureGroup([L.tileLayer(BASEMAPS[0].url(), Object.assign({}, BASEMAPS[0].opts, { zIndex: 0 })), own])
+          : own;
         layers[bm.name] = layer;
         bm.layer = layer;
       }
@@ -703,6 +757,7 @@
       if (alerting) Object.values(fhLayers).forEach((l) => l.addTo(m));
       buildLayerLists(m, layers, overlays, first);
       m.on('overlayadd overlayremove zoomend', renderOverlayLegend);
+      m.on('zoomend', syncLayerLists);
       m.on('layeradd layerremove', syncLayerLists);
       window.__floodTestZoom = (lat, lng, z) => m.setView([lat, lng], z, { animate: false });
       window.__floodSetOverlay = (name, on) => {
@@ -736,6 +791,7 @@
     }
     // area-specific layers: Brisbane City Council's, once per session
     if (state.areaMeta && state.areaMeta.brisbaneGauge && !state.councilAdded) {
+      await loadCouncilImages();
       for (const o of OVERLAYS) { const l = makeOverlay(o); if (l) registerOverlay(o.name, l); }
       state.councilAdded = true;
     }
@@ -759,7 +815,7 @@
     if (!layers[name]) return;
     Object.values(layers).forEach((l) => m.hasLayer(l) && m.removeLayer(l));
     layers[name].addTo(m);
-    layers[name].bringToBack();
+    if (layers[name].bringToBack) layers[name].bringToBack();
     status.basemap = name;
     try { localStorage.setItem(BASEMAP_KEY, name); } catch (err) { /* storage blocked */ }
     syncLayerLists();
@@ -790,13 +846,24 @@
       lab.innerHTML = `<input type="checkbox" id="${id}"> ${escapeHtml(name)}`;
       const input = lab.querySelector('input');
       input.dataset.layer = name;
+      const zn = overlays[name].zoomNote;
+      let hint = null;
+      if (zn) {
+        hint = document.createElement('button');
+        hint.type = 'button'; hint.className = 'zoom-hint'; hint.hidden = true;
+        hint.dataset.min = zn.min; hint.dataset.for = name;
+        hint.textContent = `Zoom in to see this layer (${zn.text})`;
+        hint.addEventListener('click', () => m.setZoom(zn.min));
+      }
       input.checked = m.hasLayer(overlays[name]);
       input.addEventListener('change', () => {
         overlays[name].userOn = input.checked;
         if (input.checked) overlays[name].addTo(m); else m.removeLayer(overlays[name]);
         renderOverlayLegend();
+        syncLayerLists();
       });
       ol.appendChild(lab);
+      if (hint) ol.appendChild(hint);
     });
   }
 
@@ -809,9 +876,14 @@
   function syncLayerLists() {
     if (!layerRegistry) return;
     const { m, overlays } = layerRegistry;
+    const z = m.getZoom();
     document.querySelectorAll('#overlayList input').forEach((inp) => {
       const l = overlays[inp.dataset.layer];
       if (l) inp.checked = m.hasLayer(l);
+    });
+    document.querySelectorAll('#overlayList .zoom-hint').forEach((hint) => {
+      const l = overlays[hint.dataset.for];
+      hint.hidden = !(l && m.hasLayer(l) && z < +hint.dataset.min);
     });
     document.querySelectorAll('#basemapList input').forEach((inp, i) => {
       inp.checked = Object.keys(layerRegistry.layers)[i] === status.basemap;
@@ -1323,11 +1395,11 @@
   const DEMH_WCS = 'https://services.ga.gov.au/gis/services/DEM_SRTM_1Second_Hydro_Enforced_2024/MapServer/WCSServer';
   const BOM_ATTR = 'Gauges and storages &copy; Commonwealth of Australia (Bureau of Meteorology), CC BY 4.0';
   const GAUGE_STYLE = {
-    forecast: { label: 'Flood forecast gauge', color: '#1565c0', radius: 5.5, minZoom: 0 },
-    information: { label: 'Flood information gauge', color: '#5c6bc0', radius: 4.5, minZoom: 6 },
-    river: { label: 'River gauge', color: '#78909c', radius: 3.5, minZoom: 8 },
-    tide: { label: 'Tide gauge', color: '#00897b', radius: 5.5, minZoom: 0 },
-    storage: { label: 'Dam or water storage', color: '#6d4c41', radius: 6, minZoom: 0 },
+    forecast: { label: 'Flood forecast gauge', color: '#1565c0', radius: 5.5 },
+    information: { label: 'Flood information gauge', color: '#5c6bc0', radius: 4.5 },
+    river: { label: 'River gauge', color: '#78909c', radius: 3.5 },
+    tide: { label: 'Tide gauge', color: '#00897b', radius: 5.5 },
+    storage: { label: 'Dam or water storage', color: '#6d4c41', radius: 6 },
   };
   status.national = { loaded: false };
   status.local = {};
@@ -1396,7 +1468,7 @@
           layer.on('click', (e) => { L.DomEvent.stop(e); openReport(f); });
         },
       });
-      nat.layers[name].minZoom = st.minZoom;
+
     }
     if (nat.data.storages.length) {
       nat.layers['Dams and water storages (BoM)'] = L.geoJSON({ type: 'FeatureCollection', features: nat.data.storages }, {
@@ -1411,16 +1483,6 @@
         },
       });
     }
-    // show detailed layers only when zoomed in enough
-    const applyZoom = () => {
-      for (const l of Object.values(nat.layers)) {
-        if (!l.minZoom) continue;
-        const want = l.userOn !== false && m.getZoom() >= l.minZoom;
-        if (want && !m.hasLayer(l) && l.userOn) l.addTo(m);
-        if (!want && m.hasLayer(l)) { m.removeLayer(l); }
-      }
-    };
-    m.on('zoomend', applyZoom);
     return nat.layers;
   }
 
