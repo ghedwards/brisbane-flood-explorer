@@ -875,6 +875,12 @@
         style: () => ({ color: o.swatch, weight: 1, fillColor: o.swatch, fillOpacity: 0.35 }),
       });
       layer.on('load', () => { let n = 0; layer.eachFeature(() => { n++; }); st.features = n; });
+      // esri-leaflet can try to add or remove features after the layer has
+      // left the map (requests still in flight): ignore those
+      ['addLayers', 'removeLayers'].forEach((fn) => {
+        const orig = layer[fn];
+        layer[fn] = function guarded(...args) { return this._map ? orig.apply(this, args) : undefined; };
+      });
     } else {
       layer = esri.dynamicMapLayer({ url: o.url, opacity: 0.6, attribution: o.attribution, f: 'image', format: 'png32', transparent: true, minZoom: o.minZoom, zIndex: 4 });
       layer.on('load', () => { st.features++; });

@@ -304,7 +304,8 @@ def main() -> int:
             # council flood layers close in: switch each one on
             page.evaluate("window.__floodTestZoom && window.__floodTestZoom(-27.47, 153.02, 15)")
             page.wait_for_timeout(2000)
-            ov = page.evaluate("Object.keys(window.__floodStatus.overlays || {})")
+            elsewhere = set(c["name"] for c in page.evaluate("window.__floodCouncilLayers ? window.__floodCouncilLayers() : []"))
+            ov = [n for n in page.evaluate("Object.keys(window.__floodStatus.overlays || {})") if n not in elsewhere]
             if not ov:
                 failures.append("no council flood layers were offered")
             for name in ov:
