@@ -16,7 +16,7 @@ URL = sys.argv[1] if len(sys.argv) > 1 else "http://localhost:8000/"
 
 
 KEY = []          # key results, shown together in one annotation at the end
-KEY_WORDS = ("Recorded floods", "Best match", "Impact", "Storm", "Joined", "Share link", "Satellite check",
+KEY_WORDS = ("Presets checked", "Recorded floods", "Best match", "Impact", "Storm", "Joined", "Share link", "Satellite check",
              "Presets anchored", "Presets on LiDAR", "Phone Layers", "Council layer", "Downloads", "Rain radar",
              "Address search", "Flood warnings", "Echuca", "Extended model", "Area study")
 
@@ -595,7 +595,15 @@ def main() -> int:
 
         # ---- every preset in the menu models successfully
         results = []
-        for pre in page.evaluate("window.__floodPresets || []"):
+        # every preset when SMOKE_PRESETS=all (nightly / on demand), otherwise
+        # a quick sample covering each kind: river (NSW, Vic, WA) and coast
+        which = os.environ.get("SMOKE_PRESETS", "all")
+        quick = {"lismore", "echuca", "carnarvon", "goldcoast"}
+        presets = page.evaluate("window.__floodPresets || []")
+        if which != "all":
+            presets = [x for x in presets if x["id"] in quick]
+        note("notice", f"Presets checked: {len(presets)} ({which})")
+        for pre in presets:
             before = (status().get("local") or {}).get("key")
             page.select_option("#area", f"preset:{pre['id']}")
             try:

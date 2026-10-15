@@ -91,9 +91,6 @@ height setting), daytime workplaces, and places cut off from a dry road out.
 
 ## Build and testing
 
-- **Shorter live check.** The smoke test now takes about 25 minutes,
-  mostly building all 58 presets. Run the full preset sweep nightly and a
-  short subset on each change.
 - **Preset audit.** The live check lists which Bureau gauge each river
   preset is anchored to; review any presets that aren't anchored or sit
   far from their gauge.

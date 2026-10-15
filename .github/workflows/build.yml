@@ -4,9 +4,16 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      all_presets:
+        description: "Live check: build all 58 presets (about 15 minutes longer)"
+        type: boolean
+        default: true
   schedule:
     # refresh Google Flood Hub forecasts every three hours
     - cron: "17 */3 * * *"
+    # nightly full live check of every preset (2:43 am Brisbane time)
+    - cron: "43 16 * * *"
 
 permissions:
   contents: read
@@ -227,6 +234,9 @@ jobs:
           pip install playwright==1.48.0
           python -m playwright install --with-deps chromium
       - name: Check the live interactive map
+        env:
+          # every preset nightly or when asked; a quick sample otherwise
+          SMOKE_PRESETS: ${{ ((github.event_name == 'schedule' && github.event.schedule == '43 16 * * *') || (github.event_name == 'workflow_dispatch' && inputs.all_presets)) && 'all' || 'quick' }}
         run: |
           sleep 20  # let Pages finish propagating
           python tests/smoke_live.py "https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/"

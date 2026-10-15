@@ -158,10 +158,12 @@ python3 -m http.server -d viewer 8000
 
 ```sh
 node --test tests/core.test.js
-python -m unittest tests/test_floodhub.py tests/test_national.py   # data fetchers, with the services mocked
+python -m unittest tests/test_floodhub.py tests/test_national.py tests/test_council.py tests/test_floodinfo.py   # data fetchers, services mocked
 ```
 
 The tests check routing (every cell drains), monotonic flooding, water levels at the gauge and mouth, connectivity, and that Whitebox D8 pointers from the pipeline reproduce the browser's own routing exactly.
+
+After every deploy, a live check (`tests/smoke_live.py`) opens the published site in a headless browser and uses it: reports, river, coastal and storm models, area studies, level points, impact counts, recorded-flood checks, share links and phone scrolling. It builds a quick sample of four presets on each change; every preset is built nightly (2:43 am Brisbane time) or when you run the workflow by hand from the Actions tab (*Run workflow*, with "build all 58 presets" ticked).
 
 ## Repository layout
 
