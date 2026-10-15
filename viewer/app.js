@@ -2331,7 +2331,14 @@
     const W = Math.round((2 * halfKm * 1000) / cellM), H = W;
     const url = `${DEMH_WCS}?service=WCS&version=1.0.0&request=GetCoverage&coverage=1&crs=EPSG:4326`
       + `&bbox=${w.toFixed(6)},${s.toFixed(6)},${e.toFixed(6)},${n.toFixed(6)}&width=${W}&height=${H}&format=GeoTIFF`;
-    const r = await fetch(url);
+    // GA's service occasionally drops a request (its error replies carry no
+    // CORS header, so the browser reports a network failure): try again
+    let r = null;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      if (attempt) await new Promise((ok) => setTimeout(ok, 1500 * attempt));
+      try { r = await fetch(url); } catch (err) { r = null; if (attempt === 2) throw new Error('the elevation service could not be reached; try again shortly'); continue; }
+      if (r.ok || r.status < 500) break;
+    }
     if (!r.ok) throw new Error(`the elevation service returned ${r.status}`);
     const type = r.headers.get('content-type') || '';
     if (!/tiff/i.test(type)) throw new Error('the elevation service did not return elevation data for this place');
