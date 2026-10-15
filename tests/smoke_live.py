@@ -519,6 +519,35 @@ def main() -> int:
         p2.screenshot(path="smoke-share.png")
         p2.close()
 
+        # ---- on a phone, a swipe scrolls the Layers panel
+        mctx = browser.new_context(viewport={"width": 390, "height": 844}, has_touch=True, is_mobile=True)
+        mp = mctx.new_page()
+        mp.goto(URL, wait_until="domcontentloaded", timeout=90_000)
+        try:
+            mp.wait_for_function("window.__floodStatus && window.__floodStatus.national && window.__floodStatus.national.loaded", timeout=60_000)
+        except Exception:
+            pass
+        mp.evaluate("window.__floodOpenPanel('panel-layers')")
+        mp.wait_for_timeout(800)
+        cdp = mctx.new_cdp_session(mp)
+        box = mp.locator("#panel-layers").bounding_box()
+        body = mp.locator("#panel-layers > .sheet-body")
+        sh, chh = body.evaluate("e => [e.scrollHeight, e.clientHeight]")
+        if box and sh > chh + 20:
+            y0 = box["y"] + box["height"] - 60
+            cdp.send("Input.dispatchTouchEvent", {"type": "touchStart", "touchPoints": [{"x": 200, "y": y0}]})
+            for k in range(1, 13):
+                cdp.send("Input.dispatchTouchEvent", {"type": "touchMove", "touchPoints": [{"x": 200, "y": y0 - 250 * k / 12}]})
+                mp.wait_for_timeout(16)
+            cdp.send("Input.dispatchTouchEvent", {"type": "touchEnd", "touchPoints": []})
+            mp.wait_for_timeout(600)
+            top = body.evaluate("e => e.scrollTop")
+            note("notice", f"Phone Layers panel: swipe scrolled to {top} of {sh - chh}")
+            if top <= 0:
+                failures.append("a swipe does not scroll the Layers panel on a phone")
+        mp.screenshot(path="smoke-phone-layers.png")
+        mctx.close()
+
         # ---- every preset in the menu models successfully
         results = []
         for pre in page.evaluate("window.__floodPresets || []"):

@@ -176,6 +176,7 @@ h1 span { color: var(--accent); }
   border: 0; background: var(--surface-2); color: var(--ink); width: 32px; height: 32px; border-radius: 8px; cursor: pointer;
   font: 600 18px/1 var(--font-body);
 }
+.stack { display: grid; grid-auto-rows: max-content; gap: 18px; }
 .sheet-body { padding: 14px 16px 18px; overflow-y: auto; display: grid; grid-auto-rows: max-content; gap: 18px; align-content: start; overscroll-behavior: contain; flex: 1 1 auto; min-height: 0; }
 
 label.small, .label {
@@ -587,7 +588,7 @@ details > div { display: grid; gap: 14px; }
   <div class="sheet-body">
     <p class="hint" id="layersStaticNote">Basemaps and extra layers are available on maps of real places, such as Australia or any modelled place.</p>
     <div id="geoControls" hidden>
-      <div class="sheet-body" style="padding:0">
+      <div class="stack">
         <fieldset>
           <legend class="label">Basemap</legend>
           <div class="optlist" id="basemapList"></div>
