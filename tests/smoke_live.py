@@ -267,5 +267,11 @@ if __name__ == "__main__":
         sys.exit(main())
     except Exception:
         import traceback
-        print("::error::Smoke test crashed: " + traceback.format_exc().replace("\n", " | ")[-1500:])
+        tb = traceback.format_exc()
+        # where it happened (last frames) and what Playwright was doing (first lines of the error)
+        frames = [l.strip() for l in tb.splitlines() if l.strip().startswith(("File", "page.", "raise"))][-6:]
+        err = [l for l in tb.splitlines() if l.strip() and not l.startswith(" ")][-1:]
+        call_log = [l.strip() for l in tb.splitlines() if "waiting for" in l or "locator" in l.lower()][:4]
+        print("::error::Smoke test crashed at " + " | ".join(frames)[:900])
+        print("::error::Error: " + " | ".join(err + call_log)[:900])
         sys.exit(1)
