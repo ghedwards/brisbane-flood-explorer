@@ -54,6 +54,8 @@ PROBES = {
         "https://opendata.maps.vic.gov.au/geoserver/wfs?service=WFS&version=1.0.0&request=GetFeature&typeName=open-data-platform:vic_flood_history_public&outputFormat=application/json&srsName=EPSG:4326&maxFeatures=1&bbox=144.6,-36.2,144.9,-36.0",
     "Queensland storm tide hazard (layer)":
         "https://spatial-gis.information.qld.gov.au/arcgis/rest/services/PlanningCadastre/CoastalManagement/MapServer/11?f=json",
+    "Victorian coastal levees (WFS guess)":
+        "https://opendata.maps.vic.gov.au/geoserver/wfs?service=WFS&version=1.0.0&request=GetFeature&typeName=open-data-platform:coastallevees&outputFormat=application/json&srsName=EPSG:4326&maxFeatures=1",
     "Brisbane council flood layers (check)":
         "https://services2.arcgis.com/dEKgZETqwmDAh1rP/ArcGIS/rest/services/Flood_Awareness_Creek/FeatureServer/0/query?where=1%3D1&resultRecordCount=1&f=geojson",
 }

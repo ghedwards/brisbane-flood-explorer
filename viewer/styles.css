@@ -373,3 +373,9 @@ details > div { display: grid; gap: 14px; }
 .storm-tide summary { cursor: pointer; font-weight: 600; font-size: 13.5px; }
 .storm-tide[open] { padding-bottom: 12px; }
 #tideM { width: 70px; font: 13.5px var(--font-body); padding: 4px 6px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--ink); }
+
+.def-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 8px; align-items: center; padding: 6px 0; border-top: 1px solid var(--line); font-size: 13px; }
+.def-row .def-ctl { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; grid-column: 1 / -1; }
+.def-row input[type=number] { width: 64px; font: 13px var(--font-body); padding: 3px 5px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--ink); }
+.def-row small { color: var(--muted); }
+#drawLevee[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); }

@@ -40,8 +40,12 @@ would add, how it could be built from open data, and what to watch for.
 - **Stormwater in storm mode.** Subtract a typical pipe capacity (for
   example the 10% to 5% annual chance storm in urban areas) from runoff
   in sealed areas, so small storms aren't overstated in sewered suburbs.
-- **Levees and flood gates.** Burn known levees (where states publish
-  them) into the terrain, with a "levee fails" option.
+- **More levee data.** Levees, gates, failure and breaches are built in,
+  using OpenStreetMap and hand-drawn levees. NSW publishes levee
+  centrelines per town (Kempsey, Nyngan, Moulamein, Conargo…) and Victoria
+  its coastal levees only as downloads; a build step could convert them.
+  Levee overtopping fills the protected area to the river level without a
+  volume limit, so short overtopping is overstated.
 - **More recorded floods for the accuracy check.** Queensland flood lines,
   Brisbane City Council outlines and Victoria's flood history are built in.
   New South Wales doesn't publish recorded outlines as an open service

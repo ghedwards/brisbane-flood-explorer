@@ -59,6 +59,8 @@
       bayLevel: parseFloat(ctl.bayLevel.value) + slr,
       upstreamGradient: parseFloat(ctl.grad.value),
       controls: (state.controls || []).map((c) => ({ cell: c.cell, level: c.level })),
+      gates: state.gateCells || [],
+      levee: state.leveeMask || null,
     };
   }
 
@@ -360,6 +362,7 @@
     state.areaKey = null;
     state.base = null; state.run = null;
     state.controls = [];
+    state.leveeMask = null; state.gateCells = [];
     state.grid = grid;
     state.areaId = id;
     status.area = id;
@@ -615,12 +618,18 @@
     const saved = {};
     CTL_KEYS.forEach((k) => { saved[k] = ctl[k].value; });
     const keep = { n: area.n, key: area.key, name: area.name };
+    const oldDefences = area.defences;
     const ok = await modelHere(glat, glon, {
       kind: m.kind, name: area.name, reportId: m.reportId, presetId: m.presetId, pinN: m.pinN,
       halfKm: half, cellM: cell, center, keepN: area.n, streamAreaKm2: m.streamAreaKm2, replaceKey: keep.key,
     });
     if (!ok) return false;
     CTL_KEYS.forEach((k) => { if (k !== 'streamArea') ctl[k].value = saved[k]; });
+    if (oldDefences && (oldDefences.levees.length || oldDefences.gates.length)) {
+      for (let t = 0; t < 80 && !(state.areaKey && areaReg.get(state.areaKey)); t++) await new Promise((r) => setTimeout(r, 100));
+      const na = state.areaKey && areaReg.get(state.areaKey);
+      if (na) { na.defences = oldDefences; await applyDefences(); }
+    }
     state.base = null;
     syncOutputs();
     runScenario();
@@ -1345,7 +1354,7 @@
     return {
       grid: state.grid, areaId: state.areaId, areaMeta: state.areaMeta, eventsApply: state.eventsApply,
       streamAreaKm2: state.streamAreaKm2, a: state.a, gauge: state.gauge, base: state.base, run: state.run,
-      terrain: state.terrain, geo: state.geo, controls: state.controls || [],
+      terrain: state.terrain, geo: state.geo, controls: state.controls || [], leveeMask: state.leveeMask || null, gateCells: state.gateCells || [],
       ctl: Object.fromEntries(CTL_KEYS.map((k) => [k, ctl[k].value])),
       gmin: ctl.gaugeLevel.min, gmax: ctl.gaugeLevel.max,
       levelHint: $('levelHint').hidden ? null : $('levelHint').textContent,
@@ -1440,7 +1449,7 @@
     Object.assign(state, {
       grid: area.grid, areaId: area.areaId, areaMeta: area.areaMeta, eventsApply: area.eventsApply,
       streamAreaKm2: area.streamAreaKm2, a: area.a, gauge: area.gauge, base: area.base, run: area.run,
-      terrain: area.terrain, geo: area.geo, areaKey: key, pendingGeo: false, controls: area.controls || [],
+      terrain: area.terrain, geo: area.geo, areaKey: key, pendingGeo: false, controls: area.controls || [], leveeMask: area.leveeMask || null, gateCells: area.gateCells || [],
     });
     status.area = area.areaId === 'local' ? key : area.areaId;
     CTL_KEYS.forEach((k) => { ctl[k].value = area.ctl[k]; });
@@ -1779,6 +1788,7 @@
     }
     if (!state.a) return;   // still reopening
     if (state.addingPoint) { addLevelPointAt(e.latlng); return; }
+    if (defenceTap(e.latlng)) return;
     const c = latLngCell(e.latlng);
     if (!c) return;
     const s = $('moveGauge').checked ? F.snapToStream(state.a, c.x, c.y, 6, gaugeFloor()) : -1;
@@ -2407,7 +2417,7 @@
   function showScenarioEmpty(empty) {
     scenarioEmpty = empty;
     Array.from($('scenarioEmpty').parentElement.children).forEach((el) => {
-      if (el.id !== 'scenarioEmpty' && el.id !== 'scenarioModel' && el.id !== 'edgeNote' && el.id !== 'levelPointsSet' && el.id !== 'checkSet' && el.id !== 'downloadSet' && el.id !== 'stormSet' && el.id !== 'riverSet' && el.id !== 'impactSet' && el.id !== 'recordedSet') el.hidden = empty || (el.id === 'eventsSet' && !state.eventsApply);
+      if (el.id !== 'scenarioEmpty' && el.id !== 'scenarioModel' && el.id !== 'edgeNote' && el.id !== 'levelPointsSet' && el.id !== 'checkSet' && el.id !== 'downloadSet' && el.id !== 'stormSet' && el.id !== 'riverSet' && el.id !== 'impactSet' && el.id !== 'recordedSet' && el.id !== 'defenceSet') el.hidden = empty || (el.id === 'eventsSet' && !state.eventsApply);
     });
     if (empty) { $('stats').innerHTML = ''; state.edges = []; }
     renderEdgeNote();
@@ -3035,9 +3045,10 @@
     set.hidden = !local || scenarioEmpty || ctl.floodType.value === 'flash';
     $('checkSet').hidden = !local || scenarioEmpty;
     $('impactSet').hidden = !local || scenarioEmpty;
+    $('defenceSet').hidden = !local || scenarioEmpty || ctl.floodType.value === 'flash';
     $('recordedSet').hidden = !local || scenarioEmpty;
     clearTimeout(impactT);
-    impactT = setTimeout(() => { renderImpact(); renderRecorded(); }, 250);
+    impactT = setTimeout(() => { renderImpact(); renderRecorded(); renderDefences(); }, 250);
     $('downloadSet').hidden = !local || scenarioEmpty;
     if (set.hidden) return;
     const sc = $('satCheck');
@@ -3248,6 +3259,7 @@
         n: a.n, name: a.name, kind: meta.kind, g: meta.gaugeLatLon.map(r5), c: (meta.centerLatLon || meta.gaugeLatLon).map(r5), h: meta.halfKm || 10,
         rid: meta.reportId || null, pin: meta.pinN != null ? meta.pinN : null, pre: meta.presetId || null, ctl: ctlv,
         cp: grid && geo ? ctrls.map((c) => [...cellToLatLon(c.cell, grid.W, grid.H, geo), c.level, c.label || '']) : [],
+        def: a.defences && (a.defences.levees.length || a.defences.gates.length) ? a.defences : null,
       });
     }
     const act = state.areaKey && areaReg.get(state.areaKey);
@@ -3308,6 +3320,7 @@
         state.base = null;
         syncOutputs();
         runScenario();
+        if (a.def) { const na = areaByNumber(a.n); if (na) { na.defences = a.def; await applyDefences(); } }
         saveActive();
       }
       if (st.active != null) {
@@ -4051,6 +4064,171 @@
   window.__floodFindRecorded = findRecorded;
   window.__floodScoreRecorded = scoreRecorded;
   window.__floodFitRecorded = fitRecorded;
+
+  /* ---------- levees and flood gates */
+  // Levees and gates come from OpenStreetMap (and Victoria's coastal levees
+  // where served), or are drawn by hand. They are burned into a copy of the
+  // model's terrain (the original is kept as area.baseGrid), then the flow
+  // analysis is rebuilt.
+  const VIC_LEVEES = 'open-data-platform:coastallevees';
+  let defenceLayer = null, drawing = null, breachFor = null;
+  const defs = () => { const a = state.areaKey && areaReg.get(state.areaKey); if (!a) return null; return (a.defences = a.defences || { levees: [], gates: [], allFail: false }); };
+  const lineKm = (pts) => { let k = 0; for (let i = 1; i < pts.length; i++) k += kmBetween(pts[i - 1], pts[i]); return k; };
+  async function findDefences() {
+    const d = defs(), g = state.geo;
+    if (!d || !g) return null;
+    $('defenceList').innerHTML = '<p class="hint">Looking for levees and flood gates…</p>';
+    const bb = `${g.south},${g.west},${g.north},${g.east}`;
+    const q = `[out:json][timeout:90];
+      (way["man_made"~"^(dyke|levee|flood_wall)$"](${bb});way["barrier"~"^(flood_wall|levee)$"](${bb});way["levee"="yes"](${bb}););out tags geom qt;
+      (nwr["waterway"~"^(sluice_gate|flood_gate|floodgate)$"](${bb});nwr["man_made"~"^(flood_gate|floodgate|sluice_gate)$"](${bb});nwr["flood_gate"="yes"](${bb});nwr["floodgate"="yes"](${bb}););out tags center qt;`;
+    let found = 0, gates = 0, err = null;
+    try {
+      const osm = await overpass(q);
+      for (const e of osm.elements || []) {
+        const t = e.tags || {};
+        if (e.type === 'way' && e.geometry && !/gate/.test(`${t.waterway || ''}${t.man_made || ''}`) && !t.flood_gate && !t.floodgate) {
+          const id = `osm${e.id}`;
+          if (d.levees.some((l) => l.id === id)) continue;
+          const h = parseFloat(t.height);
+          d.levees.push({ id, src: 'OpenStreetMap', name: t.name || (t.man_made === 'flood_wall' || t.barrier === 'flood_wall' ? 'Flood wall' : 'Levee'), pts: e.geometry.map((p) => [p.lat, p.lon]), height: Number.isFinite(h) ? h : null, failed: false, breaches: [] });
+          found++;
+        } else {
+          const ll = e.center || (e.lat != null ? { lat: e.lat, lon: e.lon } : null);
+          const id = `osm${e.type[0]}${e.id}`;
+          if (!ll || d.gates.some((x) => x.id === id)) continue;
+          d.gates.push({ id, name: t.name || 'Flood gate', lat: ll.lat, lon: ll.lon, failed: false });
+          gates++;
+        }
+      }
+    } catch (e2) { err = String(e2.message || e2); }
+    // Victoria's coastal levees (DEECA), if the state map server provides them
+    if (g.south < -33.9 && g.north > -39.3 && g.east > 140.9 && g.west < 150.1) {
+      try {
+        const p = new URLSearchParams({ service: 'WFS', version: '1.0.0', request: 'GetFeature', typeName: VIC_LEVEES, outputFormat: 'application/json', srsName: 'EPSG:4326', maxFeatures: '500', bbox: `${g.west},${g.south},${g.east},${g.north}` });
+        const j = await (await fetch(`${VIC_WFS}?${p}`)).json();
+        (j.features || []).forEach((f, i) => {
+          const lines = f.geometry && (f.geometry.type === 'LineString' ? [f.geometry.coordinates] : f.geometry.type === 'MultiLineString' ? f.geometry.coordinates : []);
+          lines.forEach((ln, k) => { d.levees.push({ id: `vic${i}-${k}`, src: 'Victoria (coastal levees)', name: 'Coastal levee', pts: ln.map(([x, y]) => [y, x]), height: null, failed: false, breaches: [] }); found++; });
+        });
+      } catch (e3) { /* not served */ }
+    }
+    status.defences = { levees: d.levees.length, gates: d.gates.length, found, gatesFound: gates, error: err };
+    await applyDefences();
+    return status.defences;
+  }
+  function gridXY(lat, lon) { const g = state.geo, a = state.grid; return [((lon - g.west) / (g.east - g.west)) * a.W, ((g.north - lat) / (g.north - g.south)) * a.H]; }
+  async function applyDefences() {
+    const area = state.areaKey && areaReg.get(state.areaKey), d = defs();
+    if (!area || !d || !state.grid || !state.geo) return;
+    if (!area.baseGrid) area.baseGrid = state.grid;
+    const base = area.baseGrid, lidar = state.areaMeta && state.areaMeta.lidarShare >= 0.2;
+    const mask = new Uint8Array(base.W * base.H);
+    const levees = d.levees.map((l) => {
+      const cells = F.lineCells(l.pts.map(([la, lo]) => gridXY(la, lo)), base.W, base.H);
+      cells.forEach((c) => { mask[c] = 1; });
+      const breaches = (l.breaches || []).map(([la, lo]) => { const [x, y] = gridXY(la, lo); return Math.round(y) * base.W + Math.round(x); });
+      // crest: the height set, else from LiDAR terrain, else assume 1.5 m
+      const height = l.height != null ? l.height : lidar ? null : 1.5;
+      return { cells, height, failed: l.failed || d.allFail, breaches };
+    });
+    state.leveeMask = levees.length ? mask : null;
+    state.grid = levees.length ? F.burnDefences(base, { levees }) : base;
+    setBusy(true, 'Rebuilding the model with its levees…');
+    await reanalyse(false);
+    setBusy(false);
+    snapGates();
+    state.base = null;
+    runScenario();
+    renderDefences();
+    saveSessionSoon();
+  }
+  function snapGates() {
+    const d = defs();
+    state.gateCells = (d ? d.gates : []).filter((gt) => !gt.failed).map((gt) => {
+      const c = latLngCell({ lat: gt.lat, lng: gt.lon });
+      return c && state.a ? F.snapToStream(state.a, c.x, c.y, 3) : -1;
+    }).filter((c) => c >= 0);
+  }
+  function renderDefences() {
+    const d = defs(), box = $('defenceList');
+    if (!box) return;
+    if (!d) { box.innerHTML = ''; return; }
+    $('allLeveesFail').checked = !!d.allFail;
+    const lidar = state.areaMeta && state.areaMeta.lidarShare >= 0.2;
+    box.innerHTML = d.levees.map((l, i) => `<div class="def-row"><span><strong>${escapeHtml(l.name)}</strong> <small>${escapeHtml(l.src)} · ${lineKm(l.pts).toFixed(2)} km${l.breaches.length ? ` · ${l.breaches.length} breach${l.breaches.length > 1 ? 'es' : ''}` : ''}</small></span>
+        ${l.src === 'drawn' ? `<button type="button" class="icon-btn" data-lev-drop="${i}" aria-label="Remove this levee" title="Remove">×</button>` : '<span></span>'}
+        <span class="def-ctl"><label>Crest <input type="number" step="0.1" min="0" data-lev-h="${i}" value="${l.height != null ? l.height : ''}" placeholder="${lidar ? 'terrain' : '1.5'}" aria-label="Crest height above ground in metres"> m above ground</label>
+        <label class="check"><input type="checkbox" data-lev-fail="${i}"${l.failed ? ' checked' : ''}> Fails</label>
+        <button type="button" class="btn small" data-lev-breach="${i}" aria-pressed="${breachFor === i}">${breachFor === i ? 'Tap the levee…' : 'Breach here'}</button>
+        ${l.breaches.length ? `<button type="button" class="link-btn" data-lev-unbreach="${i}">clear breaches</button>` : ''}</span></div>`).join('')
+      + d.gates.map((gt, i) => `<div class="def-row"><span><strong>${escapeHtml(gt.name)}</strong> <small>flood gate · OpenStreetMap</small></span><span></span>
+        <span class="def-ctl"><label class="check"><input type="checkbox" data-gate-fail="${i}"${gt.failed ? ' checked' : ''}> Fails or left open</label></span></div>`).join('')
+      + (d.levees.length || d.gates.length ? '' : '<p class="hint">No levees or flood gates added for this model yet.</p>');
+    box.querySelectorAll('[data-lev-h]').forEach((el) => el.addEventListener('change', () => { const v = parseFloat(el.value); d.levees[+el.dataset.levH].height = Number.isFinite(v) ? v : null; applyDefences(); }));
+    box.querySelectorAll('[data-lev-fail]').forEach((el) => el.addEventListener('change', () => { d.levees[+el.dataset.levFail].failed = el.checked; applyDefences(); }));
+    box.querySelectorAll('[data-gate-fail]').forEach((el) => el.addEventListener('change', () => { d.gates[+el.dataset.gateFail].failed = el.checked; snapGates(); runScenario(); renderDefences(); saveSessionSoon(); }));
+    box.querySelectorAll('[data-lev-breach]').forEach((el) => el.addEventListener('click', () => { breachFor = breachFor === +el.dataset.levBreach ? null : +el.dataset.levBreach; renderDefences(); }));
+    box.querySelectorAll('[data-lev-unbreach]').forEach((el) => el.addEventListener('click', () => { d.levees[+el.dataset.levUnbreach].breaches = []; applyDefences(); }));
+    box.querySelectorAll('[data-lev-drop]').forEach((el) => el.addEventListener('click', () => { d.levees.splice(+el.dataset.levDrop, 1); applyDefences(); }));
+    status.defences = Object.assign(status.defences || {}, { levees: d.levees.length, gates: d.gates.length, failed: d.levees.filter((l) => l.failed).length + (d.allFail ? d.levees.length : 0), gateCells: (state.gateCells || []).length });
+    drawDefenceLayer();
+  }
+  function drawDefenceLayer() {
+    const d = defs(), L = window.L;
+    if (!state.lmap || !L) return;
+    if (!defenceLayer) defenceLayer = L.layerGroup().addTo(state.lmap);
+    defenceLayer.clearLayers();
+    if (!d) return;
+    d.levees.forEach((l) => {
+      const down = l.failed || d.allFail;
+      L.polyline(l.pts, { color: down ? '#c62828' : '#5d4037', weight: 4, opacity: 0.9, dashArray: down ? '6 6' : null, interactive: false }).addTo(defenceLayer);
+      l.breaches.forEach((b) => L.circleMarker(b, { radius: 6, color: '#c62828', weight: 3, fill: false, interactive: false }).addTo(defenceLayer));
+    });
+    d.gates.forEach((gt) => L.marker([gt.lat, gt.lon], { interactive: false, icon: L.divIcon({ className: '', html: `<span style="display:block;width:12px;height:12px;border:2px solid #fff;background:${gt.failed ? '#c62828' : '#2e7d32'};box-shadow:0 0 0 1px rgba(0,0,0,.4)"></span>`, iconSize: [12, 12], iconAnchor: [6, 6] }) }).addTo(defenceLayer));
+    if (drawing && drawing.pts.length) L.polyline(drawing.pts, { color: '#5d4037', weight: 3, dashArray: '2 6', interactive: false }).addTo(defenceLayer);
+  }
+  // map taps while drawing a levee or placing a breach
+  function defenceTap(latlng) {
+    const d = defs();
+    if (drawing) { drawing.pts.push([latlng.lat, latlng.lng]); $('drawLevee').textContent = `Finish levee (${drawing.pts.length} points)`; drawDefenceLayer(); return true; }
+    if (breachFor != null && d && d.levees[breachFor]) {
+      d.levees[breachFor].breaches.push([latlng.lat, latlng.lng]);
+      breachFor = null;
+      applyDefences();
+      say('Breach added: the levee is lowered to the ground for about 60 m there.');
+      return true;
+    }
+    return false;
+  }
+  function finishDrawing() {
+    const d = defs();
+    if (drawing && d && drawing.pts.length >= 2) {
+      d.levees.push({ id: `drawn${Date.now()}`, src: 'drawn', name: 'Your levee', pts: drawing.pts, height: 1.5, failed: false, breaches: [] });
+      drawing = null;
+      $('drawLevee').setAttribute('aria-pressed', 'false');
+      $('drawLevee').textContent = 'Draw a levee';
+      applyDefences();
+      return true;
+    }
+    drawing = null;
+    $('drawLevee').setAttribute('aria-pressed', 'false');
+    $('drawLevee').textContent = 'Draw a levee';
+    drawDefenceLayer();
+    return false;
+  }
+  $('findDefences').addEventListener('click', () => findDefences());
+  $('drawLevee').addEventListener('click', () => {
+    if (drawing) { finishDrawing(); return; }
+    drawing = { pts: [] };
+    $('drawLevee').setAttribute('aria-pressed', 'true');
+    $('drawLevee').textContent = 'Tap along the levee, then here to finish';
+    say('Tap points along the levee on the map, then press Finish levee.');
+  });
+  $('allLeveesFail').addEventListener('change', (e) => { const d = defs(); if (d) { d.allFail = e.target.checked; applyDefences(); } });
+  window.__floodFindDefences = findDefences;
+  window.__floodDrawLevee = (pts, h) => { const d = defs(); if (!d) return null; d.levees.push({ id: `drawn${Date.now()}`, src: 'drawn', name: 'Your levee', pts, height: h, failed: false, breaches: [] }); return applyDefences().then(() => status.defences); };
+  window.__floodLeveesFail = (on) => { const d = defs(); if (!d) return null; d.allFail = on; return applyDefences().then(() => status.defences); };
 
   /* ---------- on-demand flood modelling */
 

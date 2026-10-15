@@ -217,3 +217,45 @@ test('flash flood: ponds fill dips only up to the runoff draining into them', ()
   assert.ok(light.depth[centre] > 0 && light.depth[centre] < heavy.depth[centre] + 1e-9, 'deeper pond with more rain');
   assert.ok(heavy.summary.pondKm2 > 0);
 });
+
+// a valley draining east: channel along row 10, floodplain rising 0.2 m a row
+function valley() {
+  const W = 60, H = 21, dem = new Float32Array(W * H);
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) dem[y * W + x] = 2 + 0.01 * (W - x) + Math.abs(y - 10) * 0.2;
+  return { W, H, cell: 10, dem };
+}
+
+test('a levee keeps a flood out until it is overtopped, and lets it in when it fails', () => {
+  const g = valley(), W = g.W;
+  const levee = (extra) => Object.assign({ cells: F.lineCells([[0, 13], [59, 13]], W, g.H), height: null }, extra);
+  const run = (grid, level) => {
+    const a = F.analyse(grid, { streamAreaKm2: 0.001 });
+    // gauge near the outlet; upstream of it the river is level with it
+    const gauge = 10 * W + 55;
+    const mask = new Uint8Array(grid.W * grid.H);
+    F.lineCells([[0, 13], [59, 13]], grid.W, grid.H).forEach((c) => { mask[c] = 1; });
+    return F.inundate(a, { gauge, gaugeLevel: valley().dem[gauge] + level, bayLevel: 0, upstreamGradient: 0, levee: mask });
+  };
+  const behind = 15 * W + 30;
+  assert.equal(run(g, 1.5).wet[behind], 1, 'floods without a levee');
+  const high = F.burnDefences(g, { levees: [levee({ height: 3 })] });
+  assert.equal(run(high, 1.5).wet[behind], 0, 'a 3 m levee keeps it dry');
+  const failed = F.burnDefences(g, { levees: [levee({ height: 3, failed: true })] });
+  assert.equal(run(failed, 1.5).wet[behind], 1, 'floods again when the levee fails');
+  const breached = F.burnDefences(g, { levees: [levee({ height: 3, breaches: [13 * W + 30] })] });
+  assert.equal(run(breached, 1.5).wet[behind], 1, 'floods through a breach');
+  const low = F.burnDefences(g, { levees: [levee({ height: 0.3 })] });
+  assert.equal(run(low, 1.5).wet[behind], 1, 'a low levee is overtopped');
+  assert.equal(g.dem[13 * W + 30], valley().dem[13 * W + 30], 'the original terrain is untouched');
+});
+
+test('a closed flood gate stops the river level passing up the channel', () => {
+  const g = valley(), W = g.W;
+  const a = F.analyse(g, { streamAreaKm2: 0.001 });
+  const gauge = 10 * W + 20, up = 10 * W + 5, gateCell = 10 * W + 10;
+  const s = { gauge, gaugeLevel: g.dem[gauge] + 1, bayLevel: 0, upstreamGradient: 0 };
+  const open = F.streamSurface(a, s);
+  const shut = F.streamSurface(a, Object.assign({}, s, { gates: [gateCell] }));
+  assert.ok(open.wse[up] > g.dem[up] + 0.5, 'without a gate the level carries upstream');
+  assert.ok(Math.abs(shut.wse[up] - g.dem[up]) < 1e-6, 'behind a closed gate the channel stays at its bed');
+});

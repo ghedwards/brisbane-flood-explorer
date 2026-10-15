@@ -16,7 +16,7 @@ URL = sys.argv[1] if len(sys.argv) > 1 else "http://localhost:8000/"
 
 
 KEY = []          # key results, shown together in one annotation at the end
-KEY_WORDS = ("Storm tide", "Presets checked", "Recorded floods", "Best match", "Impact", "Storm", "Joined", "Share link", "Satellite check",
+KEY_WORDS = ("Levees", "Storm tide", "Presets checked", "Recorded floods", "Best match", "Impact", "Storm", "Joined", "Share link", "Satellite check",
              "Presets anchored", "Presets on LiDAR", "Phone Layers", "Council layer", "Downloads", "Rain radar",
              "Address search", "Flood warnings", "Echuca", "Extended model", "Area study")
 
@@ -622,6 +622,21 @@ def main() -> int:
                             "ms": loc.get("ms"), "error": loc.get("error"), "snap": snap, "stats": stats[:120],
                             "anchor": status().get("presetAnchor"), "lidar": loc.get("lidar"), "kind": pre.get("kind")})
             page.screenshot(path=f"smoke-preset-{pre['id']}.png")
+            if pre["id"] == "lismore" and loc.get("ok"):
+                # levees: find mapped ones, draw one, then make them all fail
+                try:
+                    fd = page.evaluate("window.__floodFindDefences()")
+                    st_in = page.inner_text("#stats").replace("\n", " ")
+                    dl = page.evaluate("window.__floodDrawLevee([[-28.800, 153.268], [-28.812, 153.282]], 4)")
+                    ff = page.evaluate("window.__floodLeveesFail(true)")
+                    st_out = page.inner_text("#stats").replace("\n", " ")
+                    page.evaluate("window.__floodLeveesFail(false)")
+                except Exception as e:
+                    fd, dl, ff, st_in, st_out = {"error": str(e)[:300]}, None, None, "", ""
+                note("notice", f"Levees at Lismore: found {json.dumps(fd)}; after drawing {json.dumps(dl)}; all fail {json.dumps(ff)} | intact: {st_in[:90]} | failed: {st_out[:90]}")
+                if not (dl and dl.get("levees", 0) >= 1 and ff and ff.get("failed", 0) >= 1):
+                    failures.append(f"levee tools failed: {fd} / {dl} / {ff}")
+                page.screenshot(path="smoke-levees.png")
             if pre["id"] == "goldcoast" and loc.get("ok"):
                 tide = page.evaluate("window.__floodStormTide('hat', 2.0, 0.3)")
                 note("notice", f"Storm tide at Gold Coast: {json.dumps(tide)}")

@@ -172,6 +172,17 @@
       <p class="hint" id="levelPointsHint">Pin the water level at more places along the river, such as another gauge or a flood mark; the surface runs straight between them.</p>
     </fieldset>
 
+    <fieldset id="defenceSet">
+      <legend class="label">Levees and flood gates</legend>
+      <div class="downloads">
+        <button type="button" class="btn small" id="findDefences">Find levees and flood gates here</button>
+        <button type="button" class="btn small" id="drawLevee" aria-pressed="false">Draw a levee</button>
+      </div>
+      <label class="check"><input type="checkbox" id="allLeveesFail"> All levees fail</label>
+      <div id="defenceList"></div>
+      <p class="hint">Levees are raised to their crest in the terrain (from LiDAR, a mapped height, or the height you set); a failed levee or a breach drops to the ground beside it, and water that gets past a levee fills the land behind to the river's level. Closed flood gates stop the river backing up the drains behind them. Mapping of levees and gates in OpenStreetMap is patchy: draw any that are missing.</p>
+    </fieldset>
+
     <fieldset id="impactSet">
       <legend class="label">What's affected</legend>
       <div class="link-row"><button type="button" class="btn small" id="impactBtn">Count buildings, people, roads and key sites</button></div>

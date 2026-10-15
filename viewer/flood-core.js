@@ -553,16 +553,29 @@
     }
     for (const [c, v] of ctrlLevel) if (v > pathWse[c]) pathWse[c] = v;
     const grad = s.upstreamGradient / 1000;
+    // closed flood gates: the river's level doesn't pass up the channel
+    // beyond them (the channel behind a gate stays at its normal level)
+    const gate = new Uint8Array(N);
+    (s.gates || []).forEach((c) => { if (c >= 0 && c < N) gate[c] = 1; });
 
     const junc = new Int32Array(N).fill(-1);
     const wse = new Float64Array(N).fill(NaN);
+    // highest ground between a stream cell and the controlled channel it
+    // joins: backwater can't pass a rise above its own level (a levee, a
+    // weir, a bank between a drain and the river)
+    const crest = new Float64Array(N).fill(-Infinity);
     for (let j = 0; j < nOrder; j++) {
       const c = order[j];
       if (!stream[c]) continue;
       if (onPath[c]) { junc[c] = c; wse[c] = pathWse[c]; continue; }
       const r = rec[c];
-      junc[c] = (r >= 0 && stream[r]) ? junc[r] : -1;
-      if (junc[c] >= 0) wse[c] = wse[junc[c]] + grad * (chain[c] - chain[junc[c]]);
+      junc[c] = gate[c] ? -2 : (r >= 0 && stream[r]) ? junc[r] : -1;
+      if (junc[c] >= 0) {
+        crest[c] = Math.max(crest[r], onPath[r] ? -Infinity : a.dem[r]);
+        if (crest[c] > wse[junc[c]]) junc[c] = -2;
+      }
+      if (junc[c] === -2) wse[c] = a.dem[c];
+      else if (junc[c] >= 0) wse[c] = wse[junc[c]] + grad * (chain[c] - chain[junc[c]]);
       else wse[c] = s.bayLevel + grad * chain[c];
     }
     return { wse, onPath };
@@ -590,6 +603,12 @@
       if (!valid[c]) continue;
       if ((ocean[c] || stream[c]) && dem[c] < level[c]) { wet[c] = 1; q[qt++] = c; }
     }
+    // Levees (s.levee: a mask of levee cells): water that gets onto or past
+    // a levee (over the top, through a breach or a failed section) carries
+    // the level from the side it came from, so the land behind fills to the
+    // river's level rather than its own drain's.
+    const lev = s.levee || null;
+    const carried = lev ? new Uint8Array(N) : null;
     while (qh < qt) {
       const c = q[qh++], cx = c % W, cy = (c - cx) / W;
       for (let k = 0; k < 4; k++) {
@@ -597,12 +616,90 @@
         if (nx < 0 || ny < 0 || nx >= W || ny >= H) continue;
         const n = ny * W + nx;
         if (wet[n] || !valid[n]) continue;
-        if (dem[n] < level[n]) { wet[n] = 1; q[qt++] = n; }
+        let L = level[n];
+        if (lev && (lev[n] || carried[c]) && level[c] > L) L = level[c];
+        if (dem[n] < L) {
+          wet[n] = 1;
+          if (lev && L > level[n]) { level[n] = L; carried[n] = 1; }
+          q[qt++] = n;
+        }
       }
     }
     const depth = new Float32Array(N);
     for (let c = 0; c < N; c++) if (wet[c]) depth[c] = level[c] - dem[c];
     return { wet, depth, level, wse, onPath };
+  }
+
+  /* ------------------------------------------------------------- defences */
+
+  /**
+   * Burn levees into a terrain grid. defs.levees: [{ cells (grid indices
+   * along the levee), height (m above the ground beside it) or null to take
+   * the crest from the terrain itself (LiDAR shows most levees), failed,
+   * breaches: [cell indices] }]. An intact levee raises its cells to the
+   * crest; a failed levee, and the cells around each breach, are lowered to
+   * the ground beside them. Returns a new grid; the input is untouched.
+   */
+  function burnDefences(grid, defs) {
+    const { W, H, dem } = grid;
+    const N = W * H;
+    const out = Float32Array.from(dem);
+    const isLev = new Uint8Array(N);
+    const levees = (defs && defs.levees) || [];
+    levees.forEach((l) => l.cells.forEach((c) => { if (c >= 0 && c < N) isLev[c] = 1; }));
+    const around = (c, r, fn) => {
+      const cx = c % W, cy = (c - cx) / W;
+      for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) {
+        const x = cx + dx, y = cy + dy;
+        if (x >= 0 && y >= 0 && x < W && y < H) fn(y * W + x);
+      }
+    };
+    // the ground beside a levee: the median of the land around it (not the
+    // lowest point, which is often the river channel next to it)
+    const ground = (c) => {
+      const v = [];
+      around(c, 3, (n) => { if (!isLev[n]) v.push(dem[n]); });
+      if (!v.length) return dem[c];
+      v.sort((x, y) => x - y);
+      return v[Math.floor(v.length / 2)];
+    };
+    const crestOf = (c) => { let m = -Infinity; around(c, 1, (n) => { if (dem[n] > m) m = dem[n]; }); return m; };
+    for (const l of levees) {
+      const breach = new Set();
+      const br = Math.max(1, Math.round((l.breachWidth || 60) / 2 / grid.cell));
+      (l.breaches || []).forEach((b) => around(b, br, (n) => breach.add(n)));
+      for (const c of l.cells) {
+        if (c < 0 || c >= N) continue;
+        if (l.failed || breach.has(c)) {
+          // lower the levee and anything left of it in the terrain
+          const g = ground(c);
+          around(c, 1, (n) => { if (isLev[n] || n === c) out[n] = Math.min(out[n], g); });
+          out[c] = Math.min(out[c], g);
+        } else {
+          const crest = l.height != null ? ground(c) + l.height : crestOf(c);
+          if (crest > out[c]) out[c] = crest;
+        }
+      }
+    }
+    return Object.assign({}, grid, { dem: out });
+  }
+
+  /** Grid cells along a polyline of [x, y] grid coordinates (8-connected). */
+  function lineCells(pts, W, H) {
+    const cells = [];
+    for (let k = 1; k < pts.length; k++) {
+      let [x0, y0] = pts[k - 1].map(Math.round), [x1, y1] = pts[k].map(Math.round);
+      const dx = Math.abs(x1 - x0), dy = -Math.abs(y1 - y0), sx = x0 < x1 ? 1 : -1, sy = y0 < y1 ? 1 : -1;
+      let err = dx + dy;
+      for (;;) {
+        if (x0 >= 0 && y0 >= 0 && x0 < W && y0 < H) cells.push(y0 * W + x0);
+        if (x0 === x1 && y0 === y1) break;
+        const e2 = 2 * err;
+        if (e2 >= dy) { err += dy; x0 += sx; }
+        if (e2 <= dx) { err += dx; y0 += sy; }
+      }
+    }
+    return Int32Array.from(new Set(cells));
   }
 
   /* ------------------------------------------------------------ flash flood */
@@ -928,7 +1025,7 @@
 
   return {
     syntheticTerrain, analyse, mainStem, snapToStream, encodeWhiteboxD8,
-    streamSurface, inundate, stats, flashFlood, mergeRuns,
+    streamSurface, inundate, stats, flashFlood, mergeRuns, burnDefences, lineCells,
     parseAsciiGrid, downsample, cleanNodata, parseSimpleTiff,
     // exposed for tests
     _internal: { MinHeap, chamferDistance, mulberry32 },
