@@ -145,7 +145,7 @@ def main() -> int:
         try:
             page.wait_for_function(
                 "window.__floodStatus && window.__floodStatus.area === 'brisbane' && window.__floodStatus.mode === 'map'"
-                " && window.__floodStatus.overlayUpdates > 0 && window.__floodStatus.tilesLoaded > 4",
+                " && window.__floodAreaInfo().some(a => a.key === 'brisbane' && a.active && a.drawn)",
                 timeout=60_000,
             )
         except Exception:

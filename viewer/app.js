@@ -204,7 +204,9 @@
       const key = m.areaKey || (m.areaKey = m.local ? `local-${++localCount}` : m.id);
       state.geo = { west: bl[0], south: bl[1], east: bl[2], north: bl[3] };
       state.pendingGeo = true;
+      const token = ++geoToken;
       enterGeoMode(bl).then((ok) => {
+        if (token !== geoToken) return;   // switched to another area meanwhile
         state.pendingGeo = false;
         if (!ok) { state.geo = null; drawMap(); return; }
         const area = ensureArea(key);
@@ -945,6 +947,7 @@
   // active.
   const areaReg = new Map();
   let localCount = 0;
+  let geoToken = 0;   // bumped whenever the active area changes
   const MAX_AREAS = 6;
   const CTL_KEYS = ['gaugeLevel', 'bayLevel', 'slr', 'extra', 'grad', 'streamArea'];
 
@@ -1006,6 +1009,7 @@
   function activateArea(key, opts) {
     const area = areaReg.get(key);
     if (!area) return false;
+    geoToken++;          // abandon any area still opening
     if (state.areaKey !== key) saveActive();
     Object.assign(state, {
       grid: area.grid, areaId: area.areaId, areaMeta: area.areaMeta, eventsApply: area.eventsApply,
@@ -1038,6 +1042,8 @@
   }
 
   function deactivate() {
+    geoToken++;
+    state.pendingGeo = false;
     saveActive();
     state.areaKey = null;
     setActiveLayers(null);
@@ -1129,6 +1135,7 @@
   }
 
   function onGeoClick(e) {
+    if (state.pendingGeo) { say('Still loading this area…'); return; }
     const hit = areaAt(e.latlng);
     if (!hit) { onNationalClick(e); return; }
     if (hit.key !== state.areaKey) {
@@ -1153,7 +1160,7 @@
   }
 
   function onGeoMove(e) {
-    if (!state.a || !state.geo || !state.areaKey) return;
+    if (state.pendingGeo || !state.a || !state.geo || !state.areaKey) return;
     const c = latLngCell(e.latlng);
     if (c) say(describe(c.i));
   }
@@ -1164,7 +1171,7 @@
     state.youMarker = L.circleMarker(e.latlng, {
       radius: 7, color: '#ffffff', weight: 2, fillColor: '#1a73e8', fillOpacity: 1,
     }).addTo(state.lmap);
-    const hit = areaAt(e.latlng);
+    const hit = state.pendingGeo ? null : areaAt(e.latlng);
     if (hit && hit.key !== state.areaKey) activateArea(hit.key);
     const c = hit && state.a ? latLngCell(e.latlng) : null;
     say(c
