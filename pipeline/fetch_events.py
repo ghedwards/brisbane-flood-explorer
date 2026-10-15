@@ -229,6 +229,7 @@ def main(cfg_path, gauges_path, out_path):
     n_other = sum(len(e.get("others") or []) for e in ok)
     print(f"Recorded floods: {len(ok)} of {len(events)} with hourly readings, {n_other} more gauges along the rivers "
           f"({', '.join(e['id'] + ':' + e.get('ts_name', '?').split('.')[-2] if '.' in e.get('ts_name', '') else e['id'] for e in ok)})")
+    print("Other gauges per flood: " + "; ".join(f"{e['id']}: {', '.join(o['name'] for o in e['others'])}" for e in ok if e.get("others")))
     for e in events:
         if e.get("error"):
             print(f"warning: {e['id']}: {e['error']}")

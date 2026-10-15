@@ -120,7 +120,8 @@ def main(app_js, gauges_path, out_path, near_km=12.0, max_n=250):
     now = dt.datetime.now(dt.timezone.utc).replace(microsecond=0).isoformat()
     Path(out_path).parent.mkdir(parents=True, exist_ok=True)
     Path(out_path).write_text(json.dumps({"fetched": now, "ratings": ratings}, separators=(",", ":")))
-    print(f"Ratings: {len(ratings)} of {tried} gauges near presets ({no_q} without flow records)")
+    print(f"Ratings: {len(ratings)} of {tried} gauges near presets ({no_q} without flow records): "
+          + ", ".join(f"{v['name']} (b {v['b']:.2f})" for v in list(ratings.values())[:40]))
 
 
 if __name__ == "__main__":

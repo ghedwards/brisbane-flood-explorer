@@ -24,24 +24,25 @@ would add, how it could be built from open data, and what to watch for.
 ## Modelling
 
 - **Flood routing, further.** Below the gauge the flood is routed
-  (Muskingum–Cunge) with tributary inflows and tides. Still simple: flow is
-  taken as depth^(5/3) at every cell (no surveyed ratings), tributary
-  floods copy the gauge's shape, places above the gauge are only shifted
-  in time, and floodplain storage isn't counted separately. Upstream
-  gauges as inflows, ratings from Water Data Online discharge series, and
-  dam releases would improve it.
-- **Storm tide beyond Queensland.** The storm tide builder fills in tides
-  for Queensland standard ports; other states' tidal planes (in AHD) would
-  extend it, and Bureau tide predictions would allow "this week's
-  highest tide".
+  (Muskingum–Cunge) with tributary inflows, measured ratings where the
+  gauge has flow records, and tides; recorded floods follow other gauges
+  upstream. Still simple: tributary floods copy the gauge's shape, places
+  above the gauge without a recorded gauge are only shifted in time, and
+  floodplain storage and dam releases aren't modelled. Ratings come from
+  daily means, so they are extrapolated above the highest daily level.
+- **Tides from predictions.** Tide heights cover the whole coast (the
+  national EOT20 tide statistics outside Queensland), but tide cycles are a
+  12.4-hour sine at spring-tide height. Tide predictions for the event's
+  dates would allow "this week's highest tide" and real tide timing for
+  recorded floods.
 - **Design rainfall from the Bureau.** Storm mode currently offers example
   storms and links to the Bureau's design rainfall (IFD) tool. Fetching the
   IFD table for the model's location would give real "1% annual chance"
   storms; the Bureau's site blocks automated requests, so this needs a
   permitted access route (see above) or a pre-built national grid.
-- **Stormwater in storm mode.** Subtract a typical pipe capacity (for
-  example the 10% to 5% annual chance storm in urban areas) from runoff
-  in sealed areas, so small storms aren't overstated in sewered suburbs.
+- **Stormwater, further.** Pipes take one typical rate of runoff from
+  built-up land; council pipe network data (where published) and the
+  local design storm would replace the single rate.
 - **More levee data.** Levees come from OpenStreetMap and whatever
   `pipeline/fetch_levees.py` collects. The NSW levee audit (about 130
   datasets listed on data.nsw.gov.au) is found, but SEED refuses the
@@ -100,10 +101,14 @@ and when roads close and how long places stay cut off (flood over time).
   the national data and the active model).
 - **Real-phone testing**, especially iOS Safari, for panels, scrolling,
   the area-study box and touch gestures.
-- **Accessibility.** Full keyboard use of the map tools, screen-reader
-  labels for results, and colour choices checked for colour-blind users.
-- **Faster first load** on slow connections (defer satellite basemaps,
-  compress national data further).
+- **Accessibility, further.** Done: keyboard use of the map (Enter acts at
+  the map centre), focusable numbered places, announced status messages,
+  colours that differ by lightness. Still to do: a screen-reader summary of
+  the flood map itself (beyond the counts), and an audit with a real
+  screen reader.
+- **Faster first load, further.** Scripts are minified and background data
+  loads after the map; the national gauge file is the largest download and
+  could be split by state or loaded by map view.
 
 ## Build and testing
 

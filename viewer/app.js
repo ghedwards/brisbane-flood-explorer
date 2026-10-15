@@ -4437,6 +4437,11 @@
     }
     return best;
   }
+  window.__floodRatingHere = () => {
+    const r = gaugeRating(), evs = eventsHere();
+    return { rating: r && { name: r.name, b: r.b, depth: +r.depth.toFixed(2), km: +r.km.toFixed(2) }, ratings: nat.ratings ? Object.keys(nat.ratings).length : null,
+      events: evs.map((e) => ({ id: e.id, others: (e.others || []).length, inModel: otherGaugeCells(e).length })) };
+  };
   // other gauges with readings for the same flood, snapped to the river
   // (the biggest channel within about 1 km, as for the main gauge)
   function otherGaugeCells(ev) {

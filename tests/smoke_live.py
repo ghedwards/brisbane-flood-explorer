@@ -16,7 +16,7 @@ URL = sys.argv[1] if len(sys.argv) > 1 else "http://localhost:8000/"
 
 
 KEY = []          # key results, shown together in one annotation at the end
-KEY_WORDS = ("First load", "Keyboard", "Tides at", "Sea reached", "Recorded flood over time", "Flood over time", "Levees", "Storm tide", "Presets checked", "Recorded floods", "Best match", "Impact", "Storm", "Joined", "Share link", "Satellite check",
+KEY_WORDS = ("Storm pipes", "Rating at", "First load", "Keyboard", "Tides at", "Sea reached", "Recorded flood over time", "Flood over time", "Levees", "Storm tide", "Presets checked", "Recorded floods", "Best match", "Impact", "Storm", "Joined", "Share link", "Satellite check",
              "Presets anchored", "Presets on LiDAR", "Phone Layers", "Council layer", "Downloads", "Rain radar",
              "Address search", "Flood warnings", "Echuca", "Extended model", "Area study")
 
@@ -432,6 +432,14 @@ def main() -> int:
             # storm mode: flash flooding on the same model
             fl = page.evaluate("window.__floodSetStorm('flash', 80, 1, 'typical')")
             stats_fl = page.inner_text("#stats").replace("\n", " ")
+            # stormwater pipes: once the buildings have loaded, built-up land drains
+            try:
+                page.wait_for_function("window.__floodStatus.impact && !window.__floodStatus.impact.loading", timeout=90_000)
+            except Exception:
+                pass
+            fp = page.evaluate("window.__floodSetStorm('flash', 80, 1, 'typical')")
+            note("notice" if fp and fp.get("pipedMm", 0) > 0 else "warning",
+                 f"Storm pipes: {fp.get('pipedMm') if fp else None} mm piped from {round(fp.get('urbanKm2', 0), 1) if fp else 0} km² of built-up land; overland {round(fl.get('overlandKm2', 0), 1)} → {round(fp.get('overlandKm2', 0), 1) if fp else '?'} km²")
             fb = page.evaluate("window.__floodSetStorm('both', 80, 1)")
             page.screenshot(path="smoke-storm.png")
             page.evaluate("window.__floodSetStorm('river')")
@@ -691,6 +699,8 @@ def main() -> int:
                 note("notice", f"Recorded floods at Echuca (Victoria): {vrec}; {json.dumps(status().get('vicRecorded'))}")
                 n_cls = page.evaluate("window.__floodApplyGaugeLevels ? window.__floodApplyGaugeLevels('major') : -1")
                 note("notice", f"Echuca major flood class applied at {n_cls} gauge(s); level points {status().get('levelPoints')}")
+                rh = page.evaluate("window.__floodRatingHere ? window.__floodRatingHere() : null")
+                note("notice", f"Rating at Echuca's gauge: {json.dumps(rh)}")
                 # the October 2022 flood's hourly readings drive flood over time
                 evs = page.evaluate("window.__floodEventsHere ? window.__floodEventsHere() : []")
                 if evs:
