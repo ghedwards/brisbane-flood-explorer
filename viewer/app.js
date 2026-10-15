@@ -1405,7 +1405,8 @@
     renderScenarioTitle();
     if (!nums.length) {
       box.innerHTML = `<div class="places-empty"><p><strong>No places yet.</strong></p>
-        <p class="hint">Tap a flood gauge, tide gauge or dam on the map for a report, or tap anywhere to add a place or model flooding there. Each place gets a number that matches its pin on the map.</p></div>`;
+        <p class="hint">Tap a flood gauge, tide gauge or dam on the map for a report, or tap anywhere to add a place or model flooding there. Each place gets a number that matches its pin on the map.</p></div>${studiesHtml()}`;
+      wireStudyRows(box);
       return;
     }
     if (!nums.includes(selectedNum)) selectedNum = act ? act.n : null;
@@ -1428,7 +1429,8 @@
       </li>`;
     }).join('');
     box.innerHTML = `<ul class="places">${rows}</ul>
-      <p class="hint">Choosing a place here works like tapping its number on the map.</p>`;
+      <p class="hint">Choosing a place here works like tapping its number on the map.</p>${studiesHtml()}`;
+    wireStudyRows(box);
     box.querySelectorAll('[data-num]').forEach((b) => b.addEventListener('click', () => selectPlace(+b.dataset.num, { fromList: true })));
     box.querySelectorAll('[data-act]').forEach((b) => b.addEventListener('click', () => placeAction(b.dataset.act, +b.dataset.n)));
     box.querySelectorAll('[data-drop]').forEach((b) => b.addEventListener('click', () => {
@@ -2171,6 +2173,7 @@
     }
     await loadNationalData();
     addNationalLayers(state.lmap);
+    loadStudies();
     renderNotice();
     renderInfo();
     $('summaryLine').innerHTML = '<b>Australia</b> · tap a gauge, dam or tide gauge, or tap anywhere to model flooding';
@@ -2765,7 +2768,111 @@
     return Math.hypot(dx, dy);
   };
 
-  async function studyArea(b) {
+  // Studied areas stay on the map as lettered boxes, are listed in Places,
+  // and are saved in this browser so they come back next visit (their
+  // models are rebuilt on demand with the run button).
+  const STUDY_KEY = 'floodExplorer.studies.v1';
+  const studies = [];
+  let selectedStudy = null;
+  const ICON_RUN = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.3-5.6"/><path d="M20 4v5h-5"/></svg>';
+  function saveStudies() {
+    try {
+      localStorage.setItem(STUDY_KEY, JSON.stringify(studies.map((x) => ({ letter: x.letter, bounds: x.bounds, name: x.name, created: x.created, summary: x.summary }))));
+    } catch (e) { /* storage unavailable: studies last for this visit */ }
+  }
+  function nextLetter() {
+    const used = new Set(studies.map((x) => x.letter));
+    for (let i = 0; ; i++) {
+      const l = i < 26 ? String.fromCharCode(65 + i) : `A${i - 25}`;
+      if (!used.has(l)) return l;
+    }
+  }
+  function drawStudy(st) {
+    const L = window.L, m = state.lmap;
+    if (!m || st.rect) return;
+    const [S, W, N, E] = st.bounds;
+    st.rect = L.rectangle([[S, W], [N, E]], { color: '#0d5f8c', weight: 1.5, dashArray: '8 6', fill: false, interactive: false }).addTo(m);
+    st.label = L.marker([N, W], {
+      icon: L.divIcon({ className: 'study-label', html: `<span>${st.letter}</span>`, iconSize: [26, 26], iconAnchor: [0, 0] }),
+      keyboard: false, zIndexOffset: 700,
+    }).addTo(m);
+    st.label.bindTooltip(`Study area ${st.letter}: ${st.name}`, { direction: 'top', offset: [13, 0] });
+    st.label.on('click', () => selectStudy(st.letter));
+  }
+  function loadStudies() {
+    if (studies.length) return;
+    try {
+      const saved = JSON.parse(localStorage.getItem(STUDY_KEY) || '[]');
+      saved.forEach((x) => { if (Array.isArray(x.bounds) && x.bounds.length === 4) studies.push(Object.assign({}, x, { loaded: false })); });
+    } catch (e) { /* nothing saved */ }
+    studies.forEach(drawStudy);
+    renderPlaces();
+  }
+  function addStudy(b) {
+    const bounds = [b.getSouth(), b.getWest(), b.getNorth(), b.getEast()];
+    const c = [(bounds[0] + bounds[2]) / 2, (bounds[1] + bounds[3]) / 2];
+    const near = nearestNamed(c[0], c[1], 60);
+    const st = { letter: nextLetter(), bounds, name: near ? `Around ${near.f.properties.name}` : `${c[0].toFixed(2)}, ${c[1].toFixed(2)}`, created: new Date().toISOString(), summary: null, loaded: false };
+    studies.push(st);
+    drawStudy(st);
+    saveStudies();
+    return st;
+  }
+  function selectStudy(letter) {
+    const st = studies.find((x) => x.letter === letter);
+    if (!st || !state.lmap) return;
+    const [S, W, N, E] = st.bounds;
+    state.lmap.fitBounds([[S, W], [N, E]], { padding: [30, 30] });
+    studies.forEach((x) => x.rect && x.rect.setStyle({ weight: x === st ? 3 : 1.5 }));
+    selectedStudy = letter;
+    setPlacesCollapsed(false);
+    renderPlaces();
+  }
+  function studySize(st) {
+    const [S, W, N, E] = st.bounds;
+    return `${Math.round((E - W) * 111.32 * Math.cos(((S + N) / 2) * Math.PI / 180))} × ${Math.round((N - S) * 110.574)} km`;
+  }
+  function studiesHtml() {
+    if (!studies.length) return '';
+    const rows = studies.map((st) => {
+      const sm = st.summary;
+      const tags = [studySize(st), sm ? `${sm.gauges} gauge${sm.gauges === 1 ? '' : 's'}, ${sm.dams} dam${sm.dams === 1 ? '' : 's'}` : null,
+        st.loaded ? `${sm ? sm.models : 0} model${sm && sm.models === 1 ? '' : 's'} on the map` : 'saved: run to load its models'].filter(Boolean).join(' · ');
+      return `<li class="place study-row${selectedStudy === st.letter ? ' on' : ''}">
+        <button type="button" class="place-main" data-study="${st.letter}" title="Show study area ${st.letter}">
+          <span class="pin-num study-badge">${st.letter}</span>
+          <span class="place-text"><span class="place-name">${escapeHtml(st.name)}</span><span class="place-tags">${tags}</span></span>
+        </button>
+        <button type="button" class="icon-btn" data-study-run="${st.letter}" aria-label="${st.loaded ? 'Run again' : 'Run'}: load its gauges, dams and flood models" title="${st.loaded ? 'Run again' : 'Run study'}">${ICON_RUN}</button>
+        <button type="button" class="icon-btn" data-study-zoom="${st.letter}" aria-label="Zoom to study area ${st.letter}" title="Zoom to">${ICON_ZOOM}</button>
+        <button type="button" class="icon-btn" data-study-drop="${st.letter}" aria-label="Remove study area ${st.letter}" title="Remove">×</button>
+      </li>`;
+    }).join('');
+    return `<h3 class="places-sub">Studied areas</h3><ul class="places">${rows}</ul>`;
+  }
+  function wireStudyRows(box) {
+    box.querySelectorAll('[data-study]').forEach((b) => b.addEventListener('click', () => selectStudy(b.dataset.study)));
+    box.querySelectorAll('[data-study-zoom]').forEach((b) => b.addEventListener('click', () => selectStudy(b.dataset.studyZoom)));
+    box.querySelectorAll('[data-study-run]').forEach((b) => b.addEventListener('click', () => {
+      const st = studies.find((x) => x.letter === b.dataset.studyRun);
+      if (st) { const [S, W, N, E] = st.bounds; studyArea(window.L.latLngBounds([S, W], [N, E]), st); }
+    }));
+    box.querySelectorAll('[data-study-drop]').forEach((b) => b.addEventListener('click', () => {
+      const i = studies.findIndex((x) => x.letter === b.dataset.studyDrop);
+      if (i < 0) return;
+      const st = studies[i];
+      [st.rect, st.label].forEach((l) => l && state.lmap && state.lmap.removeLayer(l));
+      studies.splice(i, 1);
+      if (selectedStudy === st.letter) selectedStudy = null;
+      saveStudies();
+      renderPlaces();
+    }));
+  }
+  window.__floodStudies = () => studies.map((x) => ({ letter: x.letter, name: x.name, bounds: x.bounds, loaded: x.loaded, summary: x.summary }));
+
+  async function studyArea(b, existing) {
+    const study = existing || addStudy(b);
+    selectedStudy = study.letter;
     if (!nat.data) await loadNationalData();
     const S = b.getSouth(), N = b.getNorth(), Wl = b.getWest(), E = b.getEast();
     const midLat = (S + N) / 2;
@@ -2845,6 +2952,10 @@
     }
     setBusy(false);
     status.study = summary;
+    study.summary = { gauges: summary.gauges, dams: summary.dams, models: summary.models, km: summary.km };
+    study.loaded = true;
+    saveStudies();
+    renderPlaces();
     const first = tiles.map((t) => t.gauge || t.tide).find(Boolean);
     say(`Area study: ${summary.models} flood model${summary.models === 1 ? '' : 's'} (${summary.km} km each), ${summary.gauges} gauge${summary.gauges === 1 ? '' : 's'} and ${summary.dams} dam${summary.dams === 1 ? '' : 's'} inside${summary.layers.length ? `; ${summary.layers.join(', ')} on` : ''}.`);
     if (first) { const r = reports.find((x) => x.id === `${first.properties.kind}:${first.properties.id}`); if (r) selectPlace(r.n); }

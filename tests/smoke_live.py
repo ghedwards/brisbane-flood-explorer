@@ -408,6 +408,12 @@ def main() -> int:
         if not (study and study.get("ok") and study.get("models", 0) >= 2 and study.get("gauges", 0) >= 1):
             failures.append(f"area study failed: {study}")
         page.screenshot(path="smoke-study.png")
+        studies = page.evaluate("window.__floodStudies ? window.__floodStudies() : []")
+        stored = page.evaluate("(() => { try { return JSON.parse(localStorage.getItem('floodExplorer.studies.v1') || '[]').length; } catch (e) { return -1; } })()")
+        rows = page.locator("#placesCard [data-study]").count()
+        print(f"Studies: {studies}; stored {stored}; rows {rows}")
+        if not (studies and studies[-1]["loaded"] and stored >= 1 and rows >= 1):
+            failures.append(f"the studied area was not kept: {studies}, stored {stored}, rows {rows}")
         # the box tool itself: button arms it, a drag draws the box
         page.locator("#studyArea").click()
         armed = page.locator("#studyHint").is_visible()
