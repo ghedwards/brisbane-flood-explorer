@@ -1032,7 +1032,8 @@
     const bounds = L.latLngBounds([b[1], b[0]], [b[3], b[2]]);
     if (!area) {
       const fromReport = state.areaMeta.reportId && reports.find((r) => r.id === state.areaMeta.reportId);
-      area = { key, name: state.areaMeta.name || key, n: fromReport ? fromReport.n : nextNumber(), reportId: state.areaMeta.reportId || null };
+      const fromPin = state.areaMeta.pinN != null && pins.find((x) => x.n === state.areaMeta.pinN);
+      area = { key, name: state.areaMeta.name || key, n: fromReport ? fromReport.n : fromPin ? fromPin.n : nextNumber(), reportId: state.areaMeta.reportId || null };
       area.overlay = L.imageOverlay(BLANK, bounds, {
         opacity: parseFloat($('floodOpacity').value) / 100, className: 'flood-layer', zIndex: 6,
       }).addTo(m);
@@ -1080,6 +1081,7 @@
     const area = areaByNumber(n);
     if (area) [area.overlay, area.outline, area.marker].forEach((l) => (hidden ? m.removeLayer(l) : l.addTo(m)));
     reports.filter((r) => r.n === n && r.pin).forEach((r) => (hidden ? m.removeLayer(r.pin) : r.pin.addTo(m)));
+    pins.filter((p) => p.n === n && p.marker).forEach((p) => (hidden ? m.removeLayer(p.marker) : p.marker.addTo(m)));
     if (hidden && area && area.key === state.areaKey) say(`${n}. ${area.name} is hidden. Its scenario is kept; show it again from Places.`);
     reports.forEach(refreshReportLink);
     renderPlaces();
@@ -1180,10 +1182,14 @@
   function renderPlaces() {
     const box = $('areaList');
     if (!box) return;
-    const nums = Array.from(new Set([...reports.map((r) => r.n), ...Array.from(areaReg.values()).map((a) => a.n)])).sort((a, b) => a - b);
+    const nums = Array.from(new Set([...reports.map((r) => r.n), ...Array.from(areaReg.values()).map((a) => a.n), ...pins.map((p) => p.n)])).sort((a, b) => a - b);
     status.areas = Array.from(areaReg.keys());
     $('placesCount').hidden = !nums.length;
     $('placesCount').textContent = String(nums.length);
+    $('placesHeadCount').hidden = !nums.length;
+    $('placesHeadCount').textContent = String(nums.length);
+    const act = state.areaKey && areaReg.get(state.areaKey);
+    $('placesNow').textContent = act ? `Scenario: ${act.n}. ${act.name}` : (activeReport ? `Report: ${activeReport.n}. ${activeReport.name || ''}` : '');
     renderScenarioTitle();
     if (!nums.length) {
       box.innerHTML = `<div class="places-empty"><p><strong>No places yet.</strong></p>
@@ -1193,15 +1199,20 @@
     const active = state.areaKey && areaReg.get(state.areaKey);
     if (expandedNum == null && active) expandedNum = active.n;
     const rows = nums.map((n) => {
-      const r = reports.find((x) => x.n === n), a = areaByNumber(n);
+      const r = reports.find((x) => x.n === n), a = areaByNumber(n), pin = pins.find((x) => x.n === n);
       const hidden = hiddenNums.has(n), isActive = a && a.key === state.areaKey, open = expandedNum === n;
-      const name = (r && r.name) || (a && a.name) || `Place ${n}`;
-      const tags = [r ? (r.kind === 'storage' ? 'dam report' : r.kind === 'tide' ? 'tide report' : 'gauge report') : null, a ? 'flood model' : null].filter(Boolean).join(' + ');
-      const color = a ? (isActive ? AREA_COLOR : '#8a6a4a') : (GAUGE_STYLE[r.kind] || GAUGE_STYLE.river).color;
+      const name = (r && r.name) || (pin && pin.name) || (a && a.name) || `Place ${n}`;
+      const tags = [r ? (r.kind === 'storage' ? 'dam report' : r.kind === 'tide' ? 'tide report' : 'gauge report') : null, pin ? 'pinned place' : null, a ? 'flood model' : null].filter(Boolean).join(' + ');
+      const color = a ? (isActive ? AREA_COLOR : '#8a6a4a') : r ? (GAUGE_STYLE[r.kind] || GAUGE_STYLE.river).color : PIN_COLOR;
       const acts = [];
       if (r) acts.push(`<button type="button" class="btn" data-act="report" data-n="${n}">Open report</button>`);
       if (a) acts.push(`<button type="button" class="btn primary" data-act="scenario" data-n="${n}">${isActive ? 'Edit flood scenario' : 'Open flood scenario'}</button>`);
       else if (r) acts.push(`<button type="button" class="btn primary" data-act="model" data-n="${n}">${r.kind === 'tide' ? 'Model coastal flooding here' : 'Model flooding here'}</button>`);
+      else if (pin) {
+        acts.push(`<button type="button" class="btn primary" data-act="model" data-n="${n}">Model river flooding here</button>`);
+        acts.push(`<button type="button" class="btn" data-act="modelcoast" data-n="${n}">Model coastal flooding here</button>`);
+      }
+      if (pin && !r) acts.push(`<button type="button" class="btn" data-act="nearest" data-n="${n}">Report on nearest gauge</button>`);
       acts.push(`<button type="button" class="btn" data-act="zoom" data-n="${n}">Zoom to</button>`);
       return `<li class="place${isActive ? ' on' : ''}${hidden ? ' off' : ''}">
         <button type="button" class="place-main" data-num="${n}" aria-expanded="${open}">
@@ -1226,14 +1237,49 @@
       const n = +b.dataset.drop, a = areaByNumber(n);
       reports.filter((r) => r.n === n).forEach(closeReport);
       if (a) removeArea(a.key);
+      for (let i = pins.length - 1; i >= 0; i--) if (pins[i].n === n) {
+        if (pins[i].marker && state.lmap) state.lmap.removeLayer(pins[i].marker);
+        pins.splice(i, 1);
+      }
       hiddenNums.delete(n);
       if (expandedNum === n) expandedNum = null;
       renderPlaces();
     }));
   }
 
+  function setPlacesCollapsed(collapsed) {
+    $('placesCard').classList.toggle('collapsed', collapsed);
+    $('placesToggle').setAttribute('aria-expanded', String(!collapsed));
+    document.querySelectorAll('[data-places-toggle]').forEach((b) => b.setAttribute('aria-pressed', String(!collapsed)));
+    status.placesOpen = !collapsed;
+  }
+  $('placesToggle').addEventListener('click', () => setPlacesCollapsed(!$('placesCard').classList.contains('collapsed')));
+  document.querySelectorAll('[data-places-toggle]').forEach((b) => b.addEventListener('click', () => {
+    const collapsed = !$('placesCard').classList.contains('collapsed');
+    setPlacesCollapsed(collapsed);
+    if (!collapsed && isPhone()) document.querySelectorAll('[data-panel]').forEach((p) => { if (p.dataset.side === 'left') p.hidden = true; });
+    syncPanels();
+  }));
+  document.querySelectorAll('[data-places-open]').forEach((b) => b.addEventListener('click', () => {
+    setPlacesCollapsed(false);
+    if (isPhone()) document.querySelectorAll('[data-panel]').forEach((p) => { p.hidden = true; });
+    syncPanels();
+  }));
+  window.__floodSetPlacesCollapsed = setPlacesCollapsed;
+
   function placeAction(act, n) {
-    const a = areaByNumber(n), r = reports.find((x) => x.n === n);
+    const a = areaByNumber(n), r = reports.find((x) => x.n === n), pin = pins.find((x) => x.n === n);
+    if (pin && !r && (act === 'model' || act === 'modelcoast')) {
+      expandedNum = n;
+      modelHere(pin.lat, pin.lon, { kind: act === 'modelcoast' ? 'coast' : 'river', name: pin.name, pinN: n });
+      return;
+    }
+    if (act === 'nearest' && pin) {
+      const near = nearestNamed(pin.lat, pin.lon, 100);
+      if (near) { openReport(near.f); if (state.lmap) state.lmap.setView([near.f.geometry.coordinates[1], near.f.geometry.coordinates[0]], Math.max(state.lmap.getZoom(), 11)); }
+      else say('No Bureau of Meteorology gauge or dam within 100 km of this place.');
+      return;
+    }
     if (act === 'report' && r) {
       showReport(r);
     } else if (act === 'scenario' && a) {
@@ -1245,6 +1291,7 @@
     } else if (act === 'zoom' && state.lmap) {
       if (a) { const b = a.areaMeta.bounds_lonlat; state.lmap.fitBounds([[b[1], b[0]], [b[3], b[2]]]); }
       else if (r) state.lmap.setView([r.lat, r.lon], Math.max(state.lmap.getZoom(), 12));
+      else if (pin) state.lmap.setView([pin.lat, pin.lon], Math.max(state.lmap.getZoom(), 12));
     }
   }
   window.__floodPlaceAction = placeAction;
@@ -1253,14 +1300,14 @@
     const el = $('scenarioPlace');
     if (!el) return;
     const a = state.areaKey && areaReg.get(state.areaKey);
-    el.textContent = a ? `${a.n}. ${a.name} · all places` : (areaReg.size || reports.length ? 'Choose a place' : '');
+    el.textContent = a ? `${a.n}. ${a.name}` : (areaReg.size || reports.length ? 'Choose a place in Places' : '');
   }
 
   const EYE = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/></svg>';
   const EYE_OFF = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 3l18 18"/><path d="M10.6 5.1A10 10 0 0 1 12 5c6.5 0 10 7 10 7a17 17 0 0 1-3.2 4.2M6.6 6.6A17 17 0 0 0 2 12s3.5 7 10 7a9.6 9.6 0 0 0 4.4-1"/></svg>';
-  window.__floodPlaces = () => Array.from(new Set([...reports.map((r) => r.n), ...Array.from(areaReg.values()).map((a) => a.n)])).sort((a, b) => a - b).map((n) => {
-    const a = areaByNumber(n), r = reports.find((x) => x.n === n);
-    return { n, report: !!r, area: !!a, hidden: hiddenNums.has(n), onMap: !!(a && state.lmap && state.lmap.hasLayer(a.overlay)), reportName: r && r.name, areaName: a && a.name };
+  window.__floodPlaces = () => Array.from(new Set([...reports.map((r) => r.n), ...Array.from(areaReg.values()).map((a) => a.n), ...pins.map((p) => p.n)])).sort((a, b) => a - b).map((n) => {
+    const a = areaByNumber(n), r = reports.find((x) => x.n === n), pin = pins.find((x) => x.n === n);
+    return { n, report: !!r, area: !!a, pin: !!pin, hidden: hiddenNums.has(n), onMap: !!(a && state.lmap && state.lmap.hasLayer(a.overlay)), reportName: r && r.name, areaName: a && a.name, pinName: pin && pin.name };
   });
 
   window.__floodActivateArea = (key) => activateArea(key, { fit: true });
@@ -1970,8 +2017,41 @@
 
   // Reports and modelled areas share one set of numbers: an area modelled
   // from report 2 is also 2. A number is free once neither uses it.
+  // Places can also be plain pins dropped on the map ("Add as a place").
+  const pins = [];
+  const PIN_COLOR = '#455a64';
+
+  function nearestNamed(lat, lon, km) {
+    let best = null, bd = km;
+    const all = nat.data ? [...nat.data.gauges, ...nat.data.storages] : [];
+    for (const f of all) {
+      const [x, y] = f.geometry.coordinates;
+      const d = distKm(lat, lon, y, x);
+      if (d < bd) { bd = d; best = f; }
+    }
+    return best ? { f: best, km: bd } : null;
+  }
+
+  function addPin(lat, lon) {
+    const near = nearestNamed(lat, lon, 25);
+    const name = near ? `Near ${near.f.properties.name}` : `${lat.toFixed(3)}, ${lon.toFixed(3)}`;
+    const pin = { n: nextNumber(), name, lat, lon, marker: null };
+    if (state.lmap) {
+      pin.marker = window.L.marker([lat, lon], { icon: numIcon(pin.n, PIN_COLOR), keyboard: false, zIndexOffset: 800 }).addTo(state.lmap);
+      pin.marker.bindTooltip(`${pin.n}. ${name}`, { direction: 'top', offset: [0, -12] });
+      pin.marker.on('click', () => { setPlacesCollapsed(false); expandedNum = pin.n; renderPlaces(); });
+    }
+    pins.push(pin);
+    expandedNum = pin.n;
+    setPlacesCollapsed(false);
+    renderPlaces();
+    say(`Added place ${pin.n}: ${name}.`);
+    return pin;
+  }
+  window.__floodAddPin = (lat, lon) => addPin(lat, lon).n;
+
   function nextNumber() {
-    const used = new Set([...reports.map((r) => r.n), ...Array.from(areaReg.values()).map((a) => a.n)]);
+    const used = new Set([...reports.map((r) => r.n), ...Array.from(areaReg.values()).map((a) => a.n), ...pins.map((p) => p.n)]);
     for (let n = 1; ; n++) if (!used.has(n)) return n;
   }
   const hiddenNums = new Set();
@@ -2005,7 +2085,7 @@
     reports.forEach((x) => { x.el.hidden = x !== r; });
     $('reportEmpty').hidden = !!r;
     $('h-report').textContent = r ? r.title : 'Report';
-    $('reportPlace').textContent = r ? `${r.n}. ${r.name || ''} · all places` : '';
+    $('reportPlace').textContent = r ? `${r.n}. ${r.name || ''}` : '';
     $('reportPrev').hidden = $('reportNext').hidden = n < 2;
     reports.forEach((x) => {
       if (!x.pin) return;
@@ -2153,12 +2233,16 @@
     const L = window.L;
     const { lat, lng } = e.latlng;
     const div = document.createElement('div');
-    div.innerHTML = `<strong>${lat.toFixed(4)}, ${lng.toFixed(4)}</strong><div class="popup-actions">
+    const near = nearestNamed(lat, lng, 25);
+    div.innerHTML = `<strong>${lat.toFixed(4)}, ${lng.toFixed(4)}</strong>${near ? `<br><small>${near.km.toFixed(1)} km from ${escapeHtml(near.f.properties.name)}</small>` : ''}<div class="popup-actions">
+      <button type="button" data-k="pin">Add as a place</button>
       <button type="button" data-k="river">Model river flooding here</button>
       <button type="button" data-k="coast">Model coastal flooding here</button></div>`;
     div.querySelectorAll('button').forEach((b) => b.addEventListener('click', () => {
       state.lmap.closePopup();
-      modelHere(lat, lng, { kind: b.dataset.k, name: b.dataset.k === 'coast' ? 'Coast near here' : 'River near here' });
+      if (b.dataset.k === 'pin') { addPin(lat, lng); return; }
+      const pin = addPin(lat, lng);
+      modelHere(lat, lng, { kind: b.dataset.k, name: pin.name, pinN: pin.n });
     }));
     L.popup({ closeButton: true }).setLatLng(e.latlng).setContent(div).openOn(state.lmap);
   }
@@ -2306,7 +2390,7 @@
       const row = Math.round(((bounds[3] - lat) / (bounds[3] - bounds[1])) * grid.H);
       const key = `local-${++localCount}`;
       state.areaMeta = {
-        id: 'local', areaKey: key, local: true, kind: o.kind, name: o.name, bounds_lonlat: bounds, reportId: o.reportId || null, presetId: o.presetId || null,
+        id: 'local', areaKey: key, local: true, kind: o.kind, name: o.name, bounds_lonlat: bounds, reportId: o.reportId || null, presetId: o.presetId || null, pinN: o.pinN != null ? o.pinN : null,
         gauge: { col, row }, streamAreaKm2: Math.max(0.5, Math.min(4, (grid.W * grid.H * grid.cell * grid.cell) / 1e6 * 0.004)),
         source: 'Terrain: Geoscience Australia 1-second (about 30 m) hydrologically enforced elevation model (DEM-H), CC BY 4.0, read live from GA.',
       };
@@ -2404,7 +2488,7 @@
     ctl.extra.value = 0;
     ctl.gaugeLevel.value = 4.46;
     syncOutputs();
-    if (!isPhone()) openPanel('panel-places');
+    setPlacesCollapsed(isPhone());
     renderPlaces();
     const areas = await listAreas();
     await loadFloodHub();

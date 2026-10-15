@@ -119,6 +119,27 @@ h1 span { color: var(--accent); }
   top: var(--top); bottom: var(--bottom); width: 360px; max-width: calc(100vw - 2 * var(--gap));
 }
 .sheet[data-side="left"] { left: var(--left); top: calc(var(--top) + 64px); }
+
+/* left column: Places on top (collapsible), then Scenario or Report */
+.left-col {
+  position: fixed; z-index: 1001; left: var(--left); top: calc(var(--top) + 64px); bottom: var(--bottom);
+  width: 360px; max-width: calc(100vw - 2 * var(--gap)); display: flex; flex-direction: column; gap: 10px; pointer-events: none;
+}
+.left-col > * { pointer-events: auto; }
+.left-col .sheet { position: static; width: auto; max-width: none; flex: 1 1 auto; min-height: 0; top: auto; bottom: auto; left: auto; }
+.places-card { flex: 0 0 auto; display: flex; flex-direction: column; max-height: 42%; min-height: 0; overflow: hidden; }
+.left-col:not(:has(.sheet:not([hidden]))) .places-card { max-height: 100%; }
+.places-head {
+  display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 10px; width: 100%;
+  border: 0; background: transparent; color: var(--ink); padding: 10px 12px 10px 16px; cursor: pointer; text-align: left;
+}
+.places-title { font: 700 1rem/1.2 var(--font-display); font-stretch: 85%; white-space: nowrap; }
+.count-pill { display: inline-block; min-width: 18px; padding: 0 6px; border-radius: 9px; background: var(--gauge); color: #fff; font: 700 11px/18px var(--font-body); text-align: center; vertical-align: 1px; }
+.places-now { font-size: 12.5px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chev { width: 20px; height: 20px; stroke: currentColor; fill: none; stroke-width: 2; transition: transform .15s; }
+.places-head[aria-expanded="false"] .chev { transform: rotate(-90deg); }
+.places-card #areaList { overflow-y: auto; padding: 0 12px 12px; border-top: 1px solid var(--line); padding-top: 10px; min-height: 0; }
+.places-card.collapsed #areaList { display: none; }
 .sheet[data-side="right"] { right: calc(var(--right) + var(--rail) + var(--gap)); width: 340px; }
 .sheet-head {
   display: flex; align-items: center; justify-content: space-between; gap: 8px;
@@ -275,6 +296,11 @@ details > div { display: grid; gap: 14px; }
     border-radius: 14px 14px 0 0; padding: 4px max(6px, env(safe-area-inset-right, 0px)) calc(4px + env(safe-area-inset-bottom, 0px)) max(6px, env(safe-area-inset-left, 0px));
   }
   .tool { flex: 1; }
+  /* phones: Places is a strip under the title bar; Scenario and Report are bottom sheets */
+  .left-col { display: contents; }
+  .places-card { position: fixed; z-index: 1000; left: var(--left); right: var(--right); top: calc(var(--top) + 96px); max-height: 45vh; }
+  body.sheet-open .places-card { display: none; }
+  .left-col .sheet { position: fixed; }
   .sheet, .sheet[data-side="left"], .sheet[data-side="right"] {
     left: 0; right: 0; width: auto; max-width: none; top: auto;
     bottom: calc(var(--bar) + env(safe-area-inset-bottom, 0px)); max-height: min(68vh, calc(100vh - 140px));
@@ -308,7 +334,7 @@ details > div { display: grid; gap: 14px; }
     <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M20 18h0"/><circle cx="16" cy="6" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="18" r="2"/></svg>
     Scenario
   </button>
-  <button type="button" class="tool" data-open="panel-places" aria-pressed="false">
+  <button type="button" class="tool" data-places-toggle aria-pressed="true">
     <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 21s-6-5.6-6-10.5A6 6 0 0 1 18 10.5C18 15.4 12 21 12 21Z"/><circle cx="12" cy="10.5" r="2.2"/></svg>
     Places
     <span class="count" id="placesCount" hidden></span>
@@ -336,13 +362,29 @@ details > div { display: grid; gap: 14px; }
   </button>
 </nav>
 
+
+
+
+
+<!-- Left column: Places, then the selected place's Scenario or Report -->
+<div class="left-col" id="leftCol">
+  <!-- Places: always shown above the Scenario / Report panel; collapsible -->
+  <section class="places-card float" id="placesCard" aria-labelledby="h-places">
+    <button type="button" class="places-head" id="placesToggle" aria-expanded="true" aria-controls="areaList">
+      <span class="places-title"><span id="h-places">Places</span> <span class="count-pill" id="placesHeadCount" hidden></span></span>
+      <span class="places-now" id="placesNow"></span>
+      <svg class="chev" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+    </button>
+    <div id="areaList" class="area-list"></div>
+  </section>
+
 <!-- Scenario -->
 <aside class="sheet float" id="panel-scenario" data-panel data-side="left" aria-labelledby="h-scenario" hidden>
-  <div class="sheet-head"><div class="head-title"><h2 id="h-scenario">Flood scenario</h2><button type="button" class="sub-link" id="scenarioPlace" data-open="panel-places"></button></div><button type="button" class="close" data-close aria-label="Close">×</button></div>
+  <div class="sheet-head"><div class="head-title"><h2 id="h-scenario">Flood scenario</h2><button type="button" class="sub-link" id="scenarioPlace" data-places-open></button></div><button type="button" class="close" data-close aria-label="Close">×</button></div>
   <div class="sheet-body">
     <div id="scenarioEmpty" class="empty" hidden>
       <p><strong>No area modelled yet.</strong></p>
-      <p class="hint">Model a place first: tap a river gauge, tide gauge or dam and choose <em>Model flooding here</em>, or tap anywhere on the map. Your places are listed under <button type="button" class="link-btn" data-open="panel-places">Places</button>. Or pick a river town or coast from the menu at the top to model it straight away.</p>
+      <p class="hint">Model a place first: tap a river gauge, tide gauge or dam and choose <em>Model flooding here</em>, or tap anywhere on the map. Your places are listed under <button type="button" class="link-btn" data-places-open>Places</button>. Or pick a river town or coast from the menu at the top to model it straight away.</p>
     </div>
     <div class="stats" id="stats"></div>
 
@@ -400,13 +442,17 @@ details > div { display: grid; gap: 14px; }
   </div>
 </aside>
 
-<!-- Places: numbered reports and flood models -->
-<aside class="sheet float" id="panel-places" data-panel data-side="left" aria-labelledby="h-places" hidden>
-  <div class="sheet-head"><h2 id="h-places">Places</h2><button type="button" class="close" data-close aria-label="Close">×</button></div>
-  <div class="sheet-body">
-    <div id="areaList" class="area-list"></div>
+<!-- Report on a picked feature -->
+<aside class="sheet float" id="panel-report" data-panel data-side="left" aria-labelledby="h-report" hidden>
+  <div class="sheet-head"><div class="head-title"><h2 id="h-report">Report</h2><button type="button" class="sub-link" id="reportPlace" data-places-open></button></div>
+    <span class="head-actions"><button type="button" class="icon-btn" id="reportPrev" aria-label="Previous report" title="Previous report">‹</button><button type="button" class="icon-btn" id="reportNext" aria-label="Next report" title="Next report">›</button>
+    <button type="button" class="close" data-close aria-label="Hide the report panel">×</button></span></div>
+  <div class="sheet-body reports" id="reportBody">
+    <div class="places-empty" id="reportEmpty"><p><strong>No report open.</strong></p>
+      <p class="hint">Tap a flood gauge, tide gauge or dam on the map, or open one from <button type="button" class="link-btn" data-places-open>Places</button>.</p></div>
   </div>
 </aside>
+</div>
 
 <!-- Layers -->
 <aside class="sheet float" id="panel-layers" data-panel data-side="right" aria-labelledby="h-layers" hidden>
@@ -452,16 +498,7 @@ details > div { display: grid; gap: 14px; }
   <div class="sheet-body" id="floodhub"><div id="floodhubBody"><p class="hint">Loading…</p></div></div>
 </aside>
 
-<!-- Report on a picked feature -->
-<aside class="sheet float" id="panel-report" data-panel data-side="right" aria-labelledby="h-report" hidden>
-  <div class="sheet-head"><div class="head-title"><h2 id="h-report">Report</h2><button type="button" class="sub-link" id="reportPlace" data-open="panel-places"></button></div>
-    <span class="head-actions"><button type="button" class="icon-btn" id="reportPrev" aria-label="Previous report" title="Previous report">‹</button><button type="button" class="icon-btn" id="reportNext" aria-label="Next report" title="Next report">›</button>
-    <button type="button" class="close" data-close aria-label="Hide the report panel">×</button></span></div>
-  <div class="sheet-body reports" id="reportBody">
-    <div class="places-empty" id="reportEmpty"><p><strong>No report open.</strong></p>
-      <p class="hint">Tap a flood gauge, tide gauge or dam on the map, or open one from <button type="button" class="link-btn" data-open="panel-places">Places</button>.</p></div>
-  </div>
-</aside>
+
 
 <!-- About -->
 <aside class="sheet float" id="panel-about" data-panel data-side="right" aria-labelledby="h-about" hidden>

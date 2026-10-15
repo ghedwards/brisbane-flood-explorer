@@ -166,17 +166,18 @@ def main() -> int:
                     failures.append(f"hiding/showing place {n} failed: hidden={hid} shown={shown}")
                 print(f"Places: {places}; hide->{hid}; show->{shown}")
                 # the Places panel reaches the report and the flood scenario
-                page.click(".tool[data-open='panel-places']")
+                page.evaluate("window.__floodSetPlacesCollapsed(false)")
                 page.wait_for_timeout(300)
-                if page.locator("#panel-places").is_hidden():
-                    failures.append("the Places panel did not open")
-                page.locator(f"#panel-places [data-num='{n}']").click()
-                page.locator(f"#panel-places [data-act='report'][data-n='{n}']").click()
+                if not page.locator("#areaList").is_visible():
+                    failures.append("the Places list is not visible")
+                if page.locator(f"#placesCard [data-act='report'][data-n='{n}']").count() == 0:
+                    page.locator(f"#placesCard [data-num='{n}']").click()
+                page.locator(f"#placesCard [data-act='report'][data-n='{n}']").click()
                 page.wait_for_timeout(400)
-                rep_open = page.locator("#panel-report").is_visible()
-                page.locator(f"#panel-places [data-act='scenario'][data-n='{n}']").click()
+                rep_open = page.locator("#panel-report").is_visible() and page.locator("#areaList").is_visible()
+                page.locator(f"#placesCard [data-act='scenario'][data-n='{n}']").click()
                 page.wait_for_timeout(800)
-                scen_open = page.locator("#panel-scenario").is_visible()
+                scen_open = page.locator("#panel-scenario").is_visible() and page.locator("#areaList").is_visible()
                 title = page.text_content("#scenarioPlace") or ""
                 if not (rep_open and scen_open and title.startswith(f"{n}.")):
                     failures.append(f"Places actions failed: report panel {rep_open}, scenario panel {scen_open}, title {title!r}")
@@ -292,6 +293,24 @@ def main() -> int:
             page.wait_for_timeout(800)
         else:
             popup, after = "", s1
+
+        # ---- a pin dropped on the map becomes a place; modelling it keeps its number
+        page.select_option("#area", "australia")
+        page.wait_for_timeout(1500)
+        pin_n = page.evaluate("window.__floodAddPin(-27.62, 152.76)")
+        before = (status().get("local") or {}).get("key")
+        page.evaluate("n => window.__floodPlaceAction('model', n)", pin_n)
+        try:
+            page.wait_for_function(f"window.__floodStatus.local && window.__floodStatus.local.ok !== undefined"
+                                   f" && (window.__floodStatus.local.ok === false || window.__floodStatus.local.key !== {json.dumps(before)})",
+                                   timeout=90_000)
+        except Exception:
+            pass
+        pin_place = [p for p in page.evaluate("window.__floodPlaces()") if p["n"] == pin_n]
+        print(f"Pinned place: {pin_place}")
+        if not (pin_place and pin_place[0]["pin"] and pin_place[0]["area"]):
+            failures.append(f"pinned place {pin_n} was not modelled under its own number: {pin_place}")
+        page.screenshot(path="smoke-pin.png")
 
         # ---- every preset in the menu models successfully
         results = []
