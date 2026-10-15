@@ -51,20 +51,21 @@ WARNING_FEEDS = {
 }
 
 
-def http_text(url, retries=2):
+def http_text(url, retries=1, timeout=20):
+    """Fetch text; refusals (4xx) and FTP failures are not retried."""
     last = None
     for i in range(retries + 1):
         try:
-            req = urllib.request.Request(url, headers=UA)
-            with urllib.request.urlopen(req, timeout=60) as r:
+            req = urllib.request.Request(url, headers=UA) if url.startswith("http") else url
+            with urllib.request.urlopen(req, timeout=timeout) as r:
                 return r.read().decode("utf-8", "replace")
         except urllib.error.HTTPError as e:
-            if e.code == 404:
-                raise
+            raise RuntimeError(f"{url}: HTTP {e.code}") from None
+        except (urllib.error.URLError, TimeoutError, OSError) as e:
             last = e
-        except (urllib.error.URLError, TimeoutError) as e:
-            last = e
-        time.sleep(2 * (i + 1))
+            if url.startswith("ftp"):
+                break
+        time.sleep(2)
     raise RuntimeError(f"{url}: {last}")
 
 

@@ -3428,38 +3428,45 @@
   const LIDAR_PREF = 'floodExplorer.lidar';
   let lidarVariant = null;
   const useLidar = () => { try { return localStorage.getItem(LIDAR_PREF) !== 'off'; } catch (e) { return true; } };
-  async function withLidar(grid, bounds, halfKm) {
-    const cellL = halfKm <= 10 ? 15 : grid.cell;          // 15 m for 20 km models
-    const W = Math.round((bounds[2] - bounds[0]) * 111320 * Math.cos((((bounds[1] + bounds[3]) / 2) * Math.PI) / 180) / cellL);
-    const H = Math.round((bounds[3] - bounds[1]) * 110574 / cellL);
-    // the request format the LiDAR service accepts, found once per visit
-    const variants = [[null, null], ['EPSG:4283', null], [null, 'GTiff'], ['EPSG:4283', 'GTiff']];
+  // Fetch the LiDAR window (raw) — runs alongside the DEM-H download.
+  async function fetchLidar(box, halfKm, demCell) {
+    const cellL = halfKm <= 10 ? 20 : demCell;          // 20 m for 20 km models
+    const midLat = (box[1] + box[3]) / 2;
+    const W = Math.round((box[2] - box[0]) * 111320 * Math.cos((midLat * Math.PI) / 180) / cellL);
+    const H = Math.round((box[3] - box[1]) * 110574 / cellL);
+    // the request format GA's LiDAR service accepts (GDA94 works), found once per visit
+    const variants = [['EPSG:4283', null], [null, null]];
     let r = null, lastErr = null;
-    const order = lidarVariant != null ? [lidarVariant] : variants.map((_, i) => i);
-    for (const i of order) {
-      try { r = await fetchRaster(LIDAR_WCS, bounds, W, H, wcsUrl(LIDAR_WCS, bounds, W, H, variants[i][0], variants[i][1])); lidarVariant = i; break; } catch (err) { lastErr = err; }
+    const order = lidarVariant != null ? [lidarVariant] : variants.map((_, k) => k);
+    for (const k of order) {
+      try { r = await fetchRaster(LIDAR_WCS, box, W, H, wcsUrl(LIDAR_WCS, box, W, H, variants[k][0], variants[k][1])); lidarVariant = k; break; } catch (err) { lastErr = err; }
     }
     status.lidarVariant = lidarVariant;
     if (!r) throw lastErr || new Error('no LiDAR');
+    return r;
+  }
+  // LiDAR where it has data, DEM-H (nearest cell) where it doesn't.
+  function mergeLidar(grid, r) {
     const { iw, ih, data, nd } = r;
     const N = iw * ih, dem = new Float32Array(N), valid = new Uint8Array(N);
     let have = 0;
     for (let y = 0; y < ih; y++) {
       const yd = Math.min(grid.H - 1, Math.floor(((y + 0.5) / ih) * grid.H));
       for (let x = 0; x < iw; x++) {
-        const i = y * iw + x, v = data[i];
-        if (Number.isFinite(v) && v !== nd && v > -100 && v < 9000) { dem[i] = v; have++; } else {
+        const k = y * iw + x, v = data[k];
+        if (Number.isFinite(v) && v !== nd && v > -100 && v < 9000) { dem[k] = v; have++; } else {
           const xd = Math.min(grid.W - 1, Math.floor(((x + 0.5) / iw) * grid.W));
-          dem[i] = grid.dem[yd * grid.W + xd];
+          dem[k] = grid.dem[yd * grid.W + xd];
         }
-        valid[i] = 1;
+        valid[k] = 1;
       }
     }
     const share = have / N;
     if (share < 0.2) return { grid, share };
-    const cell = ((bounds[2] - bounds[0]) * 111320 * Math.cos((((bounds[1] + bounds[3]) / 2) * Math.PI) / 180)) / iw;
+    const cell = grid.cell * grid.W / iw;
     return { grid: { W: iw, H: ih, cell, dem, valid }, share };
   }
+
 
   async function modelHere(lat, lon, opts) {
     const o = Object.assign({ kind: 'river', name: 'This area' }, opts || {});
@@ -3473,6 +3480,9 @@
       let got = null, lastErr = null;
       const H0 = o.halfKm || 10, C0 = o.cellM || 30, [wlat, wlon] = o.center || [lat, lon];
       if (H0 > 10) setBusy(true, `Downloading elevation for a ${2 * H0} km area…`);
+      // LiDAR downloads alongside DEM-H
+      const lidarP = useLidar() && o.lidar !== false
+        ? fetchLidar(windowBox(wlat, wlon, H0), H0, C0).catch(() => null) : Promise.resolve(null);
       for (const [half, cell] of [[H0, C0], [H0, Math.round(C0 * 1.07)], [H0 * 0.9, C0]]) {
         try { got = await fetchDemWindow(wlat, wlon, half, cell); break; } catch (err) {
           lastErr = err;
@@ -3483,14 +3493,12 @@
       let { grid } = got;
       const { bounds } = got;
       let lidarShare = 0;
-      if (useLidar() && o.lidar !== false) {
-        setBusy(true, 'Checking for LiDAR elevation here…');
-        try {
-          const l = await withLidar(grid, bounds, H0);
-          lidarShare = l.share;
-          if (l.share >= 0.2) grid = l.grid;
-        } catch (err) { lidarShare = -1; /* service unavailable: keep DEM-H */ }
-      }
+      const lid = await lidarP;
+      if (lid) {
+        const l = mergeLidar(grid, lid);
+        lidarShare = l.share;
+        if (l.share >= 0.2) grid = l.grid;
+      } else if (useLidar() && o.lidar !== false) lidarShare = -1;   // service unavailable: DEM-H
       setBusy(true, 'Working out how water flows here…');
       await nextFrame();
       const col = Math.round(((lon - bounds[0]) / (bounds[2] - bounds[0])) * grid.W);
