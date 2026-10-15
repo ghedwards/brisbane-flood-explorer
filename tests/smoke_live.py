@@ -391,11 +391,11 @@ def main() -> int:
             except Exception as e:
                 ext = f"error: {e}"
             loc = status().get("local") or {}
-            after = [p for p in page.evaluate("window.__floodPlaces()") if p["n"] == pin_n]
-            print(f"Extend model: {ext}; local {loc}; place {after}")
+            ext_place = [p for p in page.evaluate("window.__floodPlaces()") if p["n"] == pin_n]
+            print(f"Extend model: {ext}; local {loc}; place {ext_place}")
             note("notice", f"Extended model: {json.dumps(loc)}")
-            if ext is not True or loc.get("km") != 40 or not (after and after[0]["area"]):
-                failures.append(f"extending the model failed: {ext}, {loc}, {after}")
+            if ext is not True or loc.get("km") != 40 or not (ext_place and ext_place[0]["area"]):
+                failures.append(f"extending the model failed: {ext}, {loc}, {ext_place}")
             page.screenshot(path="smoke-extended.png")
 
         # ---- every preset in the menu models successfully
