@@ -735,7 +735,8 @@
     }
     const tPeak = rec ? rec.reduce((m, r) => (r[1] > m[1] ? r : m))[0] : rise;
     const w = { lo, hi, w0, w1, cells: Int32Array.from(cells), arrive, minA, maxA, rise, fall, gaugeAt, at, band, tStart, tEnd, tPeak, routed: null };
-    if (o.route && g >= 0) w.routed = routeDown(a, s, w, g, speed);
+    if (o.route && g >= 0) w.routed = routeDown(a, s, w, g, speed, o.rating);
+    if (rec && o.others && o.others.length && g >= 0) w.up = betweenGauges(a, w, g, speed, o.others);
     if (w.routed) w.maxA = Math.max(w.maxA, w.routed.extraHours);
     // the tide: high water (the scenario's sea level) at the river's peak,
     // or low water at the peak
@@ -744,6 +745,65 @@
       : () => s.bayLevel;
     w.tide = amp;
     return w;
+  }
+
+  /**
+   * Other gauges upstream with readings for the same flood (o.others:
+   * [{cell, hydro}]): along the river between two gauges the level blends
+   * their readings by distance, each shifted by the wave's travel time from
+   * it; above the top gauge the level follows that gauge, earlier by the
+   * travel time. Readings are used as a rise from each gauge's lowest to
+   * highest reading, mapped to the scenario's range at the main gauge.
+   */
+  function betweenGauges(a, w, g, speedKmh, others) {
+    const { N, rec, chain, order, nOrder, stream } = a;
+    const cms = speedKmh * 1000;
+    const span = w.hi - w.lo, base = w.gaugeAt(w.tStart), pk = Math.max(...Array.from({ length: 200 }, (_, i) => w.gaugeAt(w.tStart + ((w.tEnd - w.tStart) * i) / 199)));
+    const rng = Math.max(0.01, pk - base);
+    const rel = [(t) => (w.gaugeAt(t) - base) / rng];
+    const cells = [g], used = [];
+    for (const ot of others) {
+      if (!ot || ot.cell < 0 || ot.cell >= N || !stream[ot.cell] || !ot.hydro || ot.hydro.length < 2 || cells.includes(ot.cell)) continue;
+      let c = ot.cell, n = 0;
+      while (c >= 0 && c !== g && n < N) { c = rec[c]; n++; }
+      if (c !== g) continue;   // not upstream of the main gauge
+      const h = ot.hydro, lo = Math.min(...h.map((r) => r[1])), hi = Math.max(...h.map((r) => r[1]));
+      const span2 = Math.max(0.01, hi - lo);
+      rel.push((t) => {
+        if (t <= h[0][0]) return (h[0][1] - lo) / span2;
+        if (t >= h[h.length - 1][0]) return (h[h.length - 1][1] - lo) / span2;
+        let i0 = 0, i1 = h.length - 1;
+        while (i1 - i0 > 1) { const m = (i0 + i1) >> 1; if (h[m][0] <= t) i0 = m; else i1 = m; }
+        const f = (t - h[i0][0]) / Math.max(1e-9, h[i1][0] - h[i0][0]);
+        return (h[i0][1] + (h[i1][1] - h[i0][1]) * f - lo) / span2;
+      });
+      cells.push(ot.cell); used.push(ot.name || '');
+    }
+    if (cells.length < 2) return null;
+    const gi = new Map(cells.map((c, k) => [c, k]));
+    const k1 = new Int16Array(N).fill(-1), k2 = new Int16Array(N).fill(-1), f = new Float32Array(N), d1 = new Float32Array(N), d2 = new Float32Array(N);
+    // between each upstream gauge and the next gauge down
+    for (let k = 1; k < cells.length; k++) {
+      const U = cells[k];
+      let L = rec[U];
+      while (L >= 0 && !gi.has(L)) L = rec[L];
+      if (L < 0) continue;
+      const len = Math.max(1, chain[U] - chain[L]);
+      for (let c = U; c !== L; c = rec[c]) {
+        k1[c] = k; k2[c] = gi.get(L); f[c] = (chain[U] - chain[c]) / len;
+        d1[c] = (chain[U] - chain[c]) / cms; d2[c] = (chain[c] - chain[L]) / cms;
+      }
+    }
+    // above each upstream gauge: that gauge's readings, earlier
+    const first = new Int32Array(N).fill(-1);
+    for (let j = 0; j < nOrder; j++) {
+      const c = order[j];
+      first[c] = gi.has(c) ? c : rec[c] >= 0 ? first[rec[c]] : -1;
+      if (first[c] >= 0 && first[c] !== g && k1[c] < 0 && stream[c]) {
+        k1[c] = gi.get(first[c]); k2[c] = -1; f[c] = 0; d1[c] = -(chain[c] - chain[first[c]]) / cms;
+      }
+    }
+    return { rel, k1, k2, f, d1, d2, base, rng, gauges: cells.length - 1, names: used };
   }
 
   // Time of concentration (hours) for a catchment of A km² (ARR)
@@ -766,14 +826,19 @@
    * Tributary channels below the gauge follow the river's level where they
    * join it (backwater, as in the steady surface).
    */
-  function routeDown(a, s, w, g, speedKmh) {
+  //   rating: optional { b, depth } from the gauge's measured flows: flow
+  //   goes as (level - bed)^b, with the bed 'depth' metres below the
+  //   river's normal level (instead of b = 5/3 and a bed 1 m down)
+  function routeDown(a, s, w, g, speedKmh, rating) {
     const { N, rec, chain, stream, acc, order, nOrder } = a;
     const cellKm2 = (a.cell * a.cell) / 1e6;
     const Ag = Math.max(acc[g] * cellKm2, 0.01), tcg = tcHours(Ag);
-    const zb = Math.min(a.dem[g] - 1, w.lo - 0.5);       // bed at the gauge
+    const useR = rating && rating.b > 0.5 && rating.depth > 0;
+    const zb = useR ? w.lo - Math.max(0.1, rating.depth) : Math.min(a.dem[g] - 1, w.lo - 0.5);   // bed at the gauge
+    const bx = useR ? Math.min(4, Math.max(0.8, rating.b)) : 5 / 3;
     const span = w.hi - zb;
-    const qOf = (h) => Math.pow(Math.max(0, (h - zb) / span), 5 / 3);
-    const hOf = (q) => zb + span * Math.pow(Math.max(0, q), 0.6);
+    const qOf = (h) => Math.pow(Math.max(0, (h - zb) / span), bx);
+    const hOf = (q) => zb + span * Math.pow(Math.max(0, q), 1 / bx);
     // the path below the gauge
     const path = [];
     const onP = new Int32Array(N).fill(-1);
@@ -897,7 +962,7 @@
     }
     const qPk = Math.max(...qg);
     return {
-      T0, dt, nT, flows, cellA, cellF, hOf, qPk,
+      T0, dt, nT, flows, cellA, cellF, hOf, qPk, exponent: bx, rated: !!useR,
       reaches: flows.slice(1).map((f) => ({ km: (chain[path[0]] - chain[path[f.k]]) / 1000, K: f.K, X: f.X })),
       tributaries: Array.from(inflow.values()).flat().filter((e) => !e.local).length,
       extraHours: (T0 + nT * dt) - w.tEnd,
@@ -917,6 +982,10 @@
         const n = R.cellA[c], f = R.cellF[c], A = R.flows[n], B = R.flows[n + 1];
         const qa = (A.Q[ti] + (A.Q[ti + 1] - A.Q[ti]) * tf) / A.ref, qb = (B.Q[ti] + (B.Q[ti + 1] - B.Q[ti]) * tf) / B.ref;
         h = R.hOf((qa + (qb - qa) * f) * R.qPk);
+      } else if (w.up && w.up.k1[c] >= 0) {
+        const U = w.up, r1 = U.rel[U.k1[c]](t - U.d1[c]);
+        const r = U.k2[c] >= 0 ? r1 * (1 - U.f[c]) + U.rel[U.k2[c]](t + U.d2[c]) * U.f[c] : r1;
+        h = U.base + r * U.rng;
       } else h = w.at[w.band[c]](t - w.arrive[c]);
       let v = w.w0[c] + ((w.w1[c] - w.w0[c]) * (h - w.lo)) / span;
       if (w.tide && bay > v) v = bay;

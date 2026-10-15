@@ -47,7 +47,7 @@ jobs:
         run: pip install -r pipeline/requirements.txt
 
       - name: Test the data fetchers
-        run: python -m unittest tests/test_floodhub.py tests/test_national.py tests/test_council.py tests/test_floodinfo.py tests/test_events.py tests/test_osm.py tests/test_tides.py
+        run: python -m unittest tests/test_floodhub.py tests/test_national.py tests/test_council.py tests/test_floodinfo.py tests/test_events.py tests/test_osm.py tests/test_tides.py tests/test_ratings.py
 
       # Terrain only needs rebuilding when the area or the pipeline changes.
       - name: Restore built terrain
@@ -140,6 +140,22 @@ jobs:
       # impact counts don't depend on the busy Overpass service. Each run
       # refreshes a few (missing first, then over 30 days old); the cache
       # always restores the latest set.
+      # Level-to-flow ratings for gauges near the presets, fitted to ten
+      # years of daily records (monthly)
+      - name: Restore gauge ratings
+        id: ratings
+        uses: actions/cache@v6
+        with:
+          path: cache/ratings.json
+          key: ratings-${{ steps.month.outputs.month }}-${{ hashFiles('pipeline/fetch_ratings.py') }}
+
+      - name: Fit gauge ratings from Water Data Online (monthly)
+        if: steps.ratings.outputs.cache-hit != 'true' && steps.national.outcome == 'success'
+        continue-on-error: true
+        timeout-minutes: 40
+        run: |
+          python pipeline/fetch_ratings.py viewer/app.js site/data/national/gauges.geojson cache/ratings.json | tee ratings.log
+
       # Tide heights around the whole coast (AIMS EOT20 tidal statistics);
       # they don't change, so fetched once per change to the script
       - name: Restore tide heights
@@ -175,6 +191,8 @@ jobs:
           [ -f cache/events.json ] && cp cache/events.json site/data/events.json || true
           [ -f cache/levees.geojson ] && cp cache/levees.geojson site/data/levees.geojson || true
           [ -f cache/tides.json ] && cp cache/tides.json site/data/tides.json || true
+          [ -f cache/ratings.json ] && cp cache/ratings.json site/data/ratings.json || true
+          echo "::notice::$(grep -E '^Ratings' ratings.log 2>/dev/null || echo 'Ratings: from cache')"
           echo "::notice::$(grep -E '^Tides' tides.log 2>/dev/null || ([ -f cache/tides.json ] && echo 'Tides: from cache') || echo 'Tides: none')"
           if [ -f cache/osm/index.json ]; then mkdir -p site/data/osm && cp cache/osm/*.json site/data/osm/; fi
           echo "::notice::$(grep -E '^OpenStreetMap copies' osm.log 2>/dev/null || echo 'OpenStreetMap copies: none')"

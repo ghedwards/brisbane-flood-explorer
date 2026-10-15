@@ -46,6 +46,13 @@ class Events(unittest.TestCase):
         self.assertEqual(len(ev["series"]), 20)
         self.assertEqual(ev["peak"]["hours"], 19)
 
+    def test_collects_the_same_flood_at_other_gauges_on_the_river(self):
+        with mock.patch.object(fe, "kiwis", fake_kiwis):
+            ev = fe.fetch_event({"id": "x", "name": "X", "lat": -28.809, "lon": 153.2765, "match": "lismore|richmond",
+                                 "start": "2022-02-26", "end": "2022-02-26"}, GAUGES)
+        self.assertEqual([o["station"] for o in ev["others"]], ["203999"], "the other Richmond gauge, not the tide gauge")
+        self.assertEqual(len(ev["others"][0]["series"]), 20)
+
     def test_main_records_errors_without_stopping(self):
         with tempfile.TemporaryDirectory() as d, mock.patch.object(fe, "kiwis", fake_kiwis):
             cfg = Path(d) / "c.json"

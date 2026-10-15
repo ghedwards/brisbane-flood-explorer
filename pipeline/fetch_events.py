@@ -142,6 +142,34 @@ def readings(ts_id, start, end):
     return hourly(entry.get("data") or [], start)
 
 
+def others_on_river(ev, gauges, main_station, start, end, radius=40, limit=4):
+    """Readings for the same flood at other gauges on the river (named for
+    it, within 40 km), so the app can follow the flood between gauges."""
+    pat = re.compile(ev.get("match", "."), re.I)
+    cands = []
+    for f in gauges:
+        p = f["properties"]
+        if not p.get("station") or p.get("station") == main_station or p.get("kind") == "tide":
+            continue
+        if not pat.search(f"{p.get('name', '')} {p.get('basin', '')}"):
+            continue
+        lon, lat = f["geometry"]["coordinates"][:2]
+        d = km(ev["lat"], ev["lon"], lat, lon)
+        if d <= radius:
+            cands.append((d, p, lat, lon))
+    out = []
+    for d, p, lat, lon in sorted(cands, key=lambda x: x[0])[:10]:
+        if len(out) >= limit:
+            break
+        for ts_id, ts_name in series_list(p["station"])[:2]:
+            series = readings(ts_id, start, end)
+            if len(series) >= 6:
+                out.append({"name": p.get("name"), "station": p.get("station"), "lat": lat, "lon": lon, "km": round(d, 2),
+                            "ts_name": ts_name, "series": series})
+                break
+    return out
+
+
 def fetch_event(ev, gauges):
     out = {"id": ev["id"], "name": ev["name"], "lat": ev["lat"], "lon": ev["lon"]}
     aest = dt.timezone(dt.timedelta(hours=10))
@@ -174,6 +202,7 @@ def fetch_event(ev, gauges):
                     out["series"] = series
                     pk = max(series, key=lambda r: r[1])
                     out["peak"] = {"hours": pk[0], "level": pk[1]}
+                    out["others"] = others_on_river(ev, gauges, st["station"], start, end)
                     return out
     if not tried:
         out["error"] = "no gauge or Water Data Online station within 8 km"
@@ -197,7 +226,8 @@ def main(cfg_path, gauges_path, out_path):
     now = dt.datetime.now(dt.timezone.utc).replace(microsecond=0).isoformat()
     Path(out_path).parent.mkdir(parents=True, exist_ok=True)
     Path(out_path).write_text(json.dumps({"fetched": now, "events": events}, separators=(",", ":")))
-    print(f"Recorded floods: {len(ok)} of {len(events)} with hourly readings "
+    n_other = sum(len(e.get("others") or []) for e in ok)
+    print(f"Recorded floods: {len(ok)} of {len(events)} with hourly readings, {n_other} more gauges along the rivers "
           f"({', '.join(e['id'] + ':' + e.get('ts_name', '?').split('.')[-2] if '.' in e.get('ts_name', '') else e['id'] for e in ok)})")
     for e in events:
         if e.get("error"):

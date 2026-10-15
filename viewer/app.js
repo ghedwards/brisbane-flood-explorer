@@ -2316,7 +2316,10 @@
       nat.readings = readings;
       const opt = async (f) => { try { const r = await fetch(`data/national/${f}`, { cache: 'no-cache' }); return r.ok ? r.json() : null; } catch (e) { return null; } };
       [nat.floodclass, nat.warnings] = await Promise.all([opt('floodclass.json'), opt('warnings.json')]);
-      try { const r = await fetch('data/events.json', { cache: 'no-cache' }); nat.events = r.ok ? ((await r.json()).events || []).filter((e) => e.series) : []; } catch (e) { nat.events = []; }
+      // recorded floods and gauge ratings: only needed for the flood over
+      // time, so they load in the background
+      fetch('data/events.json', { cache: 'no-cache' }).then((r) => (r.ok ? r.json() : {})).then((d) => { nat.events = (d.events || []).filter((e) => e.series); renderShapeChoices(); }).catch(() => { nat.events = []; });
+      fetch('data/ratings.json', { cache: 'no-cache' }).then((r) => (r.ok ? r.json() : {})).then((d) => { nat.ratings = d.ratings || {}; }).catch(() => { nat.ratings = {}; });
       nat.floodclass = nat.floodclass || {};
       renderWarnings();
     } catch (e) {
@@ -4397,10 +4400,46 @@
       route: $('flatten').value === 'route',
       tide: hasSea() && $('tideCycle').value ? { amp: Math.max(0, parseFloat($('tideAmp').value) || 0), atPeak: $('tideCycle').value } : null,
       hydro: ev ? ev.series : null,
+      others: ev && ev.others ? otherGaugeCells(ev) : null,
+      rating: gaugeRating(),
       eventId: ev ? ev.id : null,
     };
   }
   $('floodShape').addEventListener('change', renderShapeChoices);
+  // the measured level-to-flow rating of the Bureau gauge at the model's
+  // gauge (within 2 km), from the build's fit to Water Data Online records
+  function gaugeRating() {
+    if (!nat.ratings || !nat.data || state.gauge < 0) return null;
+    const [la, lo] = cellLatLng(state.gauge);
+    let best = null;
+    for (const f of nat.data.gauges) {
+      const r = nat.ratings[f.properties.station];
+      if (!r) continue;
+      const [x, y] = f.geometry.coordinates, km = kmBetween([y, x], [la, lo]);
+      if (km < 2 && (!best || km < best.km)) best = { km, ...r, depth: r.hmed - r.h0 };
+    }
+    return best;
+  }
+  // other gauges with readings for the same flood, snapped to the river
+  // (the biggest channel within about 1 km, as for the main gauge)
+  function otherGaugeCells(ev) {
+    const a = state.a, out = [];
+    for (const o of ev.others || []) {
+      const c = cellOf(o.lat, o.lon);
+      if (c < 0 || !o.series) continue;
+      const col = c % a.W, row = Math.floor(c / a.W), R = Math.max(3, Math.round(1000 / a.cell));
+      let big = 0;
+      for (let dy = -R; dy <= R; dy++) for (let dx = -R; dx <= R; dx++) {
+        const x = col + dx, y = row + dy;
+        if (x < 0 || y < 0 || x >= a.W || y >= a.H) continue;
+        const i = y * a.W + x;
+        if (a.stream[i] && a.acc[i] > big) big = a.acc[i];
+      }
+      const cell = F.snapToStream(a, col, row, R, big * 0.3);
+      if (cell >= 0) out.push({ cell, hydro: o.series, name: o.name });
+    }
+    return out;
+  }
   // tides: only for models that reach the sea; the rise above mean sea level
   // defaults to the nearest Queensland port's high spring tide
   function hasSea() {
@@ -4466,7 +4505,7 @@
     const R = tl.wave.routed;
     status.timeline = { steps: tl.steps, step: tl.step, event: opts.eventId,
       routed: R ? { reaches: R.reaches.length, km: +(R.reaches[R.reaches.length - 1] || { km: 0 }).km.toFixed(1), peakFrac: +R.peakAt(R.flows.length - 1).frac.toFixed(2), lagHours: Math.round(R.peakAt(R.flows.length - 1).hours - R.peakAt(0).hours), tributaries: R.tributaries } : null,
-      tide: tl.wave.tide || 0, firstRoad: ac ? ac.firstClose : null, maxIsolated: ac ? ac.maxIso : null, longestHours: ac ? ac.longest : null, roadsClosed: ac ? ac.roads.length : null };
+      tide: tl.wave.tide || 0, rated: !!(R && R.rated), upGauges: tl.wave.up ? tl.wave.up.gauges : 0, firstRoad: ac ? ac.firstClose : null, maxIsolated: ac ? ac.maxIso : null, longestHours: ac ? ac.longest : null, roadsClosed: ac ? ac.roads.length : null };
     return status.timeline;
   }
   // Roads and isolation through time, from when each spot is over 0.3 m deep
@@ -4559,6 +4598,13 @@
       const end = R.peakAt(R.flows.length - 1), top = R.peakAt(0), km = R.reaches[R.reaches.length - 1].km;
       parts.push(`Routed ${km.toFixed(1)} km down the river to the model's edge: the peak gets there about ${Math.max(0, Math.round(end.hours - top.hours))} hours after the gauge, at ${Math.round(Math.min(1, end.frac) * 100)}% of the flow it would have if everything peaked together${R.tributaries ? `, with ${R.tributaries} tributar${R.tributaries === 1 ? 'y' : 'ies'} joining on the way` : ''}.`);
     }
+    const rt = tl.opts && tl.opts.rating;
+    if (R && R.rated && rt) {
+      const board = tl.event ? tl.event.peak.level : rt.hmed + (tl.s.gaugeLevel - tl.opts.baseLevel);
+      const q = rt.a * Math.pow(Math.max(0, board - rt.h0), rt.b);
+      parts.push(`Flows from ${escapeHtml(rt.name || 'the gauge')}'s measured rating (Water Data Online daily records${board > rt.hmax ? ', extended above the highest daily level recorded' : ''}): about ${q >= 100 ? Math.round(q / 10) * 10 : Math.round(q)} m³/s at the peak.`);
+    }
+    if (tl.wave && tl.wave.up) parts.push(`Upstream, the flood follows the readings at ${tl.wave.up.gauges} more gauge${tl.wave.up.gauges === 1 ? '' : 's'} on the river (${escapeHtml(tl.wave.up.names.join(', '))}), blending between gauges along the way.`);
     if (tl.wave && tl.wave.tide) parts.push(`Tide: ${tl.opts.tide.atPeak === 'low' ? 'low' : 'high'} water at the peak, sea between ${(tl.s.bayLevel - 2 * tl.wave.tide).toFixed(2)} m and ${tl.s.bayLevel.toFixed(2)} m.`);
     return parts.length ? `<p class="hint">${parts.join(' ')}</p>` : '';
   }

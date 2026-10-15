@@ -340,3 +340,41 @@ test('storm: stormwater pipes take runoff from built-up land, so less flows over
   const huge = F.flashFlood(a, Object.assign({}, st, { urban, pipeMmH: 500 }));
   assert.equal(huge.summary.overlandKm2, 0, 'pipes bigger than the storm leave no overland flow');
 });
+
+test('recorded flood with an upstream gauge: levels follow each gauge and blend between them', () => {
+  const g = a.defaultGauge;
+  let u = g;   // walk up the main stem about 15 km
+  for (let k = 0; k < 400; k++) {
+    let best = -1;
+    for (let c = 0; c < a.N; c++) if (a.rec[c] === u && a.stream[c] && (best < 0 || a.acc[c] > a.acc[best])) best = c;
+    if (best < 0 || a.chain[best] - a.chain[g] > 15000) break;
+    u = best;
+  }
+  const s = scenario(a.dem[g] + 4, { bayLevel: 0.5 });
+  const hydro = [[0, 1], [10, 5], [20, 2], [40, 1]], up = [[0, 2], [4, 8], [14, 3], [40, 2]];
+  const w = F.waveSetup(a, s, { hydro, speedKmh: 3, others: [{ cell: u, hydro: up }] });
+  assert.equal(w.up.gauges, 1);
+  const peakTime = (c) => { let m = -Infinity, tm = 0; for (let t = -10; t < 60; t += 0.5) { const v = F.waveSurface(a, w, t)[c]; if (v > m) { m = v; tm = t; } } return tm; };
+  assert.equal(peakTime(u), 4, 'the upper gauge peaks when its readings do');
+  assert.equal(peakTime(g), 10, 'the main gauge when its readings do');
+  let mid = u;
+  while (a.chain[mid] - a.chain[g] > (a.chain[u] - a.chain[g]) / 2) mid = a.rec[mid];
+  const pm = peakTime(mid);
+  assert.ok(pm > 4 && pm <= 10, `half way, in between (${pm})`);
+  const off = F.waveSetup(a, s, { hydro, speedKmh: 3, others: [{ cell: a.rec[g], hydro: up }] });
+  assert.equal(off.up, null, 'a gauge below the main gauge is not used as an upstream gauge');
+});
+
+test('routing with a measured rating uses its exponent and still matches the gauge', () => {
+  const g = a.defaultGauge;
+  const s = scenario(a.dem[g] + 4, { bayLevel: 0.5 });
+  const o = { baseLevel: a.dem[g] + 0.3, riseHours: 12, fallHours: 24, speedKmh: 2, route: true, rating: { b: 2.4, depth: 1.5 } };
+  const w = F.waveSetup(a, s, o);
+  assert.equal(w.routed.exponent, 2.4);
+  assert.ok(w.routed.rated);
+  const wse = F.waveSurface(a, w, w.tPeak);
+  assert.ok(Math.abs(wse[g] - w.w1[g]) < 0.05, 'gauge at its peak level at the peak');
+  const t = w.tPeak - 6, gauge = w.gaugeAt(t), here = F.waveSurface(a, w, t)[g];
+  const expect = w.w0[g] + ((w.w1[g] - w.w0[g]) * (gauge - w.lo)) / (w.hi - w.lo);
+  assert.ok(Math.abs(here - expect) < 0.05, 'and on the rise');
+});
