@@ -16,6 +16,7 @@ import datetime as dt
 import html
 import json
 import re
+import subprocess
 import sys
 import time
 import urllib.error
@@ -64,6 +65,16 @@ def http_text(url, retries=1, timeout=20):
         except (urllib.error.URLError, TimeoutError, OSError) as e:
             last = e
             if url.startswith("ftp"):
+                # some FTP servers refuse directory changes but serve full
+                # paths; curl can fetch without changing directory
+                try:
+                    out = subprocess.run(["curl", "-sS", "--max-time", str(timeout), "--ftp-method", "nocwd", url],
+                                         capture_output=True, timeout=timeout + 5)
+                    if out.returncode == 0 and out.stdout:
+                        return out.stdout.decode("utf-8", "replace")
+                    last = f"{e}; curl: {out.stderr.decode(errors='replace').strip()[:80]}"
+                except (OSError, subprocess.TimeoutExpired) as e2:
+                    last = f"{e}; curl: {e2}"
                 break
         time.sleep(2)
     raise RuntimeError(f"{url}: {last}")
