@@ -2,7 +2,7 @@
 
 A screening tool for river and coastal flooding anywhere in Australia. Pick a river town or coast, or tap any gauge, dam or spot on the map; set a river level, a bay level and a sea-level-rise allowance, and the map shows which land sits below the water surface and connects to the river, with depths. A detailed model of the lower Brisbane River, with its historic flood peaks and council flood maps, is included.
 
-For the processed Brisbane area the flood layer sits on a pan-and-zoom street map: tap anywhere for ground level and water depth, tap the river to move the gauge, or jump to your location. It opens on Esri satellite imagery; switch between satellite, street, Queensland Government aerial and topographic, and other basemaps with the layer button. Satellite layers from Digital Earth Australia work anywhere in Australia: the latest Landsat/Sentinel-2 imagery in true colour or false-colour infrared, where water stands out dark against vegetation, and a map of how often satellites have seen water at each spot since 1987. Brisbane City Council's creek and overland-flow flood likelihood maps and the recorded 1974, 2011 and 2022 flood extents can be switched on from the same button, to compare the model with the council's studies and with what actually happened. The illustrative sample terrain is shown as a static picture.
+For the processed Brisbane area the flood layer sits on a pan-and-zoom street map: tap anywhere for ground level and water depth, tap the river to move the gauge, or jump to your location. It opens on Esri satellite imagery; switch between satellite, street, Queensland Government aerial and topographic, and other basemaps with the layer button. Satellite layers from Digital Earth Australia work anywhere in Australia: the latest Landsat/Sentinel-2 imagery in true colour or false-colour infrared, where water stands out dark against vegetation, and a map of how often satellites have seen water at each spot since 1987. Brisbane City Council's creek and overland-flow flood likelihood maps and the recorded 1974, 2011 and 2022 flood extents can be switched on from the same button, to compare the model with the council's studies and with what actually happened.
 
 The heavy terrain work is done by the hydrology tools that power [RustGIS](https://github.com/opengeos/RustGIS) (the [GeoLibre](https://github.com/opengeos/geolibre-rust) runner, built on Whitebox). A small browser viewer then runs the flood scenarios instantly.
 
@@ -12,7 +12,7 @@ The heavy terrain work is done by the hydrology tools that power [RustGIS](https
 
 ## Australia-wide view
 
-The menu at the top has one-tap presets: river towns with a history of flooding (Lismore, Windsor, Grafton, Kempsey, Wagga Wagga, Rockhampton, Gympie, Townsville, Maribyrnong, Echuca, Launceston, Katherine) and coasts (Gold Coast Broadwater, Cairns, Port Adelaide, Hobart). Picking one models it on the spot; places you've modelled are listed at the top of the menu, and the detailed Brisbane River model is under *Detailed models*.
+The menu at the top has one-tap presets for about 60 well-known flood sites and populated flood-prone places, grouped by state: river towns such as Lismore, Maitland, Windsor, Wagga Wagga, Forbes, Rockhampton, Bundaberg, Ipswich, Townsville, Charleville, Rochester, Shepparton, Echuca, Murray Bridge, Carnarvon, Fitzroy Crossing, Launceston and Katherine, plus coasts and estuaries from Cairns to Hobart. Picking one models it on the spot; places you've modelled are listed at the top of the menu, and the detailed Brisbane River model is under *Detailed models*.
 
 
 The app opens on a map of Australia:
@@ -114,7 +114,7 @@ For full hydrodynamic modelling, the outputs here are a starting point for [ANUG
 ## Setup
 
 1. **Turn on GitHub Pages.** In the repository, open Settings > Pages and set Source to **GitHub Actions**.
-2. **Run the workflow.** Push to `main` or use Actions > *Build terrain and publish viewer* > Run workflow. The build summary says whether the DEM download and the hydrology step succeeded. If either fails, the site still publishes with the sample terrain only.
+2. **Run the workflow.** Push to `main` or use Actions > *Build terrain and publish viewer* > Run workflow. The build summary says whether the DEM download and the hydrology step succeeded. If either fails, the site still publishes; the Australia-wide map and on-demand models don't depend on it.
 
 ## Run it yourself
 
@@ -124,7 +124,7 @@ The viewer is plain HTML and JavaScript with no build step:
 python3 -m http.server -d viewer 8000   # then open http://localhost:8000
 ```
 
-Without processed data it opens on an illustrative sample terrain. You can also load your own GeoTIFF or ASCII grid DEM in the page, optionally with a `d8.tif` from the pipeline.
+If the map library can't load (offline), it falls back to an illustrative sample terrain, which isn't otherwise in the menu. You can also load your own GeoTIFF or ASCII grid DEM in the page, optionally with a `d8.tif` from the pipeline.
 
 To run the pipeline locally (Linux or macOS, needs Python 3.10+ and the GitHub CLI):
 
