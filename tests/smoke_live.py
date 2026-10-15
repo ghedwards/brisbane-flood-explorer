@@ -165,6 +165,22 @@ def main() -> int:
                 if hid["onMap"] or not hid["hidden"] or not shown["onMap"]:
                     failures.append(f"hiding/showing place {n} failed: hidden={hid} shown={shown}")
                 print(f"Places: {places}; hide->{hid}; show->{shown}")
+                # the Places panel reaches the report and the flood scenario
+                page.click(".tool[data-open='panel-places']")
+                page.wait_for_timeout(300)
+                if page.locator("#panel-places").is_hidden():
+                    failures.append("the Places panel did not open")
+                page.locator(f"#panel-places [data-num='{n}']").click()
+                page.locator(f"#panel-places [data-act='report'][data-n='{n}']").click()
+                page.wait_for_timeout(400)
+                rep_open = page.locator("#panel-report").is_visible()
+                page.locator(f"#panel-places [data-act='scenario'][data-n='{n}']").click()
+                page.wait_for_timeout(800)
+                scen_open = page.locator("#panel-scenario").is_visible()
+                title = page.text_content("#scenarioPlace") or ""
+                if not (rep_open and scen_open and title.startswith(f"{n}.")):
+                    failures.append(f"Places actions failed: report panel {rep_open}, scenario panel {scen_open}, title {title!r}")
+                print(f"Places actions: report {rep_open}, scenario {scen_open}, title {title!r}")
                 with open(os.environ.get("GITHUB_STEP_SUMMARY", os.devnull), "a") as fh:
                     fh.write(f"- Places: {json.dumps(places)}\n")
             page.evaluate("window.__floodOpenPanel('panel-scenario')")
