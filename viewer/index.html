@@ -191,6 +191,20 @@ details > div { display: grid; gap: 14px; }
 .fh-meta { font-size: 12px; color: var(--muted); margin: 4px 0 0; }
 .empty p { margin: 0 0 6px; }
 .area-list { display: grid; gap: 6px; }
+.places { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+.place { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 2px; border: 1px solid var(--line); border-radius: 9px; background: var(--surface); }
+.place.on { border-color: var(--gauge); box-shadow: inset 3px 0 0 var(--gauge); }
+.place.off .place-text, .place.off .pin-num { opacity: .5; }
+.place-main { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 8px; align-items: center; text-align: left; border: 0; background: transparent; color: var(--ink); padding: 6px 8px; cursor: pointer; min-width: 0; }
+.place-text { display: grid; min-width: 0; }
+.place-name { font: 600 13.5px/1.25 var(--font-body); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.place-tags { font-size: 11.5px; color: var(--muted); }
+.icon-btn { border: 0; background: transparent; color: var(--muted); width: 32px; height: 32px; border-radius: 7px; cursor: pointer; display: grid; place-items: center; font: 600 16px var(--font-body); }
+.icon-btn:hover { background: var(--surface-2); color: var(--ink); }
+.icon-btn svg { width: 18px; height: 18px; stroke: currentColor; fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.link-row { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 8px; background: var(--surface-2); font-size: 13px; }
+.link-row span:nth-child(2) { flex: 1; }
+.report-pin.active span { box-shadow: 0 0 0 3px rgba(198,111,29,.45), 0 1px 4px rgba(0,0,0,.45); }
 .area-chips { display: flex; flex-wrap: wrap; gap: 6px; }
 .area-chip { display: inline-flex; align-items: stretch; border: 1px solid var(--line); border-radius: 999px; overflow: hidden; background: var(--surface); max-width: 100%; }
 .area-chip button { border: 0; background: transparent; color: var(--ink); font: 600 12.5px var(--font-body); padding: 4px 10px; cursor: pointer; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

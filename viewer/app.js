@@ -973,16 +973,17 @@
     const b = state.areaMeta.bounds_lonlat;
     const bounds = L.latLngBounds([b[1], b[0]], [b[3], b[2]]);
     if (!area) {
-      area = { key, name: state.areaMeta.name || key };
+      const fromReport = state.areaMeta.reportId && reports.find((r) => r.id === state.areaMeta.reportId);
+      area = { key, name: state.areaMeta.name || key, n: fromReport ? fromReport.n : nextNumber(), reportId: state.areaMeta.reportId || null };
       area.overlay = L.imageOverlay(BLANK, bounds, {
         opacity: parseFloat($('floodOpacity').value) / 100, className: 'flood-layer', zIndex: 6,
       }).addTo(m);
       area.outline = L.rectangle(bounds, { color: '#c66f1d', weight: 1.5, dashArray: '5 5', fill: false, interactive: false }).addTo(m);
-      area.marker = L.circleMarker(bounds.getCenter(), {
-        radius: 8, color: '#ffffff', weight: 2.5, fillColor: '#c66f1d', fillOpacity: 1,
-      }).addTo(m);
-      area.marker.bindTooltip(area.name, { direction: 'top', offset: [0, -8] });
+      area.marker = L.marker(bounds.getCenter(), { icon: numIcon(area.n, AREA_COLOR, true), keyboard: false, zIndexOffset: 900 }).addTo(m);
+      area.marker.bindTooltip(`${area.n}. ${area.name}: flood model gauge`, { direction: 'top', offset: [0, -12] });
+      area.marker.on('click', () => { activateArea(key); openPanel('panel-scenario'); });
       areaReg.set(key, area);
+      if (hiddenNums.has(area.n)) setPlaceHidden(area.n, false);
       // keep memory in check: drop the oldest inactive area
       if (areaReg.size > MAX_AREAS) {
         const oldest = Array.from(areaReg.keys()).find((k) => k !== key);
@@ -996,14 +997,49 @@
     return area;
   }
 
+  const AREA_COLOR = '#c66f1d';
   function setActiveLayers(area) {
     state.overlay = area ? area.overlay : null;
     state.gaugeMarker = area ? area.marker : null;
     for (const a of areaReg.values()) {
       const on = a === area;
-      a.outline.setStyle({ color: on ? '#c66f1d' : '#8a6a4a', weight: on ? 2.5 : 1.2, dashArray: on ? null : '5 5' });
-      a.marker.setStyle({ radius: on ? 8 : 6, fillOpacity: on ? 1 : 0.7 });
+      a.outline.setStyle({ color: on ? AREA_COLOR : '#8a6a4a', weight: on ? 2.5 : 1.2, dashArray: on ? null : '5 5' });
+      a.marker.setIcon(numIcon(a.n, on ? AREA_COLOR : '#8a6a4a', on));
     }
+    reports.forEach(refreshReportLink);
+    renderPlaces();
+  }
+
+  function areaByNumber(n) { return Array.from(areaReg.values()).find((a) => a.n === n) || null; }
+  function areaForReport(r) { return Array.from(areaReg.values()).find((a) => a.reportId === r.id) || null; }
+
+  // Show or hide everything with this number: the area's flood layer, outline
+  // and gauge, and the report's pin. Hidden areas keep their scenario.
+  function setPlaceHidden(n, hidden) {
+    const m = state.lmap;
+    if (!m) return;
+    if (hidden) hiddenNums.add(n); else hiddenNums.delete(n);
+    const area = areaByNumber(n);
+    if (area) [area.overlay, area.outline, area.marker].forEach((l) => (hidden ? m.removeLayer(l) : l.addTo(m)));
+    reports.filter((r) => r.n === n && r.pin).forEach((r) => (hidden ? m.removeLayer(r.pin) : r.pin.addTo(m)));
+    if (hidden && area && area.key === state.areaKey) say(`${n}. ${area.name} is hidden. Its scenario is kept; show it again from Places.`);
+    reports.forEach(refreshReportLink);
+    renderPlaces();
+  }
+  window.__floodSetPlaceHidden = setPlaceHidden;
+
+  function refreshReportLink(r) {
+    const box = r.el.querySelector('.js-link');
+    if (!box) return;
+    const area = areaForReport(r);
+    const btn = r.el.querySelector('.js-model');
+    if (btn) btn.textContent = area ? 'Open its flood scenario' : (r.kind === 'tide' ? 'Model coastal flooding here' : 'Model flooding here');
+    if (!area) { box.innerHTML = ''; return; }
+    const hidden = hiddenNums.has(r.n);
+    box.innerHTML = `<div class="link-row"><span class="pin-num" style="background:${AREA_COLOR}">${r.n}</span>
+      <span>Flood model ${hidden ? '(hidden)' : 'on the map'}${area.key === state.areaKey ? ', active' : ''}</span>
+      <button type="button" class="btn small js-eye">${hidden ? 'Show' : 'Hide'}</button></div>`;
+    box.querySelector('.js-eye').addEventListener('click', () => setPlaceHidden(r.n, !hidden));
   }
 
   function activateArea(key, opts) {
@@ -1011,6 +1047,7 @@
     if (!area) return false;
     geoToken++;          // abandon any area still opening
     if (state.areaKey !== key) saveActive();
+    if (hiddenNums.has(area.n)) setPlaceHidden(area.n, false);
     Object.assign(state, {
       grid: area.grid, areaId: area.areaId, areaMeta: area.areaMeta, eventsApply: area.eventsApply,
       streamAreaKm2: area.streamAreaKm2, a: area.a, gauge: area.gauge, base: area.base, run: area.run,
@@ -1057,6 +1094,8 @@
     [area.overlay, area.outline, area.marker].forEach((l) => l && m && m.removeLayer(l));
     if (area.overlay && area.overlay._floodUrl) URL.revokeObjectURL(area.overlay._floodUrl);
     areaReg.delete(key);
+    if (!reports.some((r) => r.n === area.n)) hiddenNums.delete(area.n);
+    reports.forEach(refreshReportLink);
     const op = $('area').querySelector(`option[value="${CSS.escape(key)}"]`);
     if (op && area.areaMeta && area.areaMeta.local) op.remove();
     if (state.areaKey === key) {
@@ -1067,26 +1106,65 @@
   }
 
   function areaAt(latlng) {
-    const inside = (a) => a.geo && latlng.lat <= a.geo.north && latlng.lat >= a.geo.south
+    const inside = (a) => !hiddenNums.has(a.n) && a.geo && latlng.lat <= a.geo.north && latlng.lat >= a.geo.south
       && latlng.lng >= a.geo.west && latlng.lng <= a.geo.east;
     const active = state.areaKey && areaReg.get(state.areaKey);
     if (active && inside(active)) return active;
     return Array.from(areaReg.values()).reverse().find(inside) || null;
   }
 
-  function renderAreaList() {
+  function renderAreaList() { renderPlaces(); }
+
+  // One row per number: its report, its flood model, or both.
+  function renderPlaces() {
     const box = $('areaList');
     if (!box) return;
-    const list = Array.from(areaReg.values());
-    box.hidden = !list.length;
-    box.innerHTML = list.length ? `<span class="label">Modelled areas</span><div class="area-chips">${list.map((a) =>
-      `<span class="area-chip${a.key === state.areaKey ? ' on' : ''}"><button type="button" data-area="${escapeHtml(a.key)}" aria-pressed="${a.key === state.areaKey}">${escapeHtml(a.name)}</button>`
-      + `<button type="button" class="x" data-remove="${escapeHtml(a.key)}" aria-label="Remove ${escapeHtml(a.name)}">×</button></span>`).join('')}</div>`
-      + '<p class="hint">Tap inside an area to switch to it. Tap anywhere else on the map to model another place.</p>' : '';
-    box.querySelectorAll('[data-area]').forEach((b) => b.addEventListener('click', () => activateArea(b.dataset.area, { fit: true })));
-    box.querySelectorAll('[data-remove]').forEach((b) => b.addEventListener('click', () => removeArea(b.dataset.remove)));
-    status.areas = list.map((a) => a.key);
+    const nums = Array.from(new Set([...reports.map((r) => r.n), ...Array.from(areaReg.values()).map((a) => a.n)])).sort((a, b) => a - b);
+    box.hidden = !nums.length;
+    status.areas = Array.from(areaReg.keys());
+    if (!nums.length) { box.innerHTML = ''; return; }
+    const rows = nums.map((n) => {
+      const r = reports.find((x) => x.n === n), a = areaByNumber(n);
+      const hidden = hiddenNums.has(n), active = a && a.key === state.areaKey;
+      const name = (r && r.name) || (a && a.name) || `Place ${n}`;
+      const tags = [r ? (r.kind === 'storage' ? 'dam report' : r.kind === 'tide' ? 'tide report' : 'gauge report') : null, a ? 'flood model' : null].filter(Boolean).join(' + ');
+      const color = a ? (active ? AREA_COLOR : '#8a6a4a') : (GAUGE_STYLE[r.kind] || GAUGE_STYLE.river).color;
+      return `<li class="place${active ? ' on' : ''}${hidden ? ' off' : ''}">
+        <button type="button" class="place-main" data-num="${n}" title="${a ? 'Make this the active flood scenario' : 'Open this report'}">
+          <span class="pin-num" style="background:${color}">${n}</span>
+          <span class="place-text"><span class="place-name">${escapeHtml(name)}</span><span class="place-tags">${tags}${active ? ' · active' : ''}${hidden ? ' · hidden' : ''}</span></span>
+        </button>
+        <button type="button" class="icon-btn" data-eye="${n}" aria-pressed="${!hidden}" aria-label="${hidden ? 'Show' : 'Hide'} ${escapeHtml(name)} on the map" title="${hidden ? 'Show on map' : 'Hide from map'}">${hidden ? EYE_OFF : EYE}</button>
+        <button type="button" class="icon-btn" data-drop="${n}" aria-label="Remove ${escapeHtml(name)}" title="Remove">×</button>
+      </li>`;
+    }).join('');
+    box.innerHTML = `<span class="label">Places</span><ul class="places">${rows}</ul>
+      <p class="hint">Numbers match the pins on the map. Tap a gauge or dam for a report, or tap the map to model a new place.</p>`;
+    box.querySelectorAll('[data-num]').forEach((b) => b.addEventListener('click', () => {
+      const n = +b.dataset.num, a = areaByNumber(n), r = reports.find((x) => x.n === n);
+      if (a) activateArea(a.key, { fit: true });
+      else if (r) {
+        openPanel('panel-report');
+        if (state.lmap) state.lmap.setView([r.lat, r.lon], Math.max(state.lmap.getZoom(), 10));
+        r.el.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' });
+      }
+    }));
+    box.querySelectorAll('[data-eye]').forEach((b) => b.addEventListener('click', () => setPlaceHidden(+b.dataset.eye, !hiddenNums.has(+b.dataset.eye))));
+    box.querySelectorAll('[data-drop]').forEach((b) => b.addEventListener('click', () => {
+      const n = +b.dataset.drop, a = areaByNumber(n);
+      reports.filter((r) => r.n === n).forEach(closeReport);
+      if (a) removeArea(a.key);
+      hiddenNums.delete(n);
+      renderPlaces();
+    }));
   }
+  const EYE = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/></svg>';
+  const EYE_OFF = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 3l18 18"/><path d="M10.6 5.1A10 10 0 0 1 12 5c6.5 0 10 7 10 7a17 17 0 0 1-3.2 4.2M6.6 6.6A17 17 0 0 0 2 12s3.5 7 10 7a9.6 9.6 0 0 0 4.4-1"/></svg>';
+  window.__floodPlaces = () => Array.from(new Set([...reports.map((r) => r.n), ...Array.from(areaReg.values()).map((a) => a.n)])).sort((a, b) => a - b).map((n) => {
+    const a = areaByNumber(n), r = reports.find((x) => x.n === n);
+    return { n, report: !!r, area: !!a, hidden: hiddenNums.has(n), onMap: !!(a && state.lmap && state.lmap.hasLayer(a.overlay)), reportName: r && r.name, areaName: a && a.name };
+  });
+
   window.__floodActivateArea = (key) => activateArea(key, { fit: true });
   window.__floodAreaInfo = () => Array.from(areaReg.values()).map((a) => ({
     key: a.key, name: a.name, drawn: !!a.overlay._floodUrl, active: a.key === state.areaKey,
@@ -1772,8 +1850,19 @@
   const MAX_REPORTS = 4;
   const reports = [];
 
-  function reportNumber() {
-    for (let n = 1; ; n++) if (!reports.some((r) => r.n === n)) return n;
+  // Reports and modelled areas share one set of numbers: an area modelled
+  // from report 2 is also 2. A number is free once neither uses it.
+  function nextNumber() {
+    const used = new Set([...reports.map((r) => r.n), ...Array.from(areaReg.values()).map((a) => a.n)]);
+    for (let n = 1; ; n++) if (!used.has(n)) return n;
+  }
+  const hiddenNums = new Set();
+
+  function numIcon(n, color, active) {
+    return window.L.divIcon({
+      className: `report-pin${active ? ' active' : ''}`,
+      html: `<span style="background:${color}">${n}</span>`, iconSize: [24, 24], iconAnchor: [12, 12],
+    });
   }
 
   function closeReport(r) {
@@ -1782,7 +1871,9 @@
     reports.splice(i, 1);
     r.el.remove();
     if (r.pin && state.lmap) state.lmap.removeLayer(r.pin);
+    if (!areaByNumber(r.n)) hiddenNums.delete(r.n);
     layoutReports();
+    renderPlaces();
   }
 
   function layoutReports() {
@@ -1793,6 +1884,8 @@
     $('h-report').textContent = n > 1 ? `Reports (${n})` : n === 1 ? reports[0].title : 'Reports';
     $('reportsClear').hidden = n < 2;
     if (!n) closePanel('panel-report');
+    reports.forEach(refreshReportLink);
+    renderPlaces();
     status.report = { count: n, names: reports.map((r) => r.name) };
   }
 
@@ -1814,7 +1907,7 @@
       return;
     }
     const st = GAUGE_STYLE[p.kind] || GAUGE_STYLE.river;
-    const num = reportNumber();
+    const num = nextNumber();
     let html = `<div class="card-head"><span class="pin-num" style="background:${st.color}">${num}</span><div style="min-width:0"><span class="kind">${escapeHtml(st.label)}</span><h3>${escapeHtml(p.name || 'Unnamed')}</h3></div><button type="button" class="close js-close" aria-label="Close this report">×</button></div>`;
     const facts = [];
     if (p.kind === 'storage') {
@@ -1887,16 +1980,18 @@
     el.innerHTML = html;
     const q = (sel) => el.querySelector(sel);
     const title = p.kind === 'storage' ? 'Dam report' : p.kind === 'tide' ? 'Tide gauge report' : 'River gauge report';
-    const r = { id, n: num, name: p.name, title, el, pin: null };
+    const r = { id, n: num, name: p.name, title, el, pin: null, lat, lon, kind: p.kind };
     if (state.lmap) {
-      r.pin = window.L.marker([lat, lon], {
-        icon: window.L.divIcon({ className: 'report-pin', html: `<span style="background:${st.color}">${num}</span>`, iconSize: [24, 24], iconAnchor: [12, 12] }),
-        keyboard: false, zIndexOffset: 1000,
-      }).addTo(state.lmap);
+      r.pin = window.L.marker([lat, lon], { icon: numIcon(num, st.color), keyboard: false, zIndexOffset: 1000 });
+      if (!hiddenNums.has(num)) r.pin.addTo(state.lmap);
       r.pin.on('click', () => { openPanel('panel-report'); el.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' }); });
     }
     q('.js-close').addEventListener('click', () => closeReport(r));
-    q('.js-model').addEventListener('click', () => modelHere(lat, lon, { kind, name: p.name }));
+    q('.js-model').addEventListener('click', () => {
+      const linked = areaForReport(r);
+      if (linked) { activateArea(linked.key, { fit: true }); openPanel('panel-scenario'); return; }
+      modelHere(lat, lon, { kind, name: p.name, reportId: id });
+    });
     q('.js-zoom').addEventListener('click', () => state.lmap && state.lmap.setView([lat, lon], 13));
     const sl = stateLayerFor(p.state);
     if (sl && q('.js-state')) q('.js-state').addEventListener('click', () => {
@@ -1907,6 +2002,9 @@
       }
     });
     if (p.kind === 'storage') addWaterHistory(p.id, q('.js-history'));
+    const link = document.createElement('div');
+    link.className = 'js-link';
+    q('.actions').before(link);
     reports.unshift(r);
     $('reportBody').prepend(el);
     while (reports.length > MAX_REPORTS) closeReport(reports[reports.length - 1]);
@@ -2089,7 +2187,7 @@
       const row = Math.round(((bounds[3] - lat) / (bounds[3] - bounds[1])) * grid.H);
       const key = `local-${++localCount}`;
       state.areaMeta = {
-        id: 'local', areaKey: key, local: true, kind: o.kind, name: o.name, bounds_lonlat: bounds,
+        id: 'local', areaKey: key, local: true, kind: o.kind, name: o.name, bounds_lonlat: bounds, reportId: o.reportId || null,
         gauge: { col, row }, streamAreaKm2: Math.max(0.5, Math.min(4, (grid.W * grid.H * grid.cell * grid.cell) / 1e6 * 0.004)),
         source: 'Terrain: Geoscience Australia 1-second (about 30 m) hydrologically enforced elevation model (DEM-H), CC BY 4.0, read live from GA.',
       };

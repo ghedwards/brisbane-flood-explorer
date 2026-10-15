@@ -139,6 +139,39 @@ def main() -> int:
                 fh.write(f"- Areas: {json.dumps(after_switch)}\n")
         page.screenshot(path="smoke-two-areas.png")
 
+        # ---- a model started from a report shares the report's number,
+        #      and the number can be hidden and shown from Places
+        page.evaluate("window.__floodOpenPanel('panel-report')")
+        dam_btn = page.locator(".report-card", has_text="Wivenhoe").locator(".js-model")
+        if dam_btn.count():
+            before_key = (status().get("local") or {}).get("key")
+            dam_btn.first.click()
+            try:
+                page.wait_for_function(f"window.__floodStatus.local && window.__floodStatus.local.ok !== undefined"
+                                       f" && window.__floodStatus.local.key !== {json.dumps(before_key)}", timeout=120_000)
+                page.wait_for_function("window.__floodAreaInfo().every(a => a.drawn)", timeout=20_000)
+            except Exception:
+                pass
+            places = page.evaluate("window.__floodPlaces()")
+            linked = [p for p in places if p["report"] and p["area"]]
+            if not linked or "Wivenhoe" not in (linked[0].get("reportName") or ""):
+                failures.append(f"model from the Wivenhoe report did not share its number: {places}")
+            else:
+                n = linked[0]["n"]
+                page.evaluate("n => window.__floodSetPlaceHidden(n, true)", n)
+                hid = [p for p in page.evaluate("window.__floodPlaces()") if p["n"] == n][0]
+                page.evaluate("n => window.__floodSetPlaceHidden(n, false)", n)
+                shown = [p for p in page.evaluate("window.__floodPlaces()") if p["n"] == n][0]
+                if hid["onMap"] or not hid["hidden"] or not shown["onMap"]:
+                    failures.append(f"hiding/showing place {n} failed: hidden={hid} shown={shown}")
+                print(f"Places: {places}; hide->{hid}; show->{shown}")
+                with open(os.environ.get("GITHUB_STEP_SUMMARY", os.devnull), "a") as fh:
+                    fh.write(f"- Places: {json.dumps(places)}\n")
+            page.evaluate("window.__floodOpenPanel('panel-scenario')")
+            page.screenshot(path="smoke-places.png")
+        else:
+            failures.append("no Wivenhoe report card to model from")
+
         # ---- detailed Brisbane model
         page.select_option("#area", "brisbane")
         page.evaluate("window.__floodOpenPanel('panel-scenario')")
