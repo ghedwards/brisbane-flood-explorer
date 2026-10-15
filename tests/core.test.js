@@ -259,3 +259,17 @@ test('a closed flood gate stops the river level passing up the channel', () => {
   assert.ok(open.wse[up] > g.dem[up] + 0.5, 'without a gate the level carries upstream');
   assert.ok(Math.abs(shut.wse[up] - g.dem[up]) < 1e-6, 'behind a closed gate the channel stays at its bed');
 });
+
+test('flood over time: the gauge rises and falls, and the wave reaches places in turn', () => {
+  const g = valley(), W = g.W;
+  const a = F.analyse(g, { streamAreaKm2: 0.001 });
+  const gauge = 10 * W + 50;
+  const s = { gauge, gaugeLevel: g.dem[gauge] + 1.5, bayLevel: 0, upstreamGradient: 0 };
+  const tl = F.floodTimeline(a, s, { baseLevel: g.dem[gauge] + 0.1, riseHours: 6, fallHours: 12, speedKmh: 0.1 });
+  const peakStep = tl.gauge.indexOf(Math.max(...tl.gauge));
+  assert.ok(tl.wetCount[peakStep] > tl.wetCount[0] && tl.wetCount[peakStep] > tl.wetCount[tl.steps - 1], 'more water at the peak');
+  const near = 12 * W + 48, up = 12 * W + 20;   // beside the river: near the gauge, and 300 m upstream
+  assert.ok(tl.firstWet[near] >= 0 && tl.firstWet[up] >= 0, 'both flood');
+  assert.ok(tl.firstWet[up] < tl.firstWet[near], 'upstream floods first (the wave travels down to the gauge)');
+  assert.ok(tl.lastWet[near] >= tl.firstWet[near] && tl.lastWet[near] < tl.steps - 1, 'and drains again');
+});

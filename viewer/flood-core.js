@@ -589,7 +589,8 @@
    */
   function inundate(a, s) {
     const { W, H, N, dem, valid, ocean, stream, recvStream } = a;
-    const { wse, onPath } = streamSurface(a, s);
+    // s.wse: a water surface supplied by the caller (the flood over time)
+    const { wse, onPath } = s.wse ? { wse: s.wse, onPath: new Uint8Array(N) } : streamSurface(a, s);
     const level = new Float32Array(N).fill(NaN);
     for (let c = 0; c < N; c++) {
       if (!valid[c]) continue;
@@ -628,6 +629,77 @@
     const depth = new Float32Array(N);
     for (let c = 0; c < N; c++) if (wet[c]) depth[c] = level[c] - dem[c];
     return { wet, depth, level, wse, onPath };
+  }
+
+  /* ------------------------------------------------------- flood over time */
+
+  /**
+   * A flood wave through the model: the gauge rises smoothly from o.baseLevel
+   * to the scenario's peak over o.riseHours and falls back over o.fallHours;
+   * the wave travels along the river at o.speedKmh, so places downstream of
+   * the gauge see it later and places upstream earlier. The water surface at
+   * any moment is interpolated between the surfaces for two gauge levels
+   * (it is linear in the gauge level along each channel). Returns, per cell,
+   * the first and last time step it is wet and at least 0.3 m deep (-1:
+   * never), the time axis, and the number of cells wet at each step.
+   */
+  function waveSetup(a, s, o) {
+    const base = o.baseLevel, peak = s.gaugeLevel;
+    const lo = Math.min(base, peak - 0.5), hi = Math.max(peak, lo + 0.5);
+    const w0 = streamSurface(a, Object.assign({}, s, { gaugeLevel: lo })).wse;
+    const w1 = streamSurface(a, Object.assign({}, s, { gaugeLevel: hi })).wse;
+    const cells = [];
+    for (let c = 0; c < a.N; c++) if (a.stream[c] && Number.isFinite(w0[c]) && Number.isFinite(w1[c])) cells.push(c);
+    const g = s.gauge >= 0 ? s.gauge : a.mainOutlet;
+    const speed = Math.max(0.1, o.speedKmh || 3);
+    const arrive = new Float32Array(a.N);
+    let minA = 0, maxA = 0;
+    for (const c of cells) {
+      const h = (a.chain[g] - a.chain[c]) / 1000 / speed;   // + downstream, - upstream
+      arrive[c] = h;
+      if (h < minA) minA = h;
+      if (h > maxA) maxA = h;
+    }
+    const rise = Math.max(0.5, o.riseHours || 24), fall = Math.max(0.5, o.fallHours || 48);
+    const gaugeAt = (t) => (t <= 0 ? base : t < rise ? base + (peak - base) * 0.5 * (1 - Math.cos((Math.PI * t) / rise))
+      : t < rise + fall ? base + (peak - base) * 0.5 * (1 + Math.cos((Math.PI * (t - rise)) / fall)) : base);
+    return { lo, hi, w0, w1, cells: Int32Array.from(cells), arrive, minA, maxA, rise, fall, gaugeAt };
+  }
+  function waveSurface(a, w, t, out) {
+    const wse = out || new Float64Array(a.N).fill(NaN);
+    const span = w.hi - w.lo;
+    for (const c of w.cells) {
+      const h = w.gaugeAt(t - w.arrive[c]);
+      wse[c] = w.w0[c] + ((w.w1[c] - w.w0[c]) * (h - w.lo)) / span;
+    }
+    return wse;
+  }
+  function floodTimeline(a, s, o) {
+    const w = waveSetup(a, s, o);
+    const t0 = Math.floor(w.minA) - 1, t1 = Math.ceil(w.rise + w.fall + w.maxA) + 1;
+    const step = Math.max(o.stepHours || 1, (t1 - t0) / (o.maxSteps || 120));
+    const steps = Math.ceil((t1 - t0) / step) + 1;
+    const N = a.N;
+    const firstWet = new Int16Array(N).fill(-1), lastWet = new Int16Array(N).fill(-1);
+    const firstDeep = new Int16Array(N).fill(-1), lastDeep = new Int16Array(N).fill(-1);
+    const wetCount = new Int32Array(steps), gauge = new Float32Array(steps);
+    const wse = new Float64Array(N).fill(NaN);
+    for (let k = 0; k < steps; k++) {
+      const t = t0 + k * step;
+      gauge[k] = w.gaugeAt(t);
+      waveSurface(a, w, t, wse);
+      const run = inundate(a, Object.assign({}, s, { wse }));
+      let n = 0;
+      for (let c = 0; c < N; c++) {
+        if (!run.wet[c] || (a.ocean && a.ocean[c])) continue;
+        n++;
+        if (firstWet[c] < 0) firstWet[c] = k;
+        lastWet[c] = k;
+        if (run.depth[c] >= 0.3) { if (firstDeep[c] < 0) firstDeep[c] = k; lastDeep[c] = k; }
+      }
+      wetCount[k] = n;
+    }
+    return { t0, step, steps, firstWet, lastWet, firstDeep, lastDeep, wetCount, gauge };
   }
 
   /* ------------------------------------------------------------- defences */
@@ -1025,7 +1097,7 @@
 
   return {
     syntheticTerrain, analyse, mainStem, snapToStream, encodeWhiteboxD8,
-    streamSurface, inundate, stats, flashFlood, mergeRuns, burnDefences, lineCells,
+    streamSurface, inundate, stats, flashFlood, mergeRuns, burnDefences, lineCells, waveSetup, waveSurface, floodTimeline,
     parseAsciiGrid, downsample, cleanNodata, parseSimpleTiff,
     // exposed for tests
     _internal: { MinHeap, chamferDistance, mulberry32 },

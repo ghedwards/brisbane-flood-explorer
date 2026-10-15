@@ -23,11 +23,12 @@ would add, how it could be built from open data, and what to watch for.
 
 ## Modelling
 
-- **How a flood unfolds over time.** Route a flood wave from the gauge's
-  rise and fall (a Muskingum-style or kinematic-wave reach model along the
-  stream network) and add a time slider showing when water reaches each
-  street and how long it stays. Needs hydrograph shapes: from Water Data
-  Online history for real events, or a synthetic triangle for scenarios.
+- **Real hydrographs and proper flood routing.** Flood over time uses a
+  smooth synthetic rise and fall at the gauge and a constant wave speed.
+  Hourly readings from Water Data Online for past events (blocked from the
+  browser, so fetched at build time) and a routing method that lets the
+  wave flatten as it travels (Muskingum or kinematic wave) would be more
+  realistic, as would tide cycles for coastal models.
 - **Storm tide beyond Queensland.** The storm tide builder fills in tides
   for Queensland standard ports; other states' tidal planes (in AHD) would
   extend it, and Bureau tide predictions would allow "this week's
@@ -57,15 +58,14 @@ would add, how it could be built from open data, and what to watch for.
 ## Impact
 
 Done: buildings, people, roads, key sites, water above floor (with a floor
-height setting), daytime workplaces, and places cut off from a dry road out.
+height setting), daytime workplaces, places cut off from a dry road out,
+and when roads close and how long places stay cut off (flood over time).
 
 - **Daytime population counts.** The ABS publishes workplace destination
   zones as an open service but not the worker counts for them; daytime
   exposure currently counts flooded workplaces, shops, schools and public
   buildings from OpenStreetMap. Loading the ABS place-of-work counts (a
   download) into the build would give numbers of workers.
-- **When places get cut off.** With a flood-over-time model (above), report
-  the time each road closes and how long places stay isolated.
 - **Measured floor heights.** Councils hold surveyed floor levels for some
   floodplains; where any are published openly they would replace the
   single typical floor height.

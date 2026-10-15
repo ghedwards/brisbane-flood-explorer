@@ -16,7 +16,7 @@ URL = sys.argv[1] if len(sys.argv) > 1 else "http://localhost:8000/"
 
 
 KEY = []          # key results, shown together in one annotation at the end
-KEY_WORDS = ("Levees", "Storm tide", "Presets checked", "Recorded floods", "Best match", "Impact", "Storm", "Joined", "Share link", "Satellite check",
+KEY_WORDS = ("Flood over time", "Levees", "Storm tide", "Presets checked", "Recorded floods", "Best match", "Impact", "Storm", "Joined", "Share link", "Satellite check",
              "Presets anchored", "Presets on LiDAR", "Phone Layers", "Council layer", "Downloads", "Rain radar",
              "Address search", "Flood warnings", "Echuca", "Extended model", "Area study")
 
@@ -565,6 +565,15 @@ def main() -> int:
         if imp and imp.get("error") and "OpenStreetMap" not in imp.get("error", "") and "Failed to fetch" not in imp.get("error", ""):
             failures.append(f"impact count failed: {imp}")
         page.screenshot(path="smoke-impact.png")
+        # ---- the flood over time: road closures and places cut off
+        try:
+            tlr = page.evaluate("window.__floodRunTimeline()")
+        except Exception as e:
+            tlr = {"error": str(e)[:300]}
+        note("notice", f"Flood over time at Rockhampton: {json.dumps(tlr)}")
+        if not (tlr and tlr.get("steps", 0) > 10 and not tlr.get("error")):
+            failures.append(f"flood over time failed: {tlr}")
+        page.screenshot(path="smoke-timeline.png")
 
         # ---- on a phone, a swipe scrolls the Layers panel
         mctx = browser.new_context(viewport={"width": 390, "height": 844}, has_touch=True, is_mobile=True)

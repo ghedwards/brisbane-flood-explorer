@@ -541,6 +541,10 @@
   function runScenario() {
     const a = state.a;
     if (!a) return;
+    // a changed scenario makes the flood-over-time result stale
+    const tArea = state.areaKey && areaReg.get(state.areaKey);
+    if (tArea && tArea.timeline) { tArea.timeline = null; if (state.timePlay) { clearInterval(state.timePlay); state.timePlay = 0; } renderTimeline(); }
+    state.timeView = false;
     const s = scenario();
     if (state.base && (state.baseMode === 'flash') !== (ctl.floodType.value === 'flash')) state.base = null;
     state.baseMode = ctl.floodType.value;
@@ -2417,7 +2421,7 @@
   function showScenarioEmpty(empty) {
     scenarioEmpty = empty;
     Array.from($('scenarioEmpty').parentElement.children).forEach((el) => {
-      if (el.id !== 'scenarioEmpty' && el.id !== 'scenarioModel' && el.id !== 'edgeNote' && el.id !== 'levelPointsSet' && el.id !== 'checkSet' && el.id !== 'downloadSet' && el.id !== 'stormSet' && el.id !== 'riverSet' && el.id !== 'impactSet' && el.id !== 'recordedSet' && el.id !== 'defenceSet') el.hidden = empty || (el.id === 'eventsSet' && !state.eventsApply);
+      if (el.id !== 'scenarioEmpty' && el.id !== 'scenarioModel' && el.id !== 'edgeNote' && el.id !== 'levelPointsSet' && el.id !== 'checkSet' && el.id !== 'downloadSet' && el.id !== 'stormSet' && el.id !== 'riverSet' && el.id !== 'impactSet' && el.id !== 'recordedSet' && el.id !== 'defenceSet' && el.id !== 'timeSet') el.hidden = empty || (el.id === 'eventsSet' && !state.eventsApply);
     });
     if (empty) { $('stats').innerHTML = ''; state.edges = []; }
     renderEdgeNote();
@@ -3046,9 +3050,10 @@
     $('checkSet').hidden = !local || scenarioEmpty;
     $('impactSet').hidden = !local || scenarioEmpty;
     $('defenceSet').hidden = !local || scenarioEmpty || ctl.floodType.value === 'flash';
+    $('timeSet').hidden = !local || scenarioEmpty || ctl.floodType.value !== 'river' || state.gauge < 0;
     $('recordedSet').hidden = !local || scenarioEmpty;
     clearTimeout(impactT);
-    impactT = setTimeout(() => { renderImpact(); renderRecorded(); renderDefences(); }, 250);
+    impactT = setTimeout(() => { renderImpact(); renderRecorded(); renderDefences(); if (!state.timeView) renderTimeline(); }, 250);
     $('downloadSet').hidden = !local || scenarioEmpty;
     if (set.hidden) return;
     const sc = $('satCheck');
@@ -4229,6 +4234,203 @@
   window.__floodFindDefences = findDefences;
   window.__floodDrawLevee = (pts, h) => { const d = defs(); if (!d) return null; d.levees.push({ id: `drawn${Date.now()}`, src: 'drawn', name: 'Your levee', pts, height: h, failed: false, breaches: [] }); return applyDefences().then(() => status.defences); };
   window.__floodLeveesFail = (on) => { const d = defs(); if (!d) return null; d.allFail = on; return applyDefences().then(() => status.defences); };
+
+  /* ---------- flood over time: when places flood, roads close, places are cut off */
+  function timelineAsync(a, s, opts) {
+    const w = getWorker();
+    if (!w) return nextFrame().then(() => F.floodTimeline(a, s, opts));
+    return new Promise((resolve, reject) => {
+      const id = ++workerSeq;
+      workerJobs.set(id, { resolve, reject, fallback: () => resolve(F.floodTimeline(a, s, opts)) });
+      w.postMessage({ id, kind: 'timeline', a, s, opts });
+    });
+  }
+  const hoursLabel = (h) => (h < 0 ? `${h} h` : `+${h} h`);
+  function timeOpts() {
+    const a = state.a;
+    return {
+      baseLevel: a.dem[state.gauge] + 0.3,
+      riseHours: Math.max(1, parseFloat($('riseH').value) || 24),
+      fallHours: Math.max(1, parseFloat($('fallH').value) || 48),
+      speedKmh: Math.max(0.5, parseFloat($('waveKmh').value) || 3),
+    };
+  }
+  async function runTimeline() {
+    const area = state.areaKey && areaReg.get(state.areaKey), a = state.a;
+    if (!area || !a || state.gauge < 0) return null;
+    const box = $('timelineBox');
+    box.innerHTML = '<p class="hint">Working out the flood hour by hour…</p>';
+    const s = scenario(), opts = timeOpts();
+    if (s.gaugeLevel <= opts.baseLevel + 0.1) { box.innerHTML = '<p class="hint">Set a peak above the river\'s normal level first.</p>'; return null; }
+    if (area.impact == null) await countImpact();   // roads and buildings for closures
+    const key = state.areaKey;
+    let tl;
+    try { tl = await timelineAsync(a, Object.assign({}, s, { controls: s.controls }), opts); } catch (err) {
+      box.innerHTML = `<p class="hint">Couldn't run the flood over time: ${escapeHtml(err.message || String(err))}.</p>`;
+      return null;
+    }
+    if (state.areaKey !== key) return null;
+    tl.opts = opts; tl.s = s;
+    tl.wave = F.waveSetup(a, s, opts);
+    tl.access = timelineAccess(tl, area.impact);
+    area.timeline = tl;
+    state.timeStep = tl.gauge.indexOf(Math.max(...tl.gauge));
+    renderTimeline();
+    showTimeStep(state.timeStep);
+    const ac = tl.access;
+    status.timeline = { steps: tl.steps, step: tl.step, firstRoad: ac ? ac.firstClose : null, maxIsolated: ac ? ac.maxIso : null, longestHours: ac ? ac.longest : null, roadsClosed: ac ? ac.roads.length : null };
+    return status.timeline;
+  }
+  // Roads and isolation through time, from when each spot is over 0.3 m deep
+  function timelineAccess(tl, d) {
+    if (!d || d.error || !d.net || !d.net.lat.length) return null;
+    const a = state.a, net = d.net, nN = net.lat.length, K = tl.steps, g = state.geo;
+    const deepAt = (c, k) => c >= 0 && tl.firstDeep[c] >= 0 && tl.firstDeep[c] <= k && k <= tl.lastDeep[c];
+    const wetAt = (c, k) => c >= 0 && tl.firstWet[c] >= 0 && tl.firstWet[c] <= k && k <= tl.lastWet[c];
+    const nodeCell = new Int32Array(nN);
+    for (let n = 0; n < nN; n++) nodeCell[n] = cellOf(net.lat[n], net.lon[n]);
+    // each road edge: when it is under water (the union of its samples)
+    const eFrom = new Int16Array(net.edges.length).fill(-1), eTo = new Int16Array(net.edges.length).fill(-1);
+    net.edges.forEach(([u, v], k) => {
+      for (let t = 0; t <= 4; t++) {
+        const f = t / 4, c = cellOf(net.lat[u] + (net.lat[v] - net.lat[u]) * f, net.lon[u] + (net.lon[v] - net.lon[u]) * f);
+        if (c >= 0 && tl.firstDeep[c] >= 0) {
+          if (eFrom[k] < 0 || tl.firstDeep[c] < eFrom[k]) eFrom[k] = tl.firstDeep[c];
+          if (tl.lastDeep[c] > eTo[k]) eTo[k] = tl.lastDeep[c];
+        }
+      }
+    });
+    // named roads: first closed and reopened
+    const roads = new Map();
+    net.edges.forEach(([, , ri], k) => {
+      if (eFrom[k] < 0) return;
+      const nm = d.roads[ri].name;
+      if (!nm) return;
+      const r = roads.get(nm) || { name: nm, from: Infinity, to: -1 };
+      r.from = Math.min(r.from, eFrom[k]); r.to = Math.max(r.to, eTo[k]);
+      roads.set(nm, r);
+    });
+    // exits: dry road nodes at the edge of the model area
+    const mx = ((g.east - g.west) / a.W) * 3, my = ((g.north - g.south) / a.H) * 3;
+    const exit = new Uint8Array(nN);
+    for (let n = 0; n < nN; n++) exit[n] = net.lat[n] < g.south + my || net.lat[n] > g.north - my || net.lon[n] < g.west + mx || net.lon[n] > g.east - mx ? 1 : 0;
+    const adj = Array.from({ length: nN }, () => []);
+    net.edges.forEach(([u, v], k) => { adj[u].push([v, k]); adj[v].push([u, k]); });
+    // nearest road node per building (grid hash ~ 200 m)
+    const hs = 0.002, hash = new Map();
+    for (let n = 0; n < nN; n++) { const key = `${Math.floor(net.lat[n] / hs)},${Math.floor(net.lon[n] / hs)}`; (hash.get(key) || hash.set(key, []).get(key)).push(n); }
+    const nB = d.bx.length, bNode = new Int32Array(nB).fill(-1), bCell = new Int32Array(nB);
+    for (let i = 0; i < nB; i++) {
+      bCell[i] = cellOf(d.by[i], d.bx[i]);
+      const ky = Math.floor(d.by[i] / hs), kx = Math.floor(d.bx[i] / hs);
+      let bd = Infinity;
+      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) for (const n of hash.get(`${ky + dy},${kx + dx}`) || []) {
+        const dd = (net.lat[n] - d.by[i]) ** 2 + ((net.lon[n] - d.bx[i]) * 0.9) ** 2;
+        if (dd < bd) { bd = dd; bNode[i] = n; }
+      }
+    }
+    const isoSteps = new Int16Array(nB), firstIso = new Int16Array(nB).fill(-1);
+    const isoCount = new Int32Array(K), floodCount = new Int32Array(K), closedCount = new Int32Array(K);
+    const reach = new Uint8Array(nN), q = new Int32Array(nN);
+    for (let k = 0; k < K; k++) {
+      reach.fill(0);
+      let qt = 0;
+      for (let n = 0; n < nN; n++) if (exit[n] && !deepAt(nodeCell[n], k)) { reach[n] = 1; q[qt++] = n; }
+      for (let h = 0; h < qt; h++) for (const [m, e] of adj[q[h]]) {
+        if (reach[m] || (eFrom[e] >= 0 && eFrom[e] <= k && k <= eTo[e]) || deepAt(nodeCell[m], k)) continue;
+        reach[m] = 1; q[qt++] = m;
+      }
+      let closed = 0;
+      for (let e = 0; e < net.edges.length; e++) if (eFrom[e] >= 0 && eFrom[e] <= k && k <= eTo[e]) closed++;
+      closedCount[k] = closed;
+      for (let i = 0; i < nB; i++) {
+        if (wetAt(bCell[i], k)) { floodCount[k]++; continue; }
+        if (bNode[i] >= 0 && !reach[bNode[i]]) { isoCount[k]++; isoSteps[i]++; if (firstIso[i] < 0) firstIso[i] = k; }
+      }
+    }
+    const toH = (k) => Math.round(tl.t0 + k * tl.step);
+    let longest = 0, maxIso = 0, maxIsoAt = 0;
+    for (let i = 0; i < nB; i++) if (isoSteps[i] > longest) longest = isoSteps[i];
+    for (let k = 0; k < K; k++) if (isoCount[k] > maxIso) { maxIso = isoCount[k]; maxIsoAt = k; }
+    const roadList = Array.from(roads.values()).sort((x, y) => x.from - y.from);
+    return {
+      roads: roadList.map((r) => ({ name: r.name, closes: toH(r.from), reopens: toH(r.to + 1) })),
+      firstClose: roadList.length ? toH(roadList[0].from) : null,
+      maxIso, maxIsoAt: toH(maxIsoAt), longest: Math.round(longest * tl.step),
+      isoCount, floodCount, closedCount, isoSteps, firstIso,
+    };
+  }
+  function renderTimeline() {
+    const area = state.areaKey && areaReg.get(state.areaKey), box = $('timelineBox');
+    if (!box) return;
+    const tl = area && area.timeline;
+    if (!tl) { box.innerHTML = ''; return; }
+    const ac = tl.access, K = tl.steps;
+    const toH = (k) => Math.round(tl.t0 + k * tl.step);
+    // small chart: gauge level, and buildings flooded / cut off
+    const W = 300, H = 90, gmin = Math.min(...tl.gauge), gmax = Math.max(...tl.gauge);
+    const x = (k) => (k / (K - 1)) * W;
+    const gy = (v) => H - 8 - ((v - gmin) / Math.max(0.01, gmax - gmin)) * (H - 20);
+    const line = Array.from(tl.gauge).map((v, k) => `${x(k).toFixed(1)},${gy(v).toFixed(1)}`).join(' ');
+    let bars = '';
+    if (ac) {
+      const m = Math.max(1, ...ac.floodCount, ...ac.isoCount);
+      for (let k = 0; k < K; k++) {
+        const fh = (ac.floodCount[k] / m) * (H - 20), ih = (ac.isoCount[k] / m) * (H - 20);
+        bars += `<rect x="${x(k) - 1}" y="${H - 8 - fh}" width="2" height="${fh}" fill="var(--accent)" opacity=".55"/>`;
+        if (ih) bars += `<rect x="${x(k) - 1}" y="${H - 8 - fh - ih}" width="2" height="${ih}" fill="#ef6c00" opacity=".85"/>`;
+      }
+    }
+    const n = (v) => Math.round(v).toLocaleString('en-AU');
+    box.innerHTML = `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="Gauge level and buildings affected over time">${bars}<polyline points="${line}" fill="none" stroke="var(--ink)" stroke-width="1.5"/><line id="tlCursor" x1="0" x2="0" y1="0" y2="${H}" stroke="#c62828" stroke-width="1.5"/></svg>
+      <p class="hint">Line: gauge level. Blue: buildings flooded. Orange: buildings cut off.</p>
+      <div class="time-ctl"><span class="time-label" id="tlLabel"></span>
+        <button type="button" class="btn small" id="tlPlay">Play</button>
+        <input type="range" id="tlSlider" min="0" max="${K - 1}" step="1" value="${state.timeStep}" aria-label="Time"></div>
+      ${ac ? `<p><strong>Roads:</strong> ${ac.roads.length ? `the first closes at ${hoursLabel(ac.firstClose)} (${escapeHtml(ac.roads[0].name)}). ${ac.roads.slice(0, 8).map((r) => `${escapeHtml(r.name)} ${hoursLabel(r.closes)} to ${hoursLabel(r.reopens)}`).join('; ')}${ac.roads.length > 8 ? `; and ${ac.roads.length - 8} more` : ''}.` : 'no named road goes under more than 30 cm of water.'}</p>
+        <p><strong>Cut off:</strong> ${ac.maxIso ? `up to ${n(ac.maxIso)} dry buildings have no dry road out, at ${hoursLabel(ac.maxIsoAt)}; the longest any is cut off is about ${ac.longest} hours.` : 'no dry building loses its last dry road out.'}</p>`
+    : '<p class="hint">Count what\'s affected to see road closures and places cut off.</p>'}`;
+    const slider = $('tlSlider');
+    slider.addEventListener('input', () => showTimeStep(+slider.value));
+    $('tlPlay').addEventListener('click', () => {
+      if (state.timePlay) { clearInterval(state.timePlay); state.timePlay = 0; $('tlPlay').textContent = 'Play'; return; }
+      $('tlPlay').textContent = 'Pause';
+      state.timePlay = setInterval(() => {
+        const k = (+slider.value + 1) % K;
+        slider.value = k; showTimeStep(k);
+        if (k === K - 1) { clearInterval(state.timePlay); state.timePlay = 0; $('tlPlay').textContent = 'Play'; }
+      }, 350);
+    });
+    updateTimeLabel(state.timeStep);
+  }
+  function updateTimeLabel(k) {
+    const area = state.areaKey && areaReg.get(state.areaKey), tl = area && area.timeline;
+    if (!tl || !$('tlLabel')) return;
+    const h = Math.round(tl.t0 + k * tl.step), g = tl.gauge[k], prev = tl.gauge[Math.max(0, k - 1)];
+    const ac = tl.access;
+    $('tlLabel').textContent = `${hoursLabel(h)} · gauge ${g.toFixed(2)} m (${g > prev + 1e-3 ? 'rising' : g < prev - 1e-3 ? 'falling' : 'steady'})`
+      + (ac ? ` · ${ac.floodCount[k].toLocaleString('en-AU')} buildings flooded, ${ac.isoCount[k].toLocaleString('en-AU')} cut off, ${ac.closedCount[k].toLocaleString('en-AU')} road sections closed` : '');
+    const cur = document.getElementById('tlCursor');
+    if (cur) { const xx = (k / (tl.steps - 1)) * 300; cur.setAttribute('x1', xx); cur.setAttribute('x2', xx); }
+  }
+  // Show the flood at one moment on the map (and in the counts)
+  function showTimeStep(k) {
+    const area = state.areaKey && areaReg.get(state.areaKey), tl = area && area.timeline, a = state.a;
+    if (!tl || !a) return;
+    state.timeStep = k;
+    const t = tl.t0 + k * tl.step;
+    const wse = F.waveSurface(a, tl.wave, t, new Float64Array(a.N).fill(NaN));
+    state.run = F.inundate(a, Object.assign({}, tl.s, { wse }));
+    state.timeView = true;
+    drawMap();
+    drawStats(tl.s);
+    updateTimeLabel(k);
+    clearTimeout(impactT);
+    impactT = setTimeout(() => renderImpact(), 150);
+  }
+  $('runTimeline').addEventListener('click', () => runTimeline());
+  window.__floodRunTimeline = runTimeline;
+  window.__floodTimeStep = (k) => { showTimeStep(k); return status.impact; };
 
   /* ---------- on-demand flood modelling */
 
