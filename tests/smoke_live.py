@@ -574,18 +574,6 @@ def main() -> int:
         if not (tlr and tlr.get("steps", 0) > 10 and not tlr.get("error")):
             failures.append(f"flood over time failed: {tlr}")
         page.screenshot(path="smoke-timeline.png")
-        evs = page.evaluate("window.__floodEventsHere ? window.__floodEventsHere() : []")
-        if evs:
-            try:
-                tle = page.evaluate("id => window.__floodRunTimeline(id)", evs[0])
-            except Exception as e:
-                tle = {"error": str(e)[:300]}
-            note("notice", f"Recorded flood over time at Rockhampton ({evs}): {json.dumps(tle)}")
-            if not (tle and tle.get("event") == evs[0] and tle.get("steps", 0) > 10):
-                failures.append(f"recorded flood over time failed: {tle}")
-            page.screenshot(path="smoke-timeline-recorded.png")
-        else:
-            note("warning", "No recorded flood readings near Rockhampton's gauge (events.json missing or not matched)")
 
         # ---- on a phone, a swipe scrolls the Layers panel
         mctx = browser.new_context(viewport={"width": 390, "height": 844}, has_touch=True, is_mobile=True)
@@ -671,6 +659,19 @@ def main() -> int:
                 note("notice", f"Recorded floods at Echuca (Victoria): {vrec}; {json.dumps(status().get('vicRecorded'))}")
                 n_cls = page.evaluate("window.__floodApplyGaugeLevels ? window.__floodApplyGaugeLevels('major') : -1")
                 note("notice", f"Echuca major flood class applied at {n_cls} gauge(s); level points {status().get('levelPoints')}")
+                # the October 2022 flood's hourly readings drive flood over time
+                evs = page.evaluate("window.__floodEventsHere ? window.__floodEventsHere() : []")
+                if evs:
+                    try:
+                        tle = page.evaluate("id => window.__floodRunTimeline(id)", evs[0])
+                    except Exception as e:
+                        tle = {"error": str(e)[:300]}
+                    note("notice", f"Recorded flood over time at Echuca ({evs}): {json.dumps(tle)}")
+                    if not (tle and tle.get("event") == evs[0] and tle.get("steps", 0) > 10):
+                        failures.append(f"recorded flood over time failed: {tle}")
+                    page.screenshot(path="smoke-timeline-recorded.png")
+                else:
+                    note("warning", "No recorded flood readings near Echuca (events.json missing or not matched)")
         loose = [r["id"] for r in results if r.get("kind") == "river" and not ((r.get("anchor") or {}).get("gauge"))]
         anchored = [f"{r['id']}→{r['anchor']['gauge']} ({r['anchor']['km']} km)" for r in results if (r.get("anchor") or {}).get("gauge")]
         note("notice", f"Presets anchored to a BoM gauge: {len(anchored)}; not anchored: {', '.join(loose) or 'none'}")
