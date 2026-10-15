@@ -167,3 +167,19 @@ test('deepest-water figure ignores a single deep pit', () => {
   assert.ok(Math.abs(s.maxDepth - before) < 0.5, `p99 moved from ${before} to ${s.maxDepth}`);
   assert.equal(s.rawMaxDepth, 30);
 });
+
+test('extra control points pin the water surface and interpolate between them', () => {
+  // a point halfway between the gauge and the mouth along the main channel
+  const path = [];
+  for (let c = a.defaultGauge; c >= 0; c = a.rec[c]) path.push(c);
+  const mid = path[Math.floor(path.length / 2)];
+  const run = F.inundate(a, scenario(4, { controls: [{ cell: mid, level: 3.5 }] }));
+  assert.ok(Math.abs(run.wse[mid] - 3.5) < 1e-9, 'level fixed at the control point');
+  assert.ok(Math.abs(run.wse[a.defaultGauge] - 4) < 1e-9, 'gauge keeps its level');
+  const q = path[Math.floor(path.length / 4)];
+  assert.ok(run.wse[q] > 3.5 - 1e-9 && run.wse[q] < 4 + 1e-9, 'between the gauge and the control point');
+  const r = path[Math.floor(path.length * 0.75)];
+  assert.ok(run.wse[r] > 1 - 1e-9 && run.wse[r] < 3.5 + 1e-9, 'between the control point and the bay');
+  const plain = F.inundate(a, scenario(4));
+  assert.ok(Math.abs(plain.wse[mid] - 3.5) > 1e-6, 'without it the level differs');
+});

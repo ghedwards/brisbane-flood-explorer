@@ -520,15 +520,38 @@
    *   upstreamGradient from the point where the reach joins that path.
    * - Streams reaching the sea by another route rise from bayLevel.
    */
+  // Water surface along the stream network. The gauge and any extra control
+  // points (s.controls: [{cell, level}]) fix the level at those cells; along
+  // the flow path below each one the level runs linearly to the next control
+  // point downstream (or to the bay level at the outlet). Where two paths
+  // share cells (below a junction) the higher level wins. Streams not on a
+  // controlled path rise from where they join one at upstreamGradient m/km.
   function streamSurface(a, s) {
     const { N, order, nOrder, rec, chain, stream } = a;
-    const g = s.gauge;
+    const ctrl = [];
+    if (s.gauge >= 0) ctrl.push({ cell: s.gauge, level: s.gaugeLevel });
+    (s.controls || []).forEach((c) => { if (c && c.cell >= 0 && c.cell < N && Number.isFinite(c.level)) ctrl.push(c); });
+    const ctrlLevel = new Map();
+    ctrl.forEach((c) => ctrlLevel.set(c.cell, Math.max(ctrlLevel.get(c.cell) ?? -Infinity, c.level)));
     const onPath = new Uint8Array(N);
-    if (g >= 0) { let c = g; while (c >= 0) { onPath[c] = 1; c = rec[c]; } }
-    const Lg = g >= 0 ? chain[g] : 0;
-    const pathLevel = (c) => (Lg > 0
-      ? s.bayLevel + (s.gaugeLevel - s.bayLevel) * (chain[c] / Lg)
-      : s.gaugeLevel);
+    const pathWse = new Float64Array(N).fill(-Infinity);
+    for (const { cell: p0 } of ctrl) {
+      const L0 = ctrlLevel.get(p0);
+      // find the next control downstream (or the outlet)
+      let q = rec[p0], end = -1;
+      while (q >= 0) { if (ctrlLevel.has(q)) { end = q; break; } q = rec[q]; }
+      const cU = chain[p0], cD = end >= 0 ? chain[end] : 0, LD = end >= 0 ? ctrlLevel.get(end) : s.bayLevel;
+      let c = p0;
+      while (c >= 0 && c !== end) {
+        const t = cU > cD ? (chain[c] - cD) / (cU - cD) : 1;
+        const v = LD + (L0 - LD) * t;
+        if (v > pathWse[c]) pathWse[c] = v;
+        onPath[c] = 1;
+        c = rec[c];
+      }
+      if (end >= 0) onPath[end] = 1;
+    }
+    for (const [c, v] of ctrlLevel) if (v > pathWse[c]) pathWse[c] = v;
     const grad = s.upstreamGradient / 1000;
 
     const junc = new Int32Array(N).fill(-1);
@@ -536,7 +559,7 @@
     for (let j = 0; j < nOrder; j++) {
       const c = order[j];
       if (!stream[c]) continue;
-      if (onPath[c]) { junc[c] = c; wse[c] = pathLevel(c); continue; }
+      if (onPath[c]) { junc[c] = c; wse[c] = pathWse[c]; continue; }
       const r = rec[c];
       junc[c] = (r >= 0 && stream[r]) ? junc[r] : -1;
       if (junc[c] >= 0) wse[c] = wse[junc[c]] + grad * (chain[c] - chain[junc[c]]);

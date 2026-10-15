@@ -241,7 +241,7 @@
       if (id === 'sample') {
         const g = F.syntheticTerrain();
         state.areaMeta = { id: 'sample', name: 'Sample terrain', synthetic: true, streamAreaKm2: 4 };
-        useGrid(g, 'sample', { events: true });
+        await useGrid(g, 'sample', { events: true });
       } else {
         const meta = await (await fetch(`data/${id}/meta.json`, { cache: 'no-cache' })).json();
         const [demBuf, d8Buf] = await Promise.all([
@@ -255,7 +255,7 @@
         const valid = new Uint8Array(N);
         for (let i = 0; i < N; i++) valid[i] = Number.isFinite(dem[i]) && dem[i] !== meta.nodata && d8[i] !== 255 ? 1 : 0;
         state.areaMeta = meta;
-        useGrid({ W: meta.W, H: meta.H, cell: meta.cell, dem, valid, d8 }, id, { events: !!meta.brisbaneGauge });
+        await useGrid({ W: meta.W, H: meta.H, cell: meta.cell, dem, valid, d8 }, id, { events: !!meta.brisbaneGauge });
       }
     } catch (err) {
       showError(`Could not load that terrain: ${err.message}`);
@@ -272,7 +272,42 @@
 
   const nextFrame = () => new Promise((r) => requestAnimationFrame(() => setTimeout(r, 0)));
 
-  function useGrid(grid, id, opts) {
+  // The flow analysis is the slow step (seconds on big areas): run it in a
+  // background worker, falling back to the page if workers are unavailable.
+  let worker = null, workerSeq = 0;
+  const workerJobs = new Map();
+  function getWorker() {
+    if (worker === false) return null;
+    if (!worker) {
+      try {
+        worker = new Worker('flood-worker.js');
+        worker.onmessage = (e) => {
+          const job = workerJobs.get(e.data.id);
+          if (!job) return;
+          workerJobs.delete(e.data.id);
+          if (e.data.error) job.reject(new Error(e.data.error)); else job.resolve(e.data.a);
+        };
+        worker.onerror = (e) => {
+          if (e && e.preventDefault) e.preventDefault();
+          worker = false;           // e.g. opened from a file: do the work here
+          workerJobs.forEach((job) => job.fallback());
+          workerJobs.clear();
+        };
+      } catch (err) { worker = false; return null; }
+    }
+    return worker;
+  }
+  function analyseAsync(grid, opts) {
+    const w = getWorker();
+    if (!w) return nextFrame().then(() => F.analyse(grid, opts));
+    return new Promise((resolve, reject) => {
+      const id = ++workerSeq;
+      workerJobs.set(id, { resolve, reject, fallback: () => resolve(F.analyse(grid, opts)) });
+      w.postMessage({ id, grid, opts });
+    });
+  }
+
+  async function useGrid(grid, id, opts) {
     // keep the area we're leaving on the map as it is
     const meta = state.areaMeta;
     const prev = state.areaKey && areaReg.get(state.areaKey);
@@ -288,7 +323,7 @@
       || Math.min(4, Math.max(0.05, areaKm2 * 0.01));
     ctl.streamArea.value = sliderFromStream(state.streamAreaKm2);
     renderEvents();
-    reanalyse(true);
+    await reanalyse(true);
     // default levels
     ctl.gaugeLevel.min = 0;
     $('levelHint').hidden = true;
@@ -327,10 +362,11 @@
     runScenario();
   }
 
-  function reanalyse(resetGauge) {
+  async function reanalyse(resetGauge) {
     const g = state.grid;
-    state.a = F.analyse(g, { streamAreaKm2: state.streamAreaKm2 });
-    const a = state.a;
+    const a = await analyseAsync(g, { streamAreaKm2: state.streamAreaKm2 });
+    if (state.grid !== g) return;   // another area was opened meanwhile
+    state.a = a;
     let gauge = a.defaultGauge;
     if (!resetGauge && state.gauge >= 0) {
       const x = state.gauge % a.W, y = Math.floor(state.gauge / a.W);
@@ -370,7 +406,7 @@
       if (!op) { op = document.createElement('option'); op.value = 'upload'; $('area').appendChild(op); }
       op.textContent = 'Your file: ' + grid.name;
       $('area').value = 'upload';
-      useGrid(grid, 'upload', { events: false });
+      await useGrid(grid, 'upload', { events: false });
     } catch (err) {
       showError(err.message);
     } finally {
@@ -898,6 +934,7 @@
   }
   const BLANK = 'data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==';
   const status = (window.__floodStatus = { mode: 'static', overlayUpdates: 0, tilesLoaded: 0, tileErrors: 0, floodPixels: 0, overlays: {} });
+  status.worker = () => (worker ? 'worker' : worker === false ? 'page' : 'unused');
 
   let leafletPromise = null;
   function loadLeaflet() {
@@ -1299,12 +1336,23 @@
     renderInfo();
     renderNotice();
     if (!state.a && state.grid) {
-      // reopened: rebuild the flow analysis and rerun its scenario
-      state.a = F.analyse(state.grid, { streamAreaKm2: state.streamAreaKm2 });
-      state.terrain = terrainRGBA(state.a);
-      state.base = null;
-      runScenario();
-    } else if (state.run) { drawStats(scenario()); drawProfile(scenario()); }
+      // reopened: rebuild the flow analysis (in the background) and rerun
+      // its scenario; the flood picture stays on the map meanwhile
+      const grid = state.grid;
+      setBusy(true, 'Reopening this model…');
+      state.ready = analyseAsync(grid, { streamAreaKm2: state.streamAreaKm2 }).then((a) => {
+        if (state.areaKey !== key || state.grid !== grid) return;
+        state.a = a;
+        state.terrain = terrainRGBA(a);
+        state.base = null;
+        runScenario();
+        state.edges = floodEdges(a, state.run);
+        renderEdgeNote();
+      }).finally(() => setBusy(false));
+    } else {
+      state.ready = Promise.resolve();
+      if (state.run) { drawStats(scenario()); drawProfile(scenario()); }
+    }
     state.edges = state.run && state.a ? floodEdges(state.a, state.run) : [];
     renderEdgeNote();
     renderAreaList();
@@ -1598,6 +1646,7 @@
       activateArea(hit.key);
       say(`Switched to ${hit.name}.`);
     }
+    if (!state.a) return;   // still reopening
     const c = latLngCell(e.latlng);
     if (!c) return;
     const s = $('moveGauge').checked ? F.snapToStream(state.a, c.x, c.y, 6, gaugeFloor()) : -1;
@@ -2690,7 +2739,7 @@
       };
       addModelledOption(key, o.name);
       $('area').value = key;
-      useGrid(grid, 'local', { events: false });
+      await useGrid(grid, 'local', { events: false });
       if (o.kind === 'coast') {
         ctl.bayLevel.value = 1.5;
         if (state.gauge >= 0) ctl.gaugeLevel.value = Math.max(parseFloat(ctl.gaugeLevel.min), Math.round((state.a.dem[state.gauge] + 0.5) * 20) / 20);
