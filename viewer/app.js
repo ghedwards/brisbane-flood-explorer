@@ -47,6 +47,7 @@
       gaugeLevel: parseFloat(ctl.gaugeLevel.value) + parseFloat(ctl.extra.value),
       bayLevel: parseFloat(ctl.bayLevel.value) + slr,
       upstreamGradient: parseFloat(ctl.grad.value),
+      controls: (state.controls || []).map((c) => ({ cell: c.cell, level: c.level })),
     };
   }
 
@@ -314,6 +315,7 @@
     if (prev) { state.areaMeta = prev.areaMeta; saveActive(); state.areaMeta = meta; }
     state.areaKey = null;
     state.base = null; state.run = null;
+    state.controls = [];
     state.grid = grid;
     state.areaId = id;
     status.area = id;
@@ -503,6 +505,7 @@
     drawMap();
     drawStats(s);
     renderEdgeNote();
+    renderLevelPoints();
     drawProfile(s);
     renderNotice();
   }
@@ -1218,7 +1221,7 @@
     return {
       grid: state.grid, areaId: state.areaId, areaMeta: state.areaMeta, eventsApply: state.eventsApply,
       streamAreaKm2: state.streamAreaKm2, a: state.a, gauge: state.gauge, base: state.base, run: state.run,
-      terrain: state.terrain, geo: state.geo,
+      terrain: state.terrain, geo: state.geo, controls: state.controls || [],
       ctl: Object.fromEntries(CTL_KEYS.map((k) => [k, ctl[k].value])),
       gmin: ctl.gaugeLevel.min, gmax: ctl.gaugeLevel.max,
       levelHint: $('levelHint').hidden ? null : $('levelHint').textContent,
@@ -1313,7 +1316,7 @@
     Object.assign(state, {
       grid: area.grid, areaId: area.areaId, areaMeta: area.areaMeta, eventsApply: area.eventsApply,
       streamAreaKm2: area.streamAreaKm2, a: area.a, gauge: area.gauge, base: area.base, run: area.run,
-      terrain: area.terrain, geo: area.geo, areaKey: key, pendingGeo: false,
+      terrain: area.terrain, geo: area.geo, areaKey: key, pendingGeo: false, controls: area.controls || [],
     });
     status.area = area.areaId === 'local' ? key : area.areaId;
     CTL_KEYS.forEach((k) => { ctl[k].value = area.ctl[k]; });
@@ -1647,6 +1650,7 @@
       say(`Switched to ${hit.name}.`);
     }
     if (!state.a) return;   // still reopening
+    if (state.addingPoint) { addLevelPointAt(e.latlng); return; }
     const c = latLngCell(e.latlng);
     if (!c) return;
     const s = $('moveGauge').checked ? F.snapToStream(state.a, c.x, c.y, 6, gaugeFloor()) : -1;
@@ -1905,7 +1909,7 @@
     gauges.sort((a, b) => sev(b.status.severity).rank - sev(a.status.severity).rank);
     const flooding = gauges.filter((g) => sev(g.status.severity).rank >= 2);
     const flash = (fh.flashFloodEvents || []).length;
-    $('forecastBadge').hidden = !(flooding.length || flash);
+    $('forecastBadge').hidden = !(flooding.length || flash || nat.warningCount);
     let html = '';
     if (!flooding.length && !flash) {
       html += `<p>No flooding forecast at ${gauges.length} Flood Hub gauge${gauges.length === 1 ? '' : 's'} in Australia.</p>`;
@@ -2124,6 +2128,10 @@
         get('gauges.geojson'), get('storages.geojson'), get('readings.json'), get('meta.json')]);
       nat.data = { gauges: gauges.features || [], storages: storages.features || [], meta };
       nat.readings = readings;
+      const opt = async (f) => { try { const r = await fetch(`data/national/${f}`, { cache: 'no-cache' }); return r.ok ? r.json() : null; } catch (e) { return null; } };
+      [nat.floodclass, nat.warnings] = await Promise.all([opt('floodclass.json'), opt('warnings.json')]);
+      nat.floodclass = nat.floodclass || {};
+      renderWarnings();
     } catch (e) {
       nat.data = { gauges: [], storages: [], meta: { errors: [String(e)] } };
       nat.readings = { level: {}, storage: {} };
@@ -2177,6 +2185,14 @@
       });
 
     }
+    const warned = nat.data.gauges.filter((f) => f.properties.kind !== 'river' && warningsFor(f.properties).length);
+    status.warnedGauges = warned.length;
+    if (warned.length) {
+      nat.layers['Gauges under a current flood warning (BoM)'] = L.layerGroup(warned.map((f) => {
+        const [lo, la] = f.geometry.coordinates;
+        return L.circleMarker([la, lo], { renderer, radius: 10, color: '#c62828', weight: 2.5, fill: false, interactive: false });
+      }));
+    }
     if (nat.data.storages.length) {
       nat.layers['Dams and water storages (BoM)'] = L.geoJSON({ type: 'FeatureCollection', features: nat.data.storages }, {
         attribution: BOM_ATTR,
@@ -2196,7 +2212,7 @@
   function addNationalLayers(m) {
     const L = window.L;
     buildNationalLayers(L, m);
-    const defaultsOn = ['Flood forecast gauges (BoM)', 'Tide gauges (BoM)', 'Dams and water storages (BoM)'];
+    const defaultsOn = ['Flood forecast gauges (BoM)', 'Tide gauges (BoM)', 'Dams and water storages (BoM)', 'Gauges under a current flood warning (BoM)'];
     for (const [name, layer] of Object.entries(nat.layers)) {
       registerOverlay(name, layer);
       if (nat.defaultsApplied) continue;   // respect what the viewer has switched since
@@ -2231,10 +2247,11 @@
   function showScenarioEmpty(empty) {
     scenarioEmpty = empty;
     Array.from($('scenarioEmpty').parentElement.children).forEach((el) => {
-      if (el.id !== 'scenarioEmpty' && el.id !== 'scenarioModel' && el.id !== 'edgeNote') el.hidden = empty || (el.id === 'eventsSet' && !state.eventsApply);
+      if (el.id !== 'scenarioEmpty' && el.id !== 'scenarioModel' && el.id !== 'edgeNote' && el.id !== 'levelPointsSet') el.hidden = empty || (el.id === 'eventsSet' && !state.eventsApply);
     });
     if (empty) { $('stats').innerHTML = ''; state.edges = []; }
     renderEdgeNote();
+    renderLevelPoints();
     renderScenarioTitle();
   }
 
@@ -2444,7 +2461,9 @@
       } else {
         html += '<p class="hint">No recent reading is published for this gauge on Water Data Online.</p>';
       }
+      html += classHtml(p, r);
     }
+    html += warningsHtml(p);
 
     if (p.kind === 'storage') html += '<div class="js-history"></div>';
 
@@ -2652,6 +2671,148 @@
     if (f) openReport(f);
     return !!f;
   };
+
+  /* ---------- flood classes, warnings and level points */
+  function classFor(p) { return p && p.bom != null && nat.floodclass ? nat.floodclass[String(p.bom)] || null : null; }
+  function floodStatus(v, c) {
+    if (!c || v == null) return null;
+    if (c.major != null && v >= c.major) return 'major';
+    if (c.moderate != null && v >= c.moderate) return 'moderate';
+    if (c.minor != null && v >= c.minor) return 'minor';
+    return 'below minor';
+  }
+  function classHtml(p, r) {
+    const c = classFor(p);
+    if (!c) return '';
+    const st = r ? floodStatus(r.latest[1], c) : null;
+    const cell = (v) => (v == null ? '–' : `${v.toFixed(2)} m${c.zero != null ? `<br><small>${(c.zero + v).toFixed(2)} m AHD</small>` : ''}`);
+    return `<div class="classes"><span class="label">Flood classes (BoM)</span>${st ? ` <strong>· now ${st}</strong>` : ''}
+      <table><tr><th>Minor</th><th>Moderate</th><th>Major</th></tr><tr><td>${cell(c.minor)}</td><td>${cell(c.moderate)}</td><td>${cell(c.major)}</td></tr></table>
+      <span class="hint">On the gauge board${c.zero != null ? `; gauge zero is ${c.zero.toFixed(2)} m AHD, so these can set a flood model's level` : '; no gauge zero is published, so they can\'t be converted to heights'}.</span></div>`;
+  }
+  function warningsFor(p) {
+    const list = (nat.warnings && nat.warnings.warnings) || [];
+    const st = String(p.state || '').toUpperCase().slice(0, 3);
+    const keys = [p.basin, p.river_name, p.name].filter(Boolean).map((x) => String(x).toLowerCase().replace(/ (river )?basin$/, '').replace(/\s+r(iver)?\b.*$/, ''))
+      .filter((k) => k.length > 3);
+    return list.filter((w) => (!st || !w.state || w.state === st || (st === 'QUE' && w.state === 'QLD'))
+      && keys.some((k) => w.title.toLowerCase().includes(k)));
+  }
+  function warningsHtml(p) {
+    const ws = warningsFor(p);
+    if (!ws.length) return '';
+    return `<div>${ws.map((w) => `<a class="warn-item" href="${escapeHtml(w.link)}" target="_blank" rel="noopener"><strong>${escapeHtml(w.title)}</strong><small>Current Bureau of Meteorology warning${w.published ? ` · ${escapeHtml(w.published)}` : ''}</small></a>`).join('')}</div>`;
+  }
+  function renderWarnings() {
+    const box = $('warningsBox');
+    if (!box) return;
+    const w = nat.warnings;
+    status.warnings = w ? { ok: w.ok, count: (w.warnings || []).length } : { ok: false };
+    if (!w) { box.innerHTML = '<p class="hint">Current flood warnings could not be loaded.</p>'; return; }
+    const list = w.warnings || [];
+    box.innerHTML = `<h3 class="places-sub">Current flood warnings (BoM)</h3>${list.length
+      ? list.map((x) => `<a class="warn-item" href="${escapeHtml(x.link)}" target="_blank" rel="noopener"><strong>${escapeHtml(x.title)}</strong><small>${escapeHtml(x.state)}${x.published ? ` · ${escapeHtml(x.published)}` : ''}</small></a>`).join('')
+      : `<p class="hint">${w.ok ? 'No flood warnings or watches are current.' : 'The warning feeds could not be reached at the last update.'}</p>`}
+      <p class="hint">Checked ${escapeHtml(ago(w.fetched))}. Always follow official warnings at <a href="https://www.bom.gov.au/australia/warnings/" target="_blank" rel="noopener">bom.gov.au</a>.</p>`;
+    nat.warningCount = list.length;
+    if (list.length) $('forecastBadge').hidden = false;
+  }
+
+  // Gauges inside the active model: their flood classes (where the gauge
+  // zero is known) or current readings become level points.
+  function gaugesInModel() {
+    const g = state.geo;
+    if (!g || !nat.data || !state.a) return [];
+    return nat.data.gauges.filter((f) => {
+      const [lo, la] = f.geometry.coordinates;
+      return la > g.south && la < g.north && lo > g.west && lo < g.east && f.properties.kind !== 'tide';
+    });
+  }
+  function streamCellAt(lat, lon) {
+    const c = latLngCell({ lat, lng: lon });
+    if (!c) return -1;
+    const s = F.snapToStream(state.a, c.x, c.y, 10);
+    return s >= 0 ? s : c.i;
+  }
+  function applyGaugeLevels(which) {
+    const pts = [];
+    for (const f of gaugesInModel()) {
+      const p = f.properties, c = classFor(p);
+      if (!c || c.zero == null) continue;
+      let v = null;
+      if (which === 'now') { const r = nat.readings.level && nat.readings.level[p.station]; v = r ? r.latest[1] : null; } else v = c[which];
+      if (v == null) continue;
+      const cell = streamCellAt(f.geometry.coordinates[1], f.geometry.coordinates[0]);
+      if (cell >= 0) pts.push({ cell, level: Math.round((c.zero + v) * 100) / 100, label: p.name, auto: true });
+    }
+    if (!pts.length) return 0;
+    // the one nearest the model's gauge sets the gauge level; the rest are points
+    const gx = state.gauge % state.a.W, gy = Math.floor(state.gauge / state.a.W);
+    pts.sort((p1, p2) => Math.hypot(p1.cell % state.a.W - gx, Math.floor(p1.cell / state.a.W) - gy) - Math.hypot(p2.cell % state.a.W - gx, Math.floor(p2.cell / state.a.W) - gy));
+    const first = pts[0], d = Math.hypot(first.cell % state.a.W - gx, Math.floor(first.cell / state.a.W) - gy);
+    const rest = d <= 12 ? pts.slice(1) : pts;
+    if (d <= 12) {
+      ctl.gaugeLevel.min = Math.min(parseFloat(ctl.gaugeLevel.min), Math.floor(first.level - 2));
+      ctl.gaugeLevel.max = Math.max(parseFloat(ctl.gaugeLevel.max), Math.ceil(first.level + 3));
+      ctl.gaugeLevel.value = first.level;
+      ctl.extra.value = 0;
+    }
+    state.controls = (state.controls || []).filter((x) => !x.auto).concat(rest);
+    state.base = null;
+    syncOutputs();
+    runScenario();
+    renderLevelPoints();
+    say(`Set ${pts.length} gauge level${pts.length === 1 ? '' : 's'} from ${which === 'now' ? 'current readings' : `${which} flood class`}.`);
+    return pts.length;
+  }
+  window.__floodApplyGaugeLevels = applyGaugeLevels;
+
+  function renderLevelPoints() {
+    const set = $('levelPointsSet');
+    if (!set) return;
+    const local = state.a && state.geo;
+    set.hidden = !local || scenarioEmpty;
+    if (set.hidden) return;
+    const inside = gaugesInModel(), withZero = inside.filter((f) => { const c = classFor(f.properties); return c && c.zero != null; });
+    const withClass = inside.filter((f) => classFor(f.properties));
+    let ch = '';
+    if (withZero.length) {
+      const hasNow = withZero.some((f) => nat.readings.level && nat.readings.level[f.properties.station]);
+      ch = `<p class="hint">${withZero.length} gauge${withZero.length === 1 ? '' : 's'} here ${withZero.length === 1 ? 'has' : 'have'} Bureau flood class levels. Set the river to:</p>
+        <div class="class-btns"><button type="button" class="btn small" data-cls="minor">Minor</button><button type="button" class="btn small" data-cls="moderate">Moderate</button><button type="button" class="btn small" data-cls="major">Major</button>${hasNow ? '<button type="button" class="btn small" data-cls="now">Now</button>' : ''}</div>`;
+    } else if (withClass.length) {
+      ch = `<p class="hint">${withClass.length} gauge${withClass.length === 1 ? '' : 's'} here ${withClass.length === 1 ? 'has' : 'have'} flood classes, but on the gauge board without a published gauge zero, so they can't be placed on the map. See the gauge reports.</p>`;
+    }
+    $('classLevels').innerHTML = ch;
+    $('classLevels').querySelectorAll('[data-cls]').forEach((b) => b.addEventListener('click', () => applyGaugeLevels(b.dataset.cls)));
+    const pts = state.controls || [];
+    status.levelPoints = pts.length;
+    $('levelPoints').innerHTML = pts.map((p, i) => `<div class="level-point"><span>${escapeHtml(p.label || `Point ${i + 1}`)}</span>
+      <input type="number" step="0.05" value="${p.level.toFixed(2)}" data-lp="${i}" aria-label="Water level at ${escapeHtml(p.label || `point ${i + 1}`)} in metres">
+      <button type="button" class="icon-btn" data-lp-drop="${i}" aria-label="Remove this level point" title="Remove">×</button></div>`).join('');
+    $('levelPoints').querySelectorAll('[data-lp]').forEach((inp) => inp.addEventListener('change', () => {
+      const v = parseFloat(inp.value);
+      if (Number.isFinite(v)) { state.controls[+inp.dataset.lp].level = v; state.base = null; runScenario(); }
+    }));
+    $('levelPoints').querySelectorAll('[data-lp-drop]').forEach((b) => b.addEventListener('click', () => {
+      state.controls.splice(+b.dataset.lpDrop, 1); state.base = null; runScenario(); renderLevelPoints();
+    }));
+    $('addLevelPoint').setAttribute('aria-pressed', String(!!state.addingPoint));
+    $('addLevelPoint').textContent = state.addingPoint ? 'Tap the river on the map…' : 'Add a level point';
+  }
+  $('addLevelPoint').addEventListener('click', () => { state.addingPoint = !state.addingPoint; renderLevelPoints(); });
+  function addLevelPointAt(latlng) {
+    const s0 = streamCellAt(latlng.lat, latlng.lng);
+    state.addingPoint = false;
+    if (s0 < 0) { say('That spot is outside this model.'); renderLevelPoints(); return; }
+    const lv = state.run && Number.isFinite(state.run.level[s0]) ? state.run.level[s0] : state.a.dem[s0] + 1;
+    state.controls = (state.controls || []).concat([{ cell: s0, level: Math.round(lv * 20) / 20, label: `Point ${(state.controls || []).length + 1}` }]);
+    state.base = null;
+    runScenario();
+    renderLevelPoints();
+    say('Level point added. Type the water level you want there in Scenario.');
+  }
+  window.__floodAddLevelPoint = (lat, lon) => addLevelPointAt({ lat, lng: lon });
 
   /* ---------- on-demand flood modelling */
 

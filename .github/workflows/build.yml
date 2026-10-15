@@ -40,7 +40,7 @@ jobs:
         run: pip install -r pipeline/requirements.txt
 
       - name: Test the data fetchers
-        run: python -m unittest tests/test_floodhub.py tests/test_national.py tests/test_council.py
+        run: python -m unittest tests/test_floodhub.py tests/test_national.py tests/test_council.py tests/test_floodinfo.py
 
       # Terrain only needs rebuilding when the area or the pipeline changes.
       - name: Restore built terrain
@@ -92,6 +92,12 @@ jobs:
         id: national
         continue-on-error: true
         run: python pipeline/fetch_national.py site/data/national | tee national.log
+
+      - name: Fetch BoM flood class levels and current flood warnings
+        id: floodinfo
+        continue-on-error: true
+        timeout-minutes: 5
+        run: python pipeline/fetch_floodinfo.py site/data/national | tee floodinfo.log
 
       # Dam water history builds up across runs: restore the latest copy,
       # spend at most ~5 minutes filling in or refreshing dams, save again.
@@ -186,6 +192,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
           echo "::notice::$(tail -n1 floodhub.log 2>/dev/null)"
           echo "::notice::$(grep '^National' national.log 2>/dev/null)"
+          echo "::notice::$(grep '^Flood info' floodinfo.log 2>/dev/null || echo 'Flood info: not fetched')"
           echo "::notice::$(grep '^Water history' wh.log 2>/dev/null || echo 'Water history: not fetched this run')"
           grep '^warning:' wh.log 2>/dev/null | head -2 | sed 's/^warning:/::warning::Water history: /' || true
           grep '^warning:' national.log 2>/dev/null | head -3 | sed 's/^warning:/::warning::National data: /' || true

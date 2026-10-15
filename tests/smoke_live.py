@@ -382,6 +382,17 @@ def main() -> int:
             failures.append(f"pinned place {pin_n} was not modelled under its own number: {pin_place}")
         page.screenshot(path="smoke-pin.png")
 
+        # ---- a level point pins the surface along the river
+        if pin_place and pin_place[0]["area"]:
+            lp0 = status().get("levelPoints", 0) or 0
+            page.evaluate("window.__floodAddLevelPoint(-27.60, 152.80)")
+            page.wait_for_timeout(600)
+            lp1 = status().get("levelPoints", 0) or 0
+            if lp1 != lp0 + 1:
+                failures.append(f"adding a level point failed: {lp0} -> {lp1}")
+        wst = status().get("warnings")
+        note("notice", f"Flood warnings in the app: {json.dumps(wst)}; gauges ringed: {status().get('warnedGauges')}")
+
         # ---- extending a model rebuilds it over a 40 km window, keeping its number
         if pin_place and pin_place[0]["area"]:
             ext = None
@@ -438,6 +449,9 @@ def main() -> int:
             results.append({"id": pre["id"], "ok": bool(loc.get("ok")) and loc.get("key") != before,
                             "ms": loc.get("ms"), "error": loc.get("error"), "snap": snap, "stats": stats[:120]})
             page.screenshot(path=f"smoke-preset-{pre['id']}.png")
+            if pre["id"] == "echuca" and loc.get("ok"):
+                n_cls = page.evaluate("window.__floodApplyGaugeLevels ? window.__floodApplyGaugeLevels('major') : -1")
+                note("notice", f"Echuca major flood class applied at {n_cls} gauge(s); level points {status().get('levelPoints')}")
         bad = [r for r in results if not r["ok"]]
         with open(os.environ.get("GITHUB_STEP_SUMMARY", os.devnull), "a") as fh:
             fh.write("### Presets\n" + "".join(f"- {json.dumps(r)}\n" for r in results))
