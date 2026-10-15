@@ -354,15 +354,22 @@ test('recorded flood with an upstream gauge: levels follow each gauge and blend 
   const hydro = [[0, 1], [10, 5], [20, 2], [40, 1]], up = [[0, 2], [4, 8], [14, 3], [40, 2]];
   const w = F.waveSetup(a, s, { hydro, speedKmh: 3, others: [{ cell: u, hydro: up }] });
   assert.equal(w.up.gauges, 1);
-  const peakTime = (c) => { let m = -Infinity, tm = 0; for (let t = -10; t < 60; t += 0.5) { const v = F.waveSurface(a, w, t)[c]; if (v > m) { m = v; tm = t; } } return tm; };
+  const peakTime = (c, ww = w) => { let m = -Infinity, tm = 0; const out = new Float64Array(a.N); for (let t = -10; t < 60; t += 0.5) { const v = F.waveSurface(a, ww, t, out)[c]; if (v > m) { m = v; tm = t; } } return tm; };
   assert.equal(peakTime(u), 4, 'the upper gauge peaks when its readings do');
   assert.equal(peakTime(g), 10, 'the main gauge when its readings do');
   let mid = u;
   while (a.chain[mid] - a.chain[g] > (a.chain[u] - a.chain[g]) / 2) mid = a.rec[mid];
   const pm = peakTime(mid);
   assert.ok(pm > 4 && pm <= 10, `half way, in between (${pm})`);
-  const off = F.waveSetup(a, s, { hydro, speedKmh: 3, others: [{ cell: a.rec[g], hydro: up }] });
-  assert.equal(off.up, null, 'a gauge below the main gauge is not used as an upstream gauge');
+  // a gauge further down the river: the river between follows both
+  let dn = g;
+  while (a.rec[dn] >= 0 && a.chain[g] - a.chain[dn] < 6000) dn = a.rec[dn];
+  const wd = F.waveSetup(a, s, { hydro, speedKmh: 3, route: true, others: [{ cell: dn, hydro: up }] });
+  assert.ok(wd.up && wd.up.below === 1, 'the lower gauge is used');
+  assert.equal(peakTime.call(null, g, wd), 10, 'main gauge still follows its readings');
+  assert.equal(peakTime.call(null, dn, wd), 4, 'the lower gauge follows its own');
+  const elsewhere = F.waveSetup(a, s, { hydro, speedKmh: 3, others: [{ cell: 0, hydro: up }] });
+  assert.ok(!elsewhere.up, 'a cell off the river is ignored');
 });
 
 test('routing with a measured rating uses its exponent and still matches the gauge', () => {

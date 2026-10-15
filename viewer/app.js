@@ -4626,7 +4626,7 @@
       const q = rt.a * Math.pow(Math.max(0, board - rt.h0), rt.b);
       parts.push(`Flows from ${escapeHtml(rt.name || 'the gauge')}'s measured rating (Water Data Online daily records${board > rt.hmax ? ', extended above the highest daily level recorded' : ''}): about ${q >= 100 ? Math.round(q / 10) * 10 : Math.round(q)} m³/s at the peak.`);
     }
-    if (tl.wave && tl.wave.up) parts.push(`Upstream, the flood follows the readings at ${tl.wave.up.gauges} more gauge${tl.wave.up.gauges === 1 ? '' : 's'} on the river (${escapeHtml(tl.wave.up.names.join(', '))}), blending between gauges along the way.`);
+    if (tl.wave && tl.wave.up) parts.push(`Along the river the flood follows the recorded readings at ${tl.wave.up.gauges} more gauge${tl.wave.up.gauges === 1 ? '' : 's'}${tl.wave.up.below ? `, ${tl.wave.up.below} below this one` : ''}: ${escapeHtml(tl.wave.up.names.join(', '))}, blending between gauges along the way.`);
     if (tl.wave && tl.wave.tide) parts.push(`Tide: ${tl.opts.tide.atPeak === 'low' ? 'low' : 'high'} water at the peak, sea between ${(tl.s.bayLevel - 2 * tl.wave.tide).toFixed(2)} m and ${tl.s.bayLevel.toFixed(2)} m.`);
     return parts.length ? `<p class="hint">${parts.join(' ')}</p>` : '';
   }

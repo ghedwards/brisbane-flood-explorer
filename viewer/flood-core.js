@@ -748,11 +748,12 @@
   }
 
   /**
-   * Other gauges upstream with readings for the same flood (o.others:
-   * [{cell, hydro}]): along the river between two gauges the level blends
-   * their readings by distance, each shifted by the wave's travel time from
-   * it; above the top gauge the level follows that gauge, earlier by the
-   * travel time. Readings are used as a rise from each gauge's lowest to
+   * Other gauges on the river with readings for the same flood (o.others:
+   * [{cell, hydro}], above or below the main gauge): along the river
+   * between two gauges the level blends their readings by distance, each
+   * shifted by the wave's travel time from it; above the top gauge the
+   * level follows that gauge, earlier by the travel time. Below the lowest
+   * gauge the flood is routed (or shifted) from the main gauge as usual. Readings are used as a rise from each gauge's lowest to
    * highest reading, mapped to the scenario's range at the main gauge.
    */
   function betweenGauges(a, w, g, speedKmh, others) {
@@ -766,7 +767,11 @@
       if (!ot || ot.cell < 0 || ot.cell >= N || !stream[ot.cell] || !ot.hydro || ot.hydro.length < 2 || cells.includes(ot.cell)) continue;
       let c = ot.cell, n = 0;
       while (c >= 0 && c !== g && n < N) { c = rec[c]; n++; }
-      if (c !== g) continue;   // not upstream of the main gauge
+      let below = false;
+      if (c !== g) {   // not upstream of the main gauge: is it downstream of it?
+        for (let d = rec[g]; d >= 0; d = rec[d]) if (d === ot.cell) { below = true; break; }
+        if (!below) continue;
+      }
       const h = ot.hydro, lo = Math.min(...h.map((r) => r[1])), hi = Math.max(...h.map((r) => r[1]));
       const span2 = Math.max(0.01, hi - lo);
       rel.push((t) => {
@@ -781,29 +786,43 @@
     }
     if (cells.length < 2) return null;
     const gi = new Map(cells.map((c, k) => [c, k]));
+    const belowMain = new Set();
+    for (let d = rec[g]; d >= 0; d = rec[d]) if (gi.has(d)) belowMain.add(d);
+    const cellsDown = (c) => belowMain.has(c);
     const k1 = new Int16Array(N).fill(-1), k2 = new Int16Array(N).fill(-1), f = new Float32Array(N), d1 = new Float32Array(N), d2 = new Float32Array(N);
-    // between each upstream gauge and the next gauge down
-    for (let k = 1; k < cells.length; k++) {
+    // between each gauge and the next gauge down (the main gauge included,
+    // when another gauge lies below it)
+    const down = new Uint8Array(N);
+    for (let k = 0; k < cells.length; k++) {
       const U = cells[k];
       let L = rec[U];
       while (L >= 0 && !gi.has(L)) L = rec[L];
       if (L < 0) continue;
       const len = Math.max(1, chain[U] - chain[L]);
+      let isDown = U === g;
+      for (let x = rec[g]; x >= 0 && !isDown; x = rec[x]) if (x === U) isDown = true;
       for (let c = U; c !== L; c = rec[c]) {
         k1[c] = k; k2[c] = gi.get(L); f[c] = (chain[U] - chain[c]) / len;
         d1[c] = (chain[U] - chain[c]) / cms; d2[c] = (chain[c] - chain[L]) / cms;
+        if (isDown) down[c] = 1;
       }
     }
+    // the lowest gauge itself follows its own readings
+    for (let k = 1; k < cells.length; k++) if (k1[cells[k]] < 0) { k1[cells[k]] = k; k2[cells[k]] = -1; f[cells[k]] = 0; d1[cells[k]] = 0; }
     // above each upstream gauge: that gauge's readings, earlier
     const first = new Int32Array(N).fill(-1);
     for (let j = 0; j < nOrder; j++) {
       const c = order[j];
       first[c] = gi.has(c) ? c : rec[c] >= 0 ? first[rec[c]] : -1;
-      if (first[c] >= 0 && first[c] !== g && k1[c] < 0 && stream[c]) {
+      if (first[c] >= 0 && first[c] !== g && k1[c] < 0 && stream[c] && !down[first[c]] && !cellsDown(first[c])) {
         k1[c] = gi.get(first[c]); k2[c] = -1; f[c] = 0; d1[c] = -(chain[c] - chain[first[c]]) / cms;
+      } else if (k1[c] < 0 && stream[c] && rec[c] >= 0 && down[rec[c]]) {
+        // a tributary joining between gauges below the main gauge backs up
+        // from the river there
+        k1[c] = k1[rec[c]]; k2[c] = k2[rec[c]]; f[c] = f[rec[c]]; d1[c] = d1[rec[c]]; d2[c] = d2[rec[c]]; down[c] = 1;
       }
     }
-    return { rel, k1, k2, f, d1, d2, base, rng, gauges: cells.length - 1, names: used };
+    return { rel, k1, k2, f, d1, d2, base, rng, gauges: cells.length - 1, below: belowMain.size, names: used };
   }
 
   // Time of concentration (hours) for a catchment of A km² (ARR)
@@ -978,14 +997,14 @@
     const bay = w.bayAt ? w.bayAt(t) : NaN;
     for (const c of w.cells) {
       let h;
-      if (R && R.cellA[c] >= 0) {
-        const n = R.cellA[c], f = R.cellF[c], A = R.flows[n], B = R.flows[n + 1];
-        const qa = (A.Q[ti] + (A.Q[ti + 1] - A.Q[ti]) * tf) / A.ref, qb = (B.Q[ti] + (B.Q[ti + 1] - B.Q[ti]) * tf) / B.ref;
-        h = R.hOf((qa + (qb - qa) * f) * R.qPk);
-      } else if (w.up && w.up.k1[c] >= 0) {
+      if (w.up && w.up.k1[c] >= 0) {
         const U = w.up, r1 = U.rel[U.k1[c]](t - U.d1[c]);
         const r = U.k2[c] >= 0 ? r1 * (1 - U.f[c]) + U.rel[U.k2[c]](t + U.d2[c]) * U.f[c] : r1;
         h = U.base + r * U.rng;
+      } else if (R && R.cellA[c] >= 0) {
+        const n = R.cellA[c], f = R.cellF[c], A = R.flows[n], B = R.flows[n + 1];
+        const qa = (A.Q[ti] + (A.Q[ti + 1] - A.Q[ti]) * tf) / A.ref, qb = (B.Q[ti] + (B.Q[ti + 1] - B.Q[ti]) * tf) / B.ref;
+        h = R.hOf((qa + (qb - qa) * f) * R.qPk);
       } else h = w.at[w.band[c]](t - w.arrive[c]);
       let v = w.w0[c] + ((w.w1[c] - w.w0[c]) * (h - w.lo)) / span;
       if (w.tide && bay > v) v = bay;
