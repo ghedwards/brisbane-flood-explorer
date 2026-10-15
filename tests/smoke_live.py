@@ -309,6 +309,27 @@ def main() -> int:
         # ---- a pin dropped on the map becomes a place; modelling it keeps its number
         page.select_option("#area", "australia")
         page.wait_for_timeout(1500)
+        # a gauge dot shows a popup with an add button instead of adding itself
+        reps_before = (status().get("report") or {}).get("count", 0)
+        if page.evaluate("window.__floodTapDot ? window.__floodTapDot('forecast', 5) : false"):
+            page.wait_for_timeout(400)
+            dot_popup = page.locator(".spot-popup .spot-name")
+            reps_mid = (status().get("report") or {}).get("count", 0)
+            page.screenshot(path="smoke-dot-popup.png")
+            if not dot_popup.count() or reps_mid != reps_before:
+                failures.append(f"gauge dot popup missing or added a report on tap: popup {dot_popup.count()}, reports {reps_before}->{reps_mid}")
+            else:
+                page.locator(".spot-popup .spot-add").first.click()
+                page.wait_for_timeout(500)
+                reps_after = (status().get("report") or {}).get("count", 0)
+                if reps_after != reps_before + 1:
+                    failures.append(f"adding a gauge from its popup did not open a report: {reps_before}->{reps_after}")
+                print(f"Dot popup: reports {reps_before}->{reps_after}")
+        # adding a place while another flood scenario is active switches the Scenario panel to it
+        infos = page.evaluate("window.__floodAreaInfo()")
+        if infos:
+            page.evaluate("k => window.__floodActivateArea(k)", infos[0]["key"])
+            page.wait_for_timeout(500)
         # tapping an empty spot offers a single add-a-place button
         page.evaluate("window.__floodTestZoom && window.__floodTestZoom(-27.62, 152.76, 11)")
         page.wait_for_timeout(800)

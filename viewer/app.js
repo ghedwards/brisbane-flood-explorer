@@ -826,7 +826,8 @@
     const bounds = L.latLngBounds([b[1], b[0]], [b[3], b[2]]);
     if (!state.lmap) await loadDeaMosaic();
     if (!state.lmap) {
-      const m = L.map('lmap', { minZoom: 4, zoomSnap: 0.5, zoomControl: false, preferCanvas: false });
+      // smooth wheel zoom: small fractional steps rather than whole levels
+      const m = L.map('lmap', { minZoom: 4, zoomSnap: 0.1, zoomDelta: 0.5, wheelPxPerZoomLevel: 110, wheelDebounceTime: 20, zoomControl: false, preferCanvas: false });
       if (!finePointer()) { /* pinch to zoom on touch screens */ } else L.control.zoom({ position: 'bottomright' }).addTo(m);
       const layers = {};
       status.basemaps = {};
@@ -1946,7 +1947,7 @@
         }),
         onEachFeature: (f, layer) => {
           layer.bindTooltip(f.properties.name || 'Gauge', { direction: 'top', offset: [0, -4] });
-          layer.on('click', (e) => { L.DomEvent.stop(e); openReport(f); });
+          layer.on('click', (e) => { L.DomEvent.stop(e); onDotClick(f, e.latlng); });
         },
       });
 
@@ -1960,7 +1961,7 @@
         }),
         onEachFeature: (f, layer) => {
           layer.bindTooltip(f.properties.name || 'Storage', { direction: 'top', offset: [0, -4] });
-          layer.on('click', (e) => { L.DomEvent.stop(e); openReport(f); });
+          layer.on('click', (e) => { L.DomEvent.stop(e); onDotClick(f, e.latlng); });
         },
       });
     }
@@ -2116,10 +2117,8 @@
       pin.marker.on('click', () => selectPlace(pin.n));
     }
     pins.push(pin);
-    selectedNum = pin.n;
-    setPlacesCollapsed(false);
-    renderPlaces();
     say(`Added place ${pin.n}: ${name}.`);
+    selectPlace(pin.n);   // the new place is selected everywhere, like any other
     return pin;
   }
   window.__floodAddPin = (lat, lon) => addPin(lat, lon).n;
@@ -2305,22 +2304,55 @@
 
   // A tap on empty map in the national view
   const ICON_ADD_PLACE = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 21s-6.5-5.6-6.5-11a6.5 6.5 0 0 1 13 0c0 5.4-6.5 11-6.5 11Z"/><path d="M12 7v6M9 10h6"/></svg>';
-  function onNationalClick(e) {
-    const L = window.L;
-    const { lat, lng } = e.latlng;
-    const near = nearestNamed(lat, lng, 25);
+  // Tapping the map shows a small popup with one add-a-place button: an
+  // empty spot becomes a pinned place, a gauge or dam becomes a report.
+  function spotPopup(latlng, html, label, onAdd) {
     const div = document.createElement('div');
     div.className = 'spot';
-    div.innerHTML = `<div class="spot-text"><span class="spot-coord">${lat.toFixed(4)}, ${lng.toFixed(4)}</span>
-      ${near ? `<span class="spot-near">${near.km.toFixed(1)} km from ${escapeHtml(near.f.properties.name)}</span>` : ''}</div>
-      <button type="button" class="spot-add" data-k="pin" aria-label="Add as a place" title="Add as a place">${ICON_ADD_PLACE}</button>`;
-    div.querySelector('.spot-add').addEventListener('click', () => {
+    div.innerHTML = `<div class="spot-text">${html}</div>
+      <button type="button" class="spot-add" aria-label="${escapeHtml(label)}" title="${escapeHtml(label)}">${ICON_ADD_PLACE}</button>`;
+    div.querySelector('.spot-add').addEventListener('click', (ev) => {
+      ev.stopPropagation();
       state.lmap.closePopup();
-      const pin = addPin(lat, lng);
-      selectPlace(pin.n);
+      onAdd();
     });
-    L.popup({ closeButton: false, className: 'spot-popup', offset: [0, -4] }).setLatLng(e.latlng).setContent(div).openOn(state.lmap);
+    window.L.popup({ closeButton: false, className: 'spot-popup', offset: [0, -4], autoPanPadding: [24, 24] })
+      .setLatLng(latlng).setContent(div).openOn(state.lmap);
   }
+
+  function onNationalClick(e) {
+    const { lat, lng } = e.latlng;
+    const near = nearestNamed(lat, lng, 25);
+    spotPopup(e.latlng, `<span class="spot-coord">${lat.toFixed(4)}, ${lng.toFixed(4)}</span>
+      ${near ? `<span class="spot-near">${near.km.toFixed(1)} km from ${escapeHtml(near.f.properties.name)}</span>` : ''}`,
+    'Add as a place', () => addPin(lat, lng));
+  }
+
+  function onDotClick(f, latlng) {
+    const p = f.properties;
+    const existing = reports.find((r) => r.id === `${p.kind}:${p.id}`);
+    if (existing) { selectPlace(existing.n); return; }   // already a place
+    const st = GAUGE_STYLE[p.kind] || GAUGE_STYLE.river;
+    let sub = st.label;
+    if (p.kind === 'storage') {
+      const fill = storageFill(p);
+      if (fill != null) sub += ` · ${Math.round(fill * 100)}% full`;
+    } else {
+      const rd = nat.readings && nat.readings.level && nat.readings.level[p.station];
+      if (rd && rd.latest) sub += ` · ${Number(rd.latest[1]).toFixed(2)} m`;
+    }
+    spotPopup(latlng, `<span class="spot-name"><i class="spot-dot" style="background:${p.kind === 'storage' ? storageColor(p) : st.color}"></i>${escapeHtml(p.name || st.label)}</span>
+      <span class="spot-near">${escapeHtml(sub)}</span>`,
+    'Add as a place and open its report', () => openReport(f));
+  }
+  window.__floodTapDot = (kind, i) => {
+    const list = kind === 'storage' ? nat.data.storages : nat.data.gauges.filter((g) => !kind || g.properties.kind === kind);
+    const f = list[i || 0];
+    if (!f) return false;
+    onDotClick(f, window.L.latLng(f.geometry.coordinates[1], f.geometry.coordinates[0]));
+    return true;
+  };
+
 
 
 
