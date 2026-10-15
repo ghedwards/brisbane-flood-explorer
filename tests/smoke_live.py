@@ -16,7 +16,7 @@ URL = sys.argv[1] if len(sys.argv) > 1 else "http://localhost:8000/"
 
 
 KEY = []          # key results, shown together in one annotation at the end
-KEY_WORDS = ("Tides at", "Sea reached", "Recorded flood over time", "Flood over time", "Levees", "Storm tide", "Presets checked", "Recorded floods", "Best match", "Impact", "Storm", "Joined", "Share link", "Satellite check",
+KEY_WORDS = ("First load", "Keyboard", "Tides at", "Sea reached", "Recorded flood over time", "Flood over time", "Levees", "Storm tide", "Presets checked", "Recorded floods", "Best match", "Impact", "Storm", "Joined", "Share link", "Satellite check",
              "Presets anchored", "Presets on LiDAR", "Phone Layers", "Council layer", "Downloads", "Rain radar",
              "Address search", "Flood warnings", "Echuca", "Extended model", "Area study")
 
@@ -51,6 +51,25 @@ def main() -> int:
                                    " && window.__floodStatus.national.loaded && window.__floodStatus.mode === 'map'",
                                    timeout=60_000)
             nat = status().get("national", {})
+            # first load: how long until the map was ready, and what it downloaded
+            load = page.evaluate("""() => {
+              const nav = performance.getEntriesByType('navigation')[0] || {};
+              const res = performance.getEntriesByType('resource');
+              const own = res.filter((r) => r.name.includes(location.host));
+              const kb = (list) => Math.round(list.reduce((s, r) => s + (r.transferSize || 0), 0) / 1024);
+              const big = own.slice().sort((x, y) => (y.transferSize || 0) - (x.transferSize || 0)).slice(0, 4)
+                .map((r) => `${r.name.split('/').pop()} ${Math.round((r.transferSize || 0) / 1024)} KB`);
+              return { domReadyMs: Math.round(nav.domContentLoadedEventEnd || 0), mapReadyMs: Math.round(performance.now()),
+                       ownKB: kb(own), allKB: kb(res), requests: res.length, biggest: big };
+            }""")
+            note("notice", f"First load: {json.dumps(load)}")
+            # keyboard: Tab reaches the map, and Enter on it looks at the middle
+            page.focus("#lmap")
+            page.keyboard.press("Enter")
+            page.wait_for_timeout(800)
+            pop = page.evaluate("!!document.querySelector('.leaflet-popup .spot-add, .leaflet-popup')")
+            note("notice" if pop else "warning", f"Keyboard: Enter on the map {'opens' if pop else 'did not open'} the spot popup")
+            page.keyboard.press("Escape")
             # fluid wheel zoom: zooms in around the cursor in small steps
             z0 = page.evaluate("window.__floodZoom()")
             page.mouse.move(640, 450)

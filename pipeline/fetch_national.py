@@ -207,6 +207,11 @@ def main(out_dir: str) -> None:
         "storage": readings_for(storages, "Storage Volume", "ML", errors),
         "series": DAILY,
     }
+    # about a metre is plenty for map points, and keeps the files small
+    for f in gauges + storages:
+        g = f.get("geometry") or {}
+        if g.get("type") == "Point" and g.get("coordinates"):
+            g["coordinates"] = [round(float(v), 5) for v in g["coordinates"][:2]]
     now = dt.datetime.now(dt.timezone.utc).replace(microsecond=0).isoformat()
     (out / "gauges.geojson").write_text(json.dumps({"type": "FeatureCollection", "features": gauges}, separators=(",", ":")))
     (out / "storages.geojson").write_text(json.dumps({"type": "FeatureCollection", "features": storages}, separators=(",", ":")))

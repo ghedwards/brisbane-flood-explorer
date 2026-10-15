@@ -88,6 +88,16 @@ jobs:
         run: |
           mkdir -p site/data
           cp viewer/index.html viewer/styles.css viewer/app.js viewer/flood-core.js viewer/flood-worker.js site/
+          # smaller downloads: minify the scripts and styles (kept as they
+          # are if minifying fails or the result doesn't run)
+          if npx --yes esbuild@0.24.0 viewer/app.js viewer/flood-core.js viewer/flood-worker.js viewer/styles.css --minify --target=es2020 --outdir=work/min >/dev/null \
+             && node --check work/min/app.js && node --check work/min/flood-worker.js \
+             && node -e "const F=require('./work/min/flood-core.js'); const a=F.analyse(F.syntheticTerrain()); if(!(a.defaultGauge>=0)) process.exit(1)"; then
+            cp work/min/app.js work/min/flood-core.js work/min/flood-worker.js work/min/styles.css site/
+            echo "::notice::Minified: app.js $(wc -c < viewer/app.js) → $(wc -c < site/app.js) bytes"
+          else
+            echo "::warning::Minifying failed; publishing the scripts as they are"
+          fi
           if [ -f work/brisbane/dem.tif ] && [ -f work/brisbane/d8.tif ]; then
             python pipeline/export_viewer.py config/brisbane.json work/brisbane site/data
           else

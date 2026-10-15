@@ -1214,6 +1214,23 @@
       window.__floodSetBasemap = (name) => setBasemap(m, layers, name);
       L.control.scale({ imperial: false }).addTo(m);
       m.on('click', onGeoClick);
+      // keyboard: with the map focused, Enter does what a click at the
+      // centre of the map would (look at that spot, or pick that place),
+      // and while choosing an area, Enter studies the area in view
+      const box = m.getContainer();
+      box.setAttribute('aria-label', 'Map. Arrow keys move, plus and minus zoom, Enter looks at the spot in the middle of the map.');
+      box.setAttribute('aria-describedby', 'mapKeysHint');
+      box.addEventListener('keydown', (e) => {
+        if (e.target !== box || (e.key !== 'Enter' && e.key !== ' ')) return;
+        e.preventDefault();
+        if (studyDrag.on) {
+          const b = m.getBounds().pad(-0.1);
+          setStudyMode(false);
+          studyArea(b);
+          return;
+        }
+        onGeoClick({ latlng: m.getCenter(), containerPoint: m.getSize().divideBy(2) });
+      });
       m.on('moveend', () => saveSessionSoon());
       wireStudy();
       m.on('mousemove', onGeoMove);
@@ -1419,7 +1436,7 @@
         opacity: parseFloat($('floodOpacity').value) / 100, className: 'flood-layer', zIndex: 6,
       }).addTo(m);
       area.outline = L.rectangle(bounds, { color: '#c66f1d', weight: 1.5, dashArray: '5 5', fill: false, interactive: false }).addTo(m);
-      area.marker = L.marker(bounds.getCenter(), { icon: numIcon(area.n, AREA_COLOR, true), keyboard: false, zIndexOffset: 900 }).addTo(m);
+      area.marker = L.marker(bounds.getCenter(), { icon: numIcon(area.n, AREA_COLOR, true), keyboard: true, title: `${area.n}. ${area.name}: flood model`, alt: `${area.n}. ${area.name}`, zIndexOffset: 900 }).addTo(m);
       area.marker.bindTooltip(`${area.n}. ${area.name}: flood model gauge`, { direction: 'top', offset: [0, -12] });
       area.marker.on('click', () => selectPlace(area.n));
       areaReg.set(key, area);
@@ -2027,7 +2044,7 @@
     EXTREME: { label: 'Extreme', color: '#6a1b9a', rank: 4 },
     SEVERE: { label: 'Severe', color: '#c62828', rank: 3 },
     ABOVE_NORMAL: { label: 'Above normal', color: '#e65100', rank: 2 },
-    NO_FLOODING: { label: 'No flooding', color: '#2e7d32', rank: 1 },
+    NO_FLOODING: { label: 'No flooding', color: '#80cbc4', rank: 1 },   // light, so it differs from red by lightness too
     UNKNOWN: { label: 'Unknown', color: '#607d8b', rank: 0 },
   };
   const sev = (k) => SEVERITY[k] || SEVERITY.UNKNOWN;
@@ -2567,7 +2584,7 @@
     const name = o.name || (near ? `Near ${near.f.properties.name}` : `${lat.toFixed(3)}, ${lon.toFixed(3)}`);
     const pin = { n: o.n != null && !numberUsed(o.n) ? o.n : nextNumber(), name, lat, lon, marker: null };
     if (state.lmap) {
-      pin.marker = window.L.marker([lat, lon], { icon: numIcon(pin.n, PIN_COLOR), keyboard: false, zIndexOffset: 800 }).addTo(state.lmap);
+      pin.marker = window.L.marker([lat, lon], { icon: numIcon(pin.n, PIN_COLOR), keyboard: true, title: `${pin.n}. ${name}`, alt: `${pin.n}. ${name}`, zIndexOffset: 800 }).addTo(state.lmap);
       pin.marker.bindTooltip(`${pin.n}. ${name}`, { direction: 'top', offset: [0, -12] });
       pin.marker.on('click', () => selectPlace(pin.n));
     }
