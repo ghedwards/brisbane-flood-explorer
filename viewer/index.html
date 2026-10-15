@@ -120,7 +120,7 @@ h1 span { color: var(--accent); }
 }
 .sheet[data-side="left"] { left: var(--left); top: calc(var(--top) + 64px); }
 
-/* left column: Places on top (collapsible), then Scenario or Report */
+/* left column: Places on top (collapsible), then the Scenario; reports open on the right */
 .left-col {
   position: fixed; z-index: 1001; left: var(--left); top: calc(var(--top) + 64px); bottom: var(--bottom);
   width: 360px; max-width: calc(100vw - 2 * var(--gap)); display: flex; flex-direction: column; gap: 10px; pointer-events: none;
@@ -442,8 +442,10 @@ details > div { display: grid; gap: 14px; }
   </div>
 </aside>
 
+</div>
+
 <!-- Report on a picked feature -->
-<aside class="sheet float" id="panel-report" data-panel data-side="left" aria-labelledby="h-report" hidden>
+<aside class="sheet float" id="panel-report" data-panel data-side="right" aria-labelledby="h-report" hidden>
   <div class="sheet-head"><div class="head-title"><h2 id="h-report">Report</h2><button type="button" class="sub-link" id="reportPlace" data-places-open></button></div>
     <span class="head-actions"><button type="button" class="icon-btn" id="reportPrev" aria-label="Previous report" title="Previous report">‹</button><button type="button" class="icon-btn" id="reportNext" aria-label="Next report" title="Next report">›</button>
     <button type="button" class="close" data-close aria-label="Hide the report panel">×</button></span></div>
@@ -452,7 +454,6 @@ details > div { display: grid; gap: 14px; }
       <p class="hint">Tap a flood gauge, tide gauge or dam on the map, or open one from <button type="button" class="link-btn" data-places-open>Places</button>.</p></div>
   </div>
 </aside>
-</div>
 
 <!-- Layers -->
 <aside class="sheet float" id="panel-layers" data-panel data-side="right" aria-labelledby="h-layers" hidden>
