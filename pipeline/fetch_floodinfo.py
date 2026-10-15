@@ -23,7 +23,8 @@ import urllib.request
 from html.parser import HTMLParser
 from pathlib import Path
 
-UA = {"User-Agent": "Mozilla/5.0 (compatible; flood-explorer; +https://github.com/ghedwards/brisbane-flood-explorer)"}
+UA = {"User-Agent": "brisbane-flood-explorer (github.com/ghedwards/brisbane-flood-explorer)",
+      "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8", "Accept-Language": "en-AU,en;q=0.8"}
 
 FLOODCLASS_PAGES = [
     "https://www.bom.gov.au/vic/flood/floodclass_north.shtml",
@@ -145,7 +146,7 @@ def main(out_dir):
             classes.update(got)
             notes.append(f"{url.split('/')[3]}:{url.rsplit('/', 1)[1]}={len(got)}")
         except Exception as e:  # noqa: BLE001 - a missing page is normal
-            notes.append(f"{url.split('/')[3]}:{url.rsplit('/', 1)[1]}=none")
+            notes.append(f"{url.split('/')[3]}:{url.rsplit('/', 1)[1]}=none ({str(e)[-60:]})")
     warnings, werr = [], []
     for st, url in WARNING_FEEDS.items():
         try:
@@ -159,7 +160,7 @@ def main(out_dir):
                                                    "errors": werr, "warnings": warnings}, separators=(",", ":")))
     print(f"Flood info: {len(classes)} gauges with flood class levels ({', '.join(notes)}); "
           f"{len(warnings)} current flood warnings; {len(werr)} feed errors")
-    for e in werr[:3]:
+    for e in werr[:2]:
         print("warning:", e)
 
 

@@ -449,6 +449,56 @@ def main() -> int:
         if not armed:
             failures.append("the Study an area button did not arm the box tool")
 
+        # ---- downloads of the active model
+        n_rect = page.evaluate("window.__floodGeoJSON ? window.__floodGeoJSON() : -1")
+        n_tiff = page.evaluate("window.__floodDepthTiffBytes ? window.__floodDepthTiffBytes() : -1")
+        note("notice", f"Downloads: GeoJSON {n_rect} rectangles, GeoTIFF {n_tiff} bytes")
+        if not (n_rect and n_rect > 0 and n_tiff > 1000):
+            failures.append(f"downloads failed: geojson {n_rect}, tiff {n_tiff}")
+        # ---- rain radar overlay
+        if page.evaluate("([n]) => window.__floodSetOverlay(n, true)", ["Rain radar, latest (RainViewer)"]):
+            page.wait_for_timeout(4000)
+            rd = status().get("radar")
+            note("notice" if rd and rd.get("ok") else "warning", f"Rain radar: {json.dumps(rd)}")
+            page.evaluate("([n]) => window.__floodSetOverlay(n, false)", ["Rain radar, latest (RainViewer)"])
+        else:
+            failures.append("the rain radar overlay is missing")
+        # ---- address search
+        page.fill("#searchInput", "Lismore NSW")
+        page.press("#searchInput", "Enter")
+        try:
+            page.wait_for_function("window.__floodStatus.search && window.__floodStatus.search.results !== undefined || (window.__floodStatus.search && window.__floodStatus.search.ok === false)", timeout=15_000)
+        except Exception:
+            pass
+        srch = status().get("search")
+        note("notice" if srch and srch.get("results") else "warning", f"Address search: {json.dumps(srch)}")
+        page.evaluate("window.__floodGoTo(-28.809, 153.2765, 'Lismore')")
+        page.wait_for_timeout(1500)
+        hit = status().get("searchHit")
+        if not (hit and hit.get("inModel")):
+            failures.append(f"a search result inside the Lismore study did not report its flood depth: {hit}")
+        page.screenshot(path="smoke-search.png")
+        # ---- a share link reopens its places in a fresh page
+        import base64
+        sess = {"v": 1, "reports": [], "pins": [{"n": 3, "lat": -27.62, "lon": 152.76, "name": "Shared pin"}],
+                "areas": [{"n": 3, "name": "Shared pin", "kind": "river", "g": [-27.62, 152.76], "c": [-27.62, 152.76], "h": 10,
+                           "pin": 3, "ctl": None, "cp": [[-27.60, 152.80, 99.5, "Shared level"]]}], "active": 3, "studies": []}
+        tok = base64.urlsafe_b64encode(json.dumps(sess).encode()).decode().rstrip("=")
+        p2 = browser.new_page(viewport={"width": 1280, "height": 900})
+        p2.goto(URL + "#s=" + tok, wait_until="domcontentloaded", timeout=90_000)
+        try:
+            p2.wait_for_function("window.__floodStatus && window.__floodStatus.restore && window.__floodStatus.restore.ok !== undefined", timeout=120_000)
+        except Exception:
+            pass
+        rs = p2.evaluate("window.__floodStatus.restore || null")
+        shared = p2.evaluate("window.__floodPlaces ? window.__floodPlaces() : []")
+        lp = p2.evaluate("window.__floodStatus.levelPoints")
+        note("notice", f"Share link restore: {json.dumps(rs)}; places {json.dumps(shared)}; level points {lp}")
+        if not (rs and rs.get("ok") and any(x["n"] == 3 and x["pin"] and x["area"] for x in shared)):
+            failures.append(f"share link did not reopen its place: {rs}, {shared}")
+        p2.screenshot(path="smoke-share.png")
+        p2.close()
+
         # ---- every preset in the menu models successfully
         results = []
         for pre in page.evaluate("window.__floodPresets || []"):

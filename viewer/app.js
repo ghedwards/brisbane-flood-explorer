@@ -508,6 +508,7 @@
     renderLevelPoints();
     drawProfile(s);
     renderNotice();
+    saveSessionSoon();
   }
 
   // Which sides of the model window the flood runs into (ignoring the sea
@@ -1046,6 +1047,7 @@
       window.__floodSetBasemap = (name) => setBasemap(m, layers, name);
       L.control.scale({ imperial: false }).addTo(m);
       m.on('click', onGeoClick);
+      m.on('moveend', () => saveSessionSoon());
       wireStudy();
       m.on('mousemove', onGeoMove);
       m.on('locationfound', onLocated);
@@ -1480,8 +1482,10 @@
       </li>`;
     }).join('');
     box.innerHTML = `<ul class="places">${rows}</ul>
-      <p class="hint">Choosing a place here works like tapping its number on the map.</p>${studiesHtml()}`;
+      <p class="hint">Choosing a place here works like tapping its number on the map. Your places are kept in this browser for next time. <button type="button" class="link-btn" id="clearPlaces">Clear all places</button></p>${studiesHtml()}`;
     wireStudyRows(box);
+    $('clearPlaces').addEventListener('click', () => { if (window.confirm('Remove all places, reports and flood models from the map?')) clearAllPlaces(); });
+    saveSessionSoon();
     box.querySelectorAll('[data-num]').forEach((b) => b.addEventListener('click', () => selectPlace(+b.dataset.num, { fromList: true })));
     box.querySelectorAll('[data-act]').forEach((b) => b.addEventListener('click', () => placeAction(b.dataset.act, +b.dataset.n)));
     box.querySelectorAll('[data-drop]').forEach((b) => b.addEventListener('click', () => {
@@ -2187,6 +2191,26 @@
       });
 
     }
+    // Rain radar from RainViewer's free tier: the latest 10-minute frame,
+    // available to zoom 7 and scaled up beyond that; refreshed while shown.
+    const BLANK_TILE = 'data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==';
+    const radar = L.tileLayer(BLANK_TILE, {
+      opacity: 0.65, maxNativeZoom: 7, maxZoom: 20, zIndex: 9,
+      attribution: 'Rain radar &copy; <a href="https://www.rainviewer.com/" target="_blank" rel="noopener">RainViewer</a>',
+    });
+    status.radar = { ok: null };
+    const loadRadar = async () => {
+      try {
+        const j = await (await fetch('https://api.rainviewer.com/public/weather-maps.json', { cache: 'no-cache' })).json();
+        const fr = j.radar.past[j.radar.past.length - 1];
+        radar.setUrl(`${j.host}${fr.path}/256/{z}/{x}/{y}/2/1_1.png`);
+        status.radar = { ok: true, time: fr.time, age: Math.round(Date.now() / 60000 - fr.time / 60) };
+      } catch (err) { status.radar = { ok: false, error: String(err.message || err) }; }
+    };
+    let radarT = 0;
+    radar.on('add', () => { loadRadar(); clearInterval(radarT); radarT = setInterval(loadRadar, 10 * 60 * 1000); });
+    radar.on('remove', () => clearInterval(radarT));
+    nat.layers['Rain radar, latest (RainViewer)'] = radar;
     const warned = nat.data.gauges.filter((f) => f.properties.kind !== 'river' && warningsFor(f.properties).length);
     status.warnedGauges = warned.length;
     if (warned.length) {
@@ -2249,7 +2273,7 @@
   function showScenarioEmpty(empty) {
     scenarioEmpty = empty;
     Array.from($('scenarioEmpty').parentElement.children).forEach((el) => {
-      if (el.id !== 'scenarioEmpty' && el.id !== 'scenarioModel' && el.id !== 'edgeNote' && el.id !== 'levelPointsSet' && el.id !== 'checkSet') el.hidden = empty || (el.id === 'eventsSet' && !state.eventsApply);
+      if (el.id !== 'scenarioEmpty' && el.id !== 'scenarioModel' && el.id !== 'edgeNote' && el.id !== 'levelPointsSet' && el.id !== 'checkSet' && el.id !== 'downloadSet') el.hidden = empty || (el.id === 'eventsSet' && !state.eventsApply);
     });
     if (empty) { $('stats').innerHTML = ''; state.edges = []; }
     renderEdgeNote();
@@ -2352,22 +2376,27 @@
     return best ? { f: best, km: bd } : null;
   }
 
-  function addPin(lat, lon) {
+  function addPin(lat, lon, opts) {
+    const o = opts || {};
     const near = nearestNamed(lat, lon, 25);
-    const name = near ? `Near ${near.f.properties.name}` : `${lat.toFixed(3)}, ${lon.toFixed(3)}`;
-    const pin = { n: nextNumber(), name, lat, lon, marker: null };
+    const name = o.name || (near ? `Near ${near.f.properties.name}` : `${lat.toFixed(3)}, ${lon.toFixed(3)}`);
+    const pin = { n: o.n != null && !numberUsed(o.n) ? o.n : nextNumber(), name, lat, lon, marker: null };
     if (state.lmap) {
       pin.marker = window.L.marker([lat, lon], { icon: numIcon(pin.n, PIN_COLOR), keyboard: false, zIndexOffset: 800 }).addTo(state.lmap);
       pin.marker.bindTooltip(`${pin.n}. ${name}`, { direction: 'top', offset: [0, -12] });
       pin.marker.on('click', () => selectPlace(pin.n));
     }
     pins.push(pin);
+    if (o.select === false) { renderPlaces(); return pin; }
     say(`Added place ${pin.n}: ${name}.`);
     selectPlace(pin.n);   // the new place is selected everywhere, like any other
     return pin;
   }
   window.__floodAddPin = (lat, lon) => addPin(lat, lon).n;
 
+  function numberUsed(n) {
+    return reports.some((r) => r.n === n) || Array.from(areaReg.values()).some((a) => a.n === n) || pins.some((p) => p.n === n);
+  }
   function nextNumber() {
     const used = new Set([...reports.map((r) => r.n), ...Array.from(areaReg.values()).map((a) => a.n), ...pins.map((p) => p.n)]);
     for (let n = 1; ; n++) if (!used.has(n)) return n;
@@ -2525,7 +2554,8 @@
     reports.push(r);
     selectedNum = num;
     $('reportBody').appendChild(el);
-    selectPlace(r.n);
+    if (select) selectPlace(r.n); else renderPlaces();
+    return r;
   }
   window.__floodOpenStorage = (index) => {
     const f = nat.data && nat.data.storages[index || 0];
@@ -2775,6 +2805,7 @@
     const local = state.a && state.geo;
     set.hidden = !local || scenarioEmpty;
     $('checkSet').hidden = set.hidden;
+    $('downloadSet').hidden = set.hidden;
     if (set.hidden) return;
     const sc = $('satCheck');
     if (sc.dataset.key && sc.dataset.key !== String(state.areaKey)) { sc.innerHTML = ''; sc.dataset.key = ''; }
@@ -2955,6 +2986,341 @@
   $('satCheckBtn').addEventListener('click', () => compareWithSatellite());
   window.__floodSatCheck = compareWithSatellite;
 
+  /* ---------- sessions: share links and places remembered between visits */
+  // Everything numbered on the map (reports, pins, flood models with their
+  // scenario settings and level points), the studied areas and the view are
+  // written to a compact JSON, base64url-encoded into the link's #s= part
+  // and kept in this browser so the next visit picks up where you left off.
+  const SESSION_KEY = 'floodExplorer.session.v1';
+  let restoring = false, sessionT = 0;
+  const r5 = (x) => Math.round(x * 1e5) / 1e5;
+  function cellToLatLon(i, W, H, g) {
+    const x = (i % W) + 0.5, y = Math.floor(i / W) + 0.5;
+    return [r5(g.north - (y / H) * (g.north - g.south)), r5(g.west + (x / W) * (g.east - g.west))];
+  }
+  function sessionState() {
+    const m = state.lmap;
+    const out = { v: 1 };
+    if (m && !$('lmap').hidden) { const c = m.getCenter(); out.view = [r5(c.lat), r5(c.lng), Math.round(m.getZoom() * 100) / 100]; }
+    out.reports = reports.map((r) => ({ n: r.n, id: r.id }));
+    out.pins = pins.map((p) => ({ n: p.n, lat: r5(p.lat), lon: r5(p.lon), name: p.name }));
+    out.areas = [];
+    for (const a of areaReg.values()) {
+      const meta = a.areaMeta || {};
+      if (!meta.local || !meta.gaugeLatLon) continue;
+      const live = a.key === state.areaKey;
+      const ctlv = live ? Object.fromEntries(CTL_KEYS.map((k) => [k, ctl[k].value])) : a.ctl;
+      const ctrls = (live ? state.controls : a.controls) || [];
+      const grid = live ? state.grid : a.grid, geo = live ? state.geo : a.geo;
+      out.areas.push({
+        n: a.n, name: a.name, kind: meta.kind, g: meta.gaugeLatLon.map(r5), c: (meta.centerLatLon || meta.gaugeLatLon).map(r5), h: meta.halfKm || 10,
+        rid: meta.reportId || null, pin: meta.pinN != null ? meta.pinN : null, pre: meta.presetId || null, ctl: ctlv,
+        cp: grid && geo ? ctrls.map((c) => [...cellToLatLon(c.cell, grid.W, grid.H, geo), c.level, c.label || '']) : [],
+      });
+    }
+    const act = state.areaKey && areaReg.get(state.areaKey);
+    out.active = act ? act.n : (selectedNum != null ? selectedNum : null);
+    out.studies = studies.map((x) => ({ l: x.letter, b: x.bounds.map(r5), name: x.name }));
+    return out;
+  }
+  const b64 = (str) => btoa(String.fromCharCode(...new TextEncoder().encode(str))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  const unb64 = (txt) => new TextDecoder().decode(Uint8Array.from(atob(txt.replace(/-/g, '+').replace(/_/g, '/')), (ch) => ch.charCodeAt(0)));
+  function shareUrl() { return `${location.origin}${location.pathname}#s=${b64(JSON.stringify(sessionState()))}`; }
+  window.__floodShareUrl = shareUrl;
+  function saveSessionSoon() {
+    if (restoring) return;
+    clearTimeout(sessionT);
+    sessionT = setTimeout(() => {
+      if (restoring || !state.lmap) return;
+      const st = sessionState();
+      try {
+        if (!st.reports.length && !st.pins.length && !st.areas.length) localStorage.removeItem(SESSION_KEY);
+        else localStorage.setItem(SESSION_KEY, JSON.stringify(st));
+      } catch (e) { /* storage unavailable */ }
+    }, 1500);
+  }
+  async function restoreSession(st, why) {
+    if (!st || st.v !== 1 || !state.lmap) return false;
+    restoring = true;
+    status.restore = { running: true, why };
+    try {
+      if (!nat.data) await loadNationalData();
+      for (const x of st.studies || []) {
+        if (studies.some((y) => y.bounds.join() === x.b.join())) continue;
+        const sObj = { letter: studies.some((y) => y.letter === x.l) ? nextLetter() : x.l, bounds: x.b, name: x.name, created: new Date().toISOString(), summary: null, loaded: false };
+        studies.push(sObj); drawStudy(sObj);
+      }
+      saveStudies();
+      const all = [...(nat.data.gauges || []), ...(nat.data.storages || [])];
+      for (const r of st.reports || []) {
+        const f = all.find((x) => `${x.properties.kind}:${x.properties.id}` === r.id);
+        if (f) openReport(f, { n: r.n, select: false });
+      }
+      for (const p of st.pins || []) if (!pins.some((q) => q.n === p.n)) addPin(p.lat, p.lon, { n: p.n, name: p.name, select: false });
+      const areas = (st.areas || []).slice().sort((x, y) => x.n - y.n);
+      for (const [k, a] of areas.entries()) {
+        if (numberUsed(a.n) && areaByNumber(a.n)) continue;
+        setBusy(true, `Rebuilding flood model ${k + 1} of ${areas.length}…`);
+        const size = MODEL_SIZES.find(([h]) => h === a.h) || MODEL_SIZES[0];
+        const rep = a.rid && reports.find((r) => r.id === a.rid);
+        const ok = await modelHere(a.g[0], a.g[1], {
+          kind: a.kind, name: a.name, reportId: rep ? rep.id : null, pinN: a.pin, presetId: a.pre,
+          halfKm: size[0], cellM: size[1], center: a.c, keepN: a.n, quiet: true,
+        });
+        if (!ok) continue;
+        if (a.ctl) CTL_KEYS.forEach((key) => { if (key !== 'streamArea' && a.ctl[key] != null) ctl[key].value = a.ctl[key]; });
+        state.controls = (a.cp || []).map(([la, lo, level, label]) => ({ cell: streamCellAt(la, lo), level, label })).filter((c) => c.cell >= 0);
+        state.base = null;
+        syncOutputs();
+        runScenario();
+      }
+      if (st.active != null) {
+        const a = areaByNumber(st.active);
+        if (a) activateArea(a.key); else if (numberUsed(st.active)) selectPlace(st.active);
+      }
+      if (st.view) state.lmap.setView([st.view[0], st.view[1]], st.view[2]);
+      const n = (st.reports || []).length + (st.pins || []).length + areas.filter((a) => !(st.reports || []).some((r) => r.n === a.n) && !(st.pins || []).some((p) => p.n === a.n)).length;
+      status.restore = { ok: true, why, places: n, areas: areas.length };
+      if (n) say(why === 'link' ? `Opened ${n} place${n === 1 ? '' : 's'} from the link.` : `Restored ${n} place${n === 1 ? '' : 's'} from your last visit.`);
+      return true;
+    } catch (err) {
+      status.restore = { ok: false, error: String(err.message || err) };
+      return false;
+    } finally {
+      restoring = false;
+      setBusy(false);
+      renderPlaces();
+      saveSessionSoon();
+    }
+  }
+  window.__floodRestore = (st) => restoreSession(st, 'test');
+  async function restoreOnStart() {
+    const m = /[#&]s=([A-Za-z0-9_-]+)/.exec(location.hash || '');
+    if (m) {
+      try { await restoreSession(JSON.parse(unb64(m[1])), 'link'); } catch (e) { say('That link could not be read.'); }
+      return;
+    }
+    let saved = null;
+    try { saved = JSON.parse(localStorage.getItem(SESSION_KEY) || 'null'); } catch (e) { saved = null; }
+    if (saved) await restoreSession(saved, 'saved');
+  }
+  $('shareBtn').addEventListener('click', async () => {
+    const url = shareUrl();
+    try { await navigator.clipboard.writeText(url); say('Link copied: it opens this view with all your places, scenarios and study areas.'); } catch (e) { window.prompt('Copy this link:', url); }
+  });
+  function clearAllPlaces() {
+    reports.slice().forEach(closeReport);
+    Array.from(areaReg.keys()).forEach((k) => removeArea(k, { quiet: true }));
+    pins.splice(0).forEach((p) => p.marker && state.lmap && state.lmap.removeLayer(p.marker));
+    hiddenNums.clear();
+    selectedNum = null;
+    try { localStorage.removeItem(SESSION_KEY); } catch (e) { /* nothing saved */ }
+    $('area').value = 'australia';
+    enterNational({ fit: false });
+    renderPlaces();
+  }
+
+  /* ---------- address search (OpenStreetMap Nominatim) */
+  // Searches run only when you press Enter (Nominatim's usage policy rules
+  // out search-as-you-type). Picking a result flies there and shows the
+  // flood depth if a model covers it, with a button to add it as a place.
+  $('searchForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const q = $('searchInput').value.trim();
+    const box = $('searchResults');
+    if (!q) { box.hidden = true; return; }
+    box.hidden = false;
+    box.innerHTML = '<p class="hint">Searching…</p>';
+    try {
+      const r = await fetch(`https://nominatim.openstreetmap.org/search?format=jsonv2&countrycodes=au&limit=6&q=${encodeURIComponent(q)}`, { headers: { 'Accept-Language': 'en-AU' } });
+      const list = r.ok ? await r.json() : [];
+      status.search = { ok: r.ok, results: list.length };
+      if (!list.length) { box.innerHTML = '<p class="hint">No matches in Australia.</p>'; return; }
+      box.innerHTML = list.map((x, i) => {
+        const [first, ...rest] = String(x.display_name).split(', ');
+        return `<button type="button" data-i="${i}">${escapeHtml(first)}<small>${escapeHtml(rest.slice(0, 4).join(', '))}</small></button>`;
+      }).join('') + '<p class="hint">Search by <a href="https://nominatim.org/" target="_blank" rel="noopener">OpenStreetMap Nominatim</a>.</p>';
+      box.querySelectorAll('[data-i]').forEach((b) => b.addEventListener('click', () => {
+        const x = list[+b.dataset.i];
+        box.hidden = true;
+        goToSearchResult(parseFloat(x.lat), parseFloat(x.lon), String(x.display_name).split(', ').slice(0, 2).join(', '));
+      }));
+    } catch (err) {
+      box.innerHTML = '<p class="hint">Search is unavailable right now.</p>';
+      status.search = { ok: false, error: String(err.message || err) };
+    }
+  });
+  document.addEventListener('click', (e) => { if (!e.target.closest('#searchForm, #searchResults')) $('searchResults').hidden = true; });
+  async function goToSearchResult(lat, lon, label) {
+    if (!state.lmap || $('lmap').hidden) await loadArea('australia');
+    const m = state.lmap;
+    m.setView([lat, lon], Math.max(m.getZoom(), 15));
+    const ll = window.L.latLng(lat, lon);
+    const hit = areaAt(ll);
+    let extra = '';
+    if (hit) {
+      if (hit.key !== state.areaKey) activateArea(hit.key);
+      await state.ready;
+      const c = state.a && latLngCell(ll);
+      if (c) extra = `<span class="spot-near">${escapeHtml(describe(c.i))} · in ${hit.n}. ${escapeHtml(hit.name)}</span>`;
+    } else {
+      extra = '<span class="spot-near">No flood model covers this spot yet.</span>';
+    }
+    status.searchHit = { inModel: !!hit };
+    spotPopup(ll, `<span class="spot-name">${escapeHtml(label)}</span>${extra}`, 'Add as a place', () => addPin(lat, lon, { name: label }));
+  }
+  window.__floodGoTo = goToSearchResult;
+
+  /* ---------- downloads */
+  function slug(t) { return String(t || 'flood').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40) || 'flood'; }
+  function download(blob, name) {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = name;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+  }
+  // Minimal single-strip float32 GeoTIFF in WGS84 lon/lat.
+  function geoTiffBytes(data, W, H, g, nodata) {
+    const sx = (g.east - g.west) / W, sy = (g.north - g.south) / H;
+    const nd = `${nodata}\0`;
+    const e = [
+      [256, 4, [W]], [257, 4, [H]], [258, 3, [32]], [259, 3, [1]], [262, 3, [1]], [273, 4, [0]], [277, 3, [1]],
+      [278, 4, [H]], [279, 4, [W * H * 4]], [284, 3, [1]], [339, 3, [3]],
+      [33550, 12, [sx, sy, 0]], [33922, 12, [0, 0, 0, g.west, g.north, 0]],
+      [34735, 3, [1, 1, 0, 3, 1024, 0, 1, 2, 1025, 0, 1, 1, 2048, 0, 1, 4326]],
+      [42113, 2, nd],
+    ];
+    const size = { 2: 1, 3: 2, 4: 4, 12: 8 };
+    const ifdLen = 2 + e.length * 12 + 4;
+    let extra = 8 + ifdLen;
+    const extras = [];
+    for (const [, t, v] of e) {
+      const bytes = size[t] * v.length;
+      if (bytes > 4) { extras.push(extra); extra += bytes + (bytes % 2); } else extras.push(-1);
+    }
+    const dataOff = extra + (extra % 4 ? 4 - (extra % 4) : 0);
+    const buf = new ArrayBuffer(dataOff + W * H * 4), dv = new DataView(buf);
+    dv.setUint16(0, 0x4949); dv.setUint16(2, 42, true); dv.setUint32(4, 8, true);
+    dv.setUint16(8, e.length, true);
+    e.forEach(([tag, t, v0], k) => {
+      const v = tag === 273 ? [dataOff] : v0;
+      const o = 10 + k * 12;
+      dv.setUint16(o, tag, true); dv.setUint16(o + 2, t, true); dv.setUint32(o + 4, v.length, true);
+      const at = extras[k] >= 0 ? extras[k] : o + 8;
+      if (extras[k] >= 0) dv.setUint32(o + 8, at, true);
+      for (let i = 0; i < v.length; i++) {
+        if (t === 2) dv.setUint8(at + i, v.charCodeAt(i));
+        else if (t === 3) dv.setUint16(at + 2 * i, v[i], true);
+        else if (t === 4) dv.setUint32(at + 4 * i, v[i], true);
+        else dv.setFloat64(at + 8 * i, v[i], true);
+      }
+    });
+    dv.setUint32(10 + e.length * 12, 0, true);
+    new Float32Array(buf, dataOff, W * H).set(data);
+    return buf;
+  }
+  function placeLabel() { const a = state.areaKey && areaReg.get(state.areaKey); return a ? `${a.n}-${a.name}` : 'flood-model'; }
+  function downloadDepthTiff() {
+    const a = state.a, run = state.run, g = state.geo;
+    if (!a || !run || !g) return false;
+    const out = new Float32Array(a.N);
+    for (let i = 0; i < a.N; i++) out[i] = run.wet[i] && !(a.ocean && a.ocean[i]) ? Math.round(run.depth[i] * 100) / 100 : -9999;
+    download(new Blob([geoTiffBytes(out, a.W, a.H, g, -9999)], { type: 'image/tiff' }), `flood-depth-${slug(placeLabel())}.tif`);
+    return true;
+  }
+  function floodGeoJSON() {
+    const a = state.a, run = state.run, g = state.geo;
+    if (!a || !run || !g) return null;
+    const step = a.N > 1.2e6 ? 2 : 1, W2 = Math.ceil(a.W / step), H2 = Math.ceil(a.H / step);
+    const wetAt = (x, y) => {
+      for (let dy = 0; dy < step; dy++) for (let dx = 0; dx < step; dx++) {
+        const xx = x * step + dx, yy = y * step + dy;
+        if (xx < a.W && yy < a.H) { const i = yy * a.W + xx; if (run.wet[i] && !(a.ocean && a.ocean[i])) return true; }
+      }
+      return false;
+    };
+    const sx = ((g.east - g.west) / a.W) * step, sy = ((g.north - g.south) / a.H) * step;
+    const polys = [];
+    let open = new Map();
+    const close = (r) => {
+      const x0 = r5(g.west + r.x0 * sx), x1 = r5(Math.min(g.east, g.west + r.x1 * sx));
+      const y0 = r5(g.north - r.y0 * sy), y1 = r5(Math.max(g.south, g.north - r.y1 * sy));
+      polys.push([[[x0, y0], [x0, y1], [x1, y1], [x1, y0], [x0, y0]]]);
+    };
+    for (let y = 0; y <= H2; y++) {
+      const next = new Map();
+      if (y < H2) {
+        let x = 0;
+        while (x < W2) {
+          if (!wetAt(x, y)) { x++; continue; }
+          const x0 = x;
+          while (x < W2 && wetAt(x, y)) x++;
+          const key = `${x0},${x}`, r = open.get(key);
+          if (r) { r.y1 = y + 1; next.set(key, r); open.delete(key); } else next.set(key, { x0, x1: x, y0: y, y1: y + 1 });
+        }
+      }
+      open.forEach(close);
+      open = next;
+    }
+    const s0 = scenario(), area = state.areaKey && areaReg.get(state.areaKey);
+    return {
+      type: 'FeatureCollection',
+      features: [{
+        type: 'Feature',
+        properties: {
+          name: area ? `${area.n}. ${area.name}` : 'Flood model', gauge_level_m: s0.gaugeLevel, bay_level_m: s0.bayLevel,
+          level_points: (state.controls || []).length, generated: new Date().toISOString(),
+          source: (state.areaMeta && state.areaMeta.source) || '', note: 'Screening model only; not for evacuation or property decisions.',
+        },
+        geometry: { type: 'MultiPolygon', coordinates: polys },
+      }],
+    };
+  }
+  window.__floodGeoJSON = () => { const gj = floodGeoJSON(); return gj ? gj.features[0].geometry.coordinates.length : -1; };
+  function downloadGeoJSON() {
+    const gj = floodGeoJSON();
+    if (!gj) return false;
+    download(new Blob([JSON.stringify(gj)], { type: 'application/geo+json' }), `flood-outline-${slug(placeLabel())}.geojson`);
+    return true;
+  }
+  function printableReport() {
+    const area = state.areaKey && areaReg.get(state.areaKey);
+    if (!area || !state.run) return false;
+    const rows = Array.from(document.querySelectorAll('#scenarioBody .slider')).filter((el) => !el.closest('[hidden]')).map((el) => {
+      const lab = el.querySelector('label'), out = el.querySelector('output');
+      return lab && out ? `<tr><th>${escapeHtml(lab.textContent)}</th><td>${escapeHtml(out.textContent)}</td></tr>` : '';
+    }).join('');
+    const pts = (state.controls || []).map((c) => `<tr><th>${escapeHtml(c.label || 'Level point')}</th><td>${c.level.toFixed(2)} m</td></tr>`).join('');
+    const rep = area.reportId && reports.find((r) => r.id === area.reportId);
+    const repHtml = rep ? Array.from(rep.el.querySelectorAll('.reading, .classes, .warn-item')).map((el) => el.outerHTML).join('') : '';
+    const sat = $('satCheck').dataset.key === String(state.areaKey) ? $('satCheck').innerHTML : '';
+    const g = state.geo, img = area.overlay && area.overlay._floodUrl;
+    const w = window.open('', '_blank');
+    if (!w) { say('Allow pop-ups to open the printable report.'); return false; }
+    w.document.write(`<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Flood report: ${escapeHtml(area.name)}</title>
+      <style>body{font:14px/1.45 system-ui,sans-serif;color:#1d2a33;margin:24px;max-width:820px}h1{font-size:22px;margin:0 0 4px}h2{font-size:15px;margin:22px 0 6px;border-bottom:1px solid #ccd;padding-bottom:3px}
+      table{border-collapse:collapse}th,td{text-align:left;padding:3px 12px 3px 0;vertical-align:top}th{font-weight:600}.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}.stats>*{border:1px solid #ccd;border-radius:6px;padding:6px}
+      .map{border:1px solid #ccd;background:#eef2f5;padding:8px}.map img{width:100%;image-rendering:pixelated}.hint,small{color:#5a6b78;font-size:12px}.warn-item{display:block;background:#fff4e2;padding:6px;margin:4px 0;color:#5a3b00}
+      svg{max-width:100%}@media print{button{display:none}}</style></head><body>
+      <button onclick="print()">Print or save as PDF</button>
+      <h1>${area.n}. ${escapeHtml(area.name)}</h1><p class="hint">Flood Explorer screening model · ${escapeHtml(new Date().toLocaleString('en-AU'))}</p>
+      <h2>Result</h2><div class="stats">${$('stats').innerHTML}</div>
+      <h2>Scenario</h2><table>${rows}${pts}</table>
+      ${img ? `<h2>Flood extent</h2><div class="map"><img src="${img}" alt="Flood depth map"><p class="hint">Area ${g.south.toFixed(4)}° to ${g.north.toFixed(4)}° latitude, ${g.west.toFixed(4)}° to ${g.east.toFixed(4)}° longitude. Darker blue is deeper water.</p></div>` : ''}
+      ${repHtml ? `<h2>Gauge</h2>${repHtml}` : ''}
+      ${sat ? `<h2>Satellite check</h2>${sat}` : ''}
+      <h2>About this model</h2><p>${escapeHtml((state.areaMeta && state.areaMeta.source) || '')}</p>
+      <p class="hint">Screening only: it shows land below the chosen water surface that connects to the river or sea. It misses levees, drains and the timing of a flood. Do not use for evacuation or property decisions; follow official warnings from the Bureau of Meteorology and your state emergency service.</p>
+      <p class="hint">Open this model: <a href="${escapeHtml(shareUrl())}">link</a></p></body></html>`);
+    w.document.close();
+    return true;
+  }
+  $('dlTiff').addEventListener('click', downloadDepthTiff);
+  $('dlGeojson').addEventListener('click', downloadGeoJSON);
+  $('dlReport').addEventListener('click', printableReport);
+  window.__floodDepthTiffBytes = () => { const a = state.a; return a && state.run ? geoTiffBytes(new Float32Array(a.N), a.W, a.H, state.geo, -9999).byteLength : -1; };
+
   /* ---------- on-demand flood modelling */
 
   const windowBox = (lat, lon, halfKm) => {
@@ -3107,7 +3473,7 @@
       }
       status.local = { ok: true, key, W: grid.W, H: grid.H, cell: Math.round(grid.cell), ms: Math.round(performance.now() - t0), kind: o.kind, km: 2 * (o.halfKm || 10), lidar: Math.round(lidarShare * 100) / 100 };
       openPanel('panel-scenario');
-      if (!o.replaceKey) say(o.kind === 'coast'
+      if (!o.replaceKey && !o.quiet) say(o.kind === 'coast'
         ? 'Coastal model ready. Set the bay level and sea-level rise in Scenario.'
         : 'River model ready. Set the peak level at the gauge in Scenario.');
       return true;
@@ -3471,5 +3837,6 @@
     const areas = await listAreas();
     await loadFloodHub();
     await loadArea(areas[0].id);
+    await restoreOnStart();
   })();
 })();

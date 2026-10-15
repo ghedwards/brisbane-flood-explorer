@@ -193,6 +193,7 @@ jobs:
           echo "::notice::$(tail -n1 floodhub.log 2>/dev/null)"
           echo "::notice::$(grep '^National' national.log 2>/dev/null)"
           echo "::notice::$(grep '^Flood info' floodinfo.log 2>/dev/null || echo 'Flood info: not fetched')"
+          grep '^warning:' floodinfo.log 2>/dev/null | head -2 | sed 's/^warning:/::warning::Flood info: /' || true
           echo "::notice::$(grep '^Water history' wh.log 2>/dev/null || echo 'Water history: not fetched this run')"
           grep '^warning:' wh.log 2>/dev/null | head -2 | sed 's/^warning:/::warning::Water history: /' || true
           grep '^warning:' national.log 2>/dev/null | head -3 | sed 's/^warning:/::warning::National data: /' || true

@@ -77,6 +77,13 @@ body {
 
 /* ---------- floating chrome */
 .float { background: var(--surface); color: var(--ink); border-radius: 12px; box-shadow: var(--shadow); }
+.search { display: flex; align-items: center; gap: 2px; min-width: 0; }
+.search input { width: 210px; min-width: 0; font: 14px var(--font-body); padding: 7px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--ink); }
+.search-results { position: absolute; top: calc(100% + 6px); left: 0; right: 0; max-height: 50vh; overflow-y: auto; padding: 6px; display: grid; gap: 2px; z-index: 1003; }
+.search-results button { text-align: left; border: 0; background: transparent; color: var(--ink); padding: 8px 10px; border-radius: 8px; cursor: pointer; font: 13.5px/1.35 var(--font-body); }
+.search-results button:hover, .search-results button:focus { background: var(--surface-2); }
+.search-results small { display: block; color: var(--muted); }
+.downloads { display: flex; flex-wrap: wrap; gap: 6px; }
 .topbar {
   position: fixed; z-index: 1000; top: var(--top); left: var(--left);
   max-width: calc(100vw - var(--left) - var(--right) - var(--rail) - var(--gap));
@@ -335,6 +342,10 @@ details > div { display: grid; gap: 14px; }
 @media (max-width: 760px) {
   .topbar { right: var(--right); max-width: none; padding: 7px 8px 7px 12px; flex-wrap: wrap; }
   .topbar select { flex: 1 1 200px; }
+  .search { flex: 1 1 120px; order: 3; }
+  .search input { width: auto; flex: 1 1 auto; padding: 5px 8px; }
+  #shareBtn { order: 4; }
+  #noticePill { order: 5; }
   h1 { font-size: 1.02rem; }
   .rail {
     top: auto; bottom: 0; left: 0; right: 0; width: auto; flex-direction: row; justify-content: space-around;
@@ -374,7 +385,13 @@ details > div { display: grid; gap: 14px; }
   <h1><span>Flood</span> Explorer</h1>
   <label class="small" for="area" hidden>Terrain</label>
   <select id="area" aria-label="Terrain"></select>
+  <form class="search" id="searchForm" role="search">
+    <input type="search" id="searchInput" placeholder="Search an address or place" aria-label="Search an address or place" autocomplete="off">
+    <button type="submit" class="icon-btn" aria-label="Search"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6"/><path d="m20 20-4.5-4.5"/></svg></button>
+  </form>
+  <button type="button" class="icon-btn" id="shareBtn" aria-label="Copy a link to this view" title="Copy a link to this view"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/></svg></button>
   <button type="button" class="pill" id="noticePill" data-open="panel-about">Screening only</button>
+  <div class="search-results float" id="searchResults" hidden></div>
 </header>
 
 <nav class="rail float" aria-label="Map tools">
@@ -473,6 +490,16 @@ details > div { display: grid; gap: 14px; }
       <legend class="label">Check against satellites</legend>
       <div class="link-row"><button type="button" class="btn small" id="satCheckBtn">Compare with water seen since 1987</button></div>
       <div id="satCheck"></div>
+    </fieldset>
+
+    <fieldset id="downloadSet">
+      <legend class="label">Save and share</legend>
+      <div class="downloads">
+        <button type="button" class="btn small" id="dlTiff">Depth (GeoTIFF)</button>
+        <button type="button" class="btn small" id="dlGeojson">Flood outline (GeoJSON)</button>
+        <button type="button" class="btn small" id="dlReport">Printable report</button>
+      </div>
+      <p class="hint">Files cover this model's area for the current scenario. Use the link button at the top to share everything on the map.</p>
     </fieldset>
 
     <fieldset>
