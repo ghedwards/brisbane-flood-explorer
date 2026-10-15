@@ -28,7 +28,7 @@ def note(level: str, msg: str) -> None:
     if level == "notice":
         print(msg)
         if msg.startswith(KEY_WORDS):
-            KEY.append(msg[:400])
+            KEY.append(msg[:900])
         return
     print(f"::{level}::{msg}")
 
