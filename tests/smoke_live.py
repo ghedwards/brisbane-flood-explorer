@@ -573,6 +573,8 @@ def main() -> int:
         note("notice", f"Flood over time at Rockhampton: {json.dumps(tlr)}")
         if not (tlr and tlr.get("steps", 0) > 10 and not tlr.get("error")):
             failures.append(f"flood over time failed: {tlr}")
+        elif not tlr.get("routed"):
+            failures.append(f"flood over time wasn't routed below the gauge: {tlr}")
         page.screenshot(path="smoke-timeline.png")
 
         # ---- on a phone, a swipe scrolls the Layers panel

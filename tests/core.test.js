@@ -289,3 +289,41 @@ test('flood over time: a recorded rise and fall is followed, and the wave flatte
   const peakOf = (f) => Math.max(...Array.from({ length: 60 }, (_, t) => f(t - 10)));
   assert.ok(peakOf(flat.at[6]) < peakOf(sharp.at[0]) - 0.1, 'the peak 40 km downstream is lower when the wave flattens');
 });
+
+test('flood routing: the peak arrives later and lower downstream, and keeps its volume', () => {
+  const g = a.defaultGauge;
+  const s = scenario(a.dem[g] + 4, { bayLevel: 0.5 });
+  const o = { baseLevel: a.dem[g] + 0.3, riseHours: 12, fallHours: 24, speedKmh: 2, route: true };
+  const w = F.waveSetup(a, s, o);
+  const R = w.routed;
+  assert.ok(R && R.flows.length >= 2, 'the river below the gauge is routed');
+  const top = R.peakAt(0), end = R.peakAt(R.flows.length - 1);
+  assert.ok(end.hours > top.hours, 'the peak reaches the bottom later');
+  assert.ok(end.frac < top.frac, 'and is flattened');
+  // volume in = volume out (Muskingum conserves it), inflows included
+  const last = R.flows[R.flows.length - 1];
+  const sum = (q) => q.reduce((x, y) => x + y, 0);
+  const qIn = sum(R.flows[0].Q) + (last.ref / R.flows[0].ref - 1) * sum(R.flows[0].Q);
+  assert.ok(Math.abs(sum(last.Q) - qIn) / qIn < 0.1, 'volume kept within 10%');
+  // at the gauge itself the level follows the gauge
+  const wse = F.waveSurface(a, w, w.tPeak);
+  assert.ok(Math.abs(wse[g] - w.w1[g]) < 0.05, 'gauge cell at its peak level at the peak');
+  // a faster wave flattens less over the same river
+  const fast = F.waveSetup(a, s, Object.assign({}, o, { speedKmh: 6 })).routed;
+  assert.ok(fast.peakAt(fast.flows.length - 1).frac > end.frac, 'faster wave, less flattening');
+});
+
+test('tides: the sea rises and falls, with high water at the river peak unless asked otherwise', () => {
+  const g = a.defaultGauge;
+  const s = scenario(a.dem[g] + 3, { bayLevel: 1.2 });
+  const o = { baseLevel: a.dem[g] + 0.3, riseHours: 12, fallHours: 24, speedKmh: 3, tide: { amp: 0.8 } };
+  const w = F.waveSetup(a, s, o);
+  assert.ok(Math.abs(w.bayAt(w.tPeak) - 1.2) < 1e-9, 'high water at the peak');
+  assert.ok(Math.abs(w.bayAt(w.tPeak + 6.21) - (1.2 - 1.6)) < 1e-6, 'low water half a cycle later');
+  const lw = F.waveSetup(a, s, Object.assign({}, o, { tide: { amp: 0.8, atPeak: 'low' } }));
+  assert.ok(lw.bayAt(lw.tPeak) < 0, 'low water at the peak when asked');
+  const tl = F.floodTimeline(a, s, o);
+  let ups = 0;
+  for (let k = 2; k < tl.steps; k++) if ((tl.wetCount[k] - tl.wetCount[k - 1]) * (tl.wetCount[k - 1] - tl.wetCount[k - 2]) < 0) ups++;
+  assert.ok(ups >= 4, 'the flooded area rises and falls with the tides');
+});

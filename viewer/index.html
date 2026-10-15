@@ -181,12 +181,16 @@
       </div>
       <div class="storm-row">
         <label>Wave travels <input type="number" id="waveKmh" min="0.5" max="20" step="0.5" value="3" aria-label="Flood wave speed in km/h" style="width:58px"> km/h</label>
-        <label>and <select id="flatten" aria-label="How much the wave flattens downstream"><option value="0">keeps its shape</option><option value="1.5" selected>flattens a little</option><option value="3">flattens a lot</option></select></label>
+        <label>and <select id="flatten" aria-label="How the wave changes downstream"><option value="route" selected>is routed down the river</option><option value="0">keeps its shape</option><option value="1.5">flattens a little</option><option value="3">flattens a lot</option></select></label>
+      </div>
+      <div class="storm-row" id="tideRow" hidden>
+        <label>Tide <select id="tideCycle" aria-label="Tide during the flood"><option value="">sea stays at the bay level</option><option value="high" selected>high tide at the peak</option><option value="low">low tide at the peak</option></select></label>
+        <label>rising <input type="number" id="tideAmp" min="0" max="5" step="0.1" value="0.8" aria-label="Tide rise above mean sea level in metres" style="width:58px"> m above mean</label>
       </div>
       <p class="hint" id="shapeNote"></p>
       <div class="link-row"><button type="button" class="btn small" id="runTimeline">Run the flood hour by hour</button></div>
       <div id="timelineBox"></div>
-      <p class="hint">Choose a smooth rise and fall, or a recorded flood at a nearby gauge (hour-by-hour readings from Water Data Online). The flood wave reaches places upstream of the gauge earlier and downstream later, and can flatten as it travels. A screening sketch: real floods depend on rainfall timing, tributaries and storage.</p>
+      <p class="hint">Choose a smooth rise and fall, or a recorded flood at a nearby gauge (hour-by-hour readings from Water Data Online). The flood reaches places upstream of the gauge earlier and downstream later. <em>Routed</em> sends it down the river below the gauge (Muskingum–Cunge): flat, deep reaches spread and lower the peak, and tributaries joining below the gauge add their own flood, which usually peaks sooner. On the coast the sea can rise and fall with the tide, with the bay level as high water. A screening sketch: real floods depend on rainfall timing, storage and dam releases.</p>
     </fieldset>
 
     <fieldset id="defenceSet">

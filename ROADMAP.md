@@ -23,11 +23,13 @@ would add, how it could be built from open data, and what to watch for.
 
 ## Modelling
 
-- **Flood routing.** Flood over time follows a smooth or recorded rise and
-  fall at the gauge, travelling at a set speed and flattening with distance.
-  A proper routing method (Muskingum or kinematic wave) with tributary
-  inflows, and tide cycles for coastal models, would be more realistic.
-  The recorded-flood list lives in `config/events.json`; add events there.
+- **Flood routing, further.** Below the gauge the flood is routed
+  (Muskingum–Cunge) with tributary inflows and tides. Still simple: flow is
+  taken as depth^(5/3) at every cell (no surveyed ratings), tributary
+  floods copy the gauge's shape, places above the gauge are only shifted
+  in time, and floodplain storage isn't counted separately. Upstream
+  gauges as inflows, ratings from Water Data Online discharge series, and
+  dam releases would improve it.
 - **Storm tide beyond Queensland.** The storm tide builder fills in tides
   for Queensland standard ports; other states' tidal planes (in AHD) would
   extend it, and Bureau tide predictions would allow "this week's

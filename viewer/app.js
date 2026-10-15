@@ -3052,7 +3052,7 @@
     $('impactSet').hidden = !local || scenarioEmpty;
     $('defenceSet').hidden = !local || scenarioEmpty || ctl.floodType.value === 'flash';
     $('timeSet').hidden = !local || scenarioEmpty || ctl.floodType.value !== 'river' || state.gauge < 0;
-    if (!$('timeSet').hidden) renderShapeChoices();
+    if (!$('timeSet').hidden) { renderShapeChoices(); renderTideRow(); }
     $('recordedSet').hidden = !local || scenarioEmpty;
     clearTimeout(impactT);
     impactT = setTimeout(() => { renderImpact(); renderRecorded(); renderDefences(); if (!state.timeView) renderTimeline(); }, 250);
@@ -4294,17 +4294,39 @@
       fallHours: Math.max(1, parseFloat($('fallH').value) || 48),
       speedKmh: Math.max(0.5, parseFloat($('waveKmh').value) || 3),
       flatten: parseFloat($('flatten').value) || 0,
+      route: $('flatten').value === 'route',
+      tide: hasSea() && $('tideCycle').value ? { amp: Math.max(0, parseFloat($('tideAmp').value) || 0), atPeak: $('tideCycle').value } : null,
       hydro: ev ? ev.series : null,
       eventId: ev ? ev.id : null,
     };
   }
   $('floodShape').addEventListener('change', renderShapeChoices);
+  // tides: only for models that reach the sea; the rise above mean sea level
+  // defaults to the nearest Queensland port's high spring tide
+  function hasSea() {
+    const a = state.a;
+    if (!a || !a.ocean) return false;
+    if (a.hasSea === undefined) { a.hasSea = false; for (let c = 0; c < a.N; c += 3) if (a.ocean[c]) { a.hasSea = true; break; } }
+    return a.hasSea;
+  }
+  function renderTideRow() {
+    const row = $('tideRow');
+    if (!row) return;
+    row.hidden = !hasSea();
+    const p = tidePort(), key = state.areaKey || '';
+    if (!row.hidden && row.dataset.key !== key) {
+      row.dataset.key = key;
+      $('tideAmp').value = p ? Math.max(0.1, p.mhws).toFixed(1) : '0.8';
+      $('tideAmp').title = p ? `High spring tide at ${p.name}: ${p.mhws.toFixed(2)} m above mean sea level (Maritime Safety Queensland)` : 'Typical spring tide; set it for this coast';
+    }
+  }
   async function runTimeline(eventId) {
     const area = state.areaKey && areaReg.get(state.areaKey), a = state.a;
     if (!area || !a || state.gauge < 0) return null;
     if (eventId !== undefined) { renderShapeChoices(); $('floodShape').value = eventId || ''; renderShapeChoices(); }
     const box = $('timelineBox');
     box.innerHTML = '<p class="hint">Working out the flood hour by hour…</p>';
+    renderTideRow();
     const s = scenario(), opts = timeOpts();
     if (!opts.hydro && s.gaugeLevel <= opts.baseLevel + 0.1) { box.innerHTML = '<p class="hint">Set a peak above the river\'s normal level first.</p>'; return null; }
     if (area.impact == null) await countImpact();   // roads and buildings for closures
@@ -4325,7 +4347,10 @@
     renderTimeline();
     showTimeStep(state.timeStep);
     const ac = tl.access;
-    status.timeline = { steps: tl.steps, step: tl.step, event: opts.eventId, firstRoad: ac ? ac.firstClose : null, maxIsolated: ac ? ac.maxIso : null, longestHours: ac ? ac.longest : null, roadsClosed: ac ? ac.roads.length : null };
+    const R = tl.wave.routed;
+    status.timeline = { steps: tl.steps, step: tl.step, event: opts.eventId,
+      routed: R ? { reaches: R.reaches.length, km: +(R.reaches[R.reaches.length - 1] || { km: 0 }).km.toFixed(1), peakFrac: +R.peakAt(R.flows.length - 1).frac.toFixed(2), lagHours: Math.round(R.peakAt(R.flows.length - 1).hours - R.peakAt(0).hours), tributaries: R.tributaries } : null,
+      tide: tl.wave.tide || 0, firstRoad: ac ? ac.firstClose : null, maxIsolated: ac ? ac.maxIso : null, longestHours: ac ? ac.longest : null, roadsClosed: ac ? ac.roads.length : null };
     return status.timeline;
   }
   // Roads and isolation through time, from when each spot is over 0.3 m deep
@@ -4411,6 +4436,16 @@
       isoCount, floodCount, closedCount, isoSteps, firstIso,
     };
   }
+  // what routing did to the peak on its way down the river
+  function routeNote(tl) {
+    const R = tl.wave && tl.wave.routed, parts = [];
+    if (R && R.flows.length > 1) {
+      const end = R.peakAt(R.flows.length - 1), top = R.peakAt(0), km = R.reaches[R.reaches.length - 1].km;
+      parts.push(`Routed ${km.toFixed(1)} km down the river to the model's edge: the peak gets there about ${Math.max(0, Math.round(end.hours - top.hours))} hours after the gauge, at ${Math.round(Math.min(1, end.frac) * 100)}% of the flow it would have if everything peaked together${R.tributaries ? `, with ${R.tributaries} tributar${R.tributaries === 1 ? 'y' : 'ies'} joining on the way` : ''}.`);
+    }
+    if (tl.wave && tl.wave.tide) parts.push(`Tide: ${tl.opts.tide.atPeak === 'low' ? 'low' : 'high'} water at the peak, sea between ${(tl.s.bayLevel - 2 * tl.wave.tide).toFixed(2)} m and ${tl.s.bayLevel.toFixed(2)} m.`);
+    return parts.length ? `<p class="hint">${parts.join(' ')}</p>` : '';
+  }
   function renderTimeline() {
     const area = state.areaKey && areaReg.get(state.areaKey), box = $('timelineBox');
     if (!box) return;
@@ -4439,6 +4474,7 @@
       <div class="time-ctl"><span class="time-label" id="tlLabel"></span>
         <button type="button" class="btn small" id="tlPlay">Play</button>
         <input type="range" id="tlSlider" min="0" max="${K - 1}" step="1" value="${state.timeStep}" aria-label="Time"></div>
+      ${routeNote(tl)}
       ${tl.event ? `<p class="hint">Recorded flood: ${escapeHtml(tl.event.name)}, ${escapeHtml(tl.event.gauge.name)} gauge (Water Data Online, Bureau of Meteorology and data owners). Hours count from ${escapeHtml(fmtWhen(tl.event, 0))}.</p>` : ''}
       ${ac ? `<p><strong>Roads:</strong> ${ac.roads.length ? `the first closes ${tl.event ? '' : 'at '}${whenH(ac.firstClose)} (${escapeHtml(ac.roads[0].name)})${!tl.event && ac.firstClose < 0 ? ', before the gauge starts rising: places upstream see the flood first' : ''}. ${ac.roads.slice(0, 8).map((r) => `${escapeHtml(r.name)} ${whenH(r.closes)} to ${whenH(r.reopens)}`).join('; ')}${ac.roads.length > 8 ? `; and ${ac.roads.length - 8} more` : ''}.` : 'no named road goes under more than 30 cm of water.'}</p>
         <p><strong>Cut off:</strong> ${ac.maxIso ? `up to ${n(ac.maxIso)} dry buildings have no dry road out, ${tl.event ? '' : 'at '}${whenH(ac.maxIsoAt)}; the longest any is cut off is about ${ac.longest} hours.` : 'no dry building loses its last dry road out.'}</p>`
@@ -4475,7 +4511,7 @@
     state.timeStep = k;
     const t = tl.t0 + k * tl.step;
     const wse = F.waveSurface(a, tl.wave, t, new Float64Array(a.N).fill(NaN));
-    state.run = F.inundate(a, Object.assign({}, tl.s, { wse }));
+    state.run = F.inundate(a, Object.assign({}, tl.s, { wse, bayLevel: tl.wave.bayAt(t) }));
     state.timeView = true;
     drawMap();
     drawStats(tl.s);

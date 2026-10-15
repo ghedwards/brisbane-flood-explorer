@@ -650,6 +650,13 @@
   //   is used, shifted so the recorded peak matches the scenario's peak
   //   o.flatten: how much the wave spreads out downstream (hours of spread
   //   per square root of km travelled); 0 keeps its shape
+  //   o.route: route the flood down the river from the gauge instead
+  //   (Muskingum-Cunge, with the wave's spreading worked out from the
+  //   river's slope and flood depth, and tributaries joining below the
+  //   gauge adding their own, usually earlier, flood)
+  //   o.tide: { amp (m), atPeak: 'high' | 'low' }: the sea rises and falls
+  //   with the tide (period 12.42 h) instead of staying at the scenario's
+  //   sea level, which becomes the high-tide level
   function waveSetup(a, s, o) {
     const rec = o.hydro && o.hydro.length > 1 ? o.hydro : null;
     let recShift = 0, recMin = 0;
@@ -660,8 +667,12 @@
     }
     const base = rec ? recMin : o.baseLevel, peak = s.gaugeLevel;
     const lo = Math.min(base, peak - 0.5), hi = Math.max(peak, lo + 0.5);
-    const w0 = streamSurface(a, Object.assign({}, s, { gaugeLevel: lo })).wse;
-    const w1 = streamSurface(a, Object.assign({}, s, { gaugeLevel: hi })).wse;
+    // with tides, the river surfaces are worked out at low water; the tide
+    // then rises over them near the mouth
+    const amp = o.tide && o.tide.amp > 0 ? o.tide.amp : 0;
+    const sLow = amp ? Object.assign({}, s, { bayLevel: s.bayLevel - 2 * amp }) : s;
+    const w0 = streamSurface(a, Object.assign({}, sLow, { gaugeLevel: lo })).wse;
+    const w1 = streamSurface(a, Object.assign({}, sLow, { gaugeLevel: hi })).wse;
     const cells = [];
     for (let c = 0; c < a.N; c++) if (a.stream[c] && Number.isFinite(w0[c]) && Number.isFinite(w1[c])) cells.push(c);
     const g = s.gauge >= 0 ? s.gauge : a.mainOutlet;
@@ -722,14 +733,194 @@
         band[c] = b;
       }
     }
-    return { lo, hi, w0, w1, cells: Int32Array.from(cells), arrive, minA, maxA, rise, fall, gaugeAt, at, band, tStart, tEnd };
+    const tPeak = rec ? rec.reduce((m, r) => (r[1] > m[1] ? r : m))[0] : rise;
+    const w = { lo, hi, w0, w1, cells: Int32Array.from(cells), arrive, minA, maxA, rise, fall, gaugeAt, at, band, tStart, tEnd, tPeak, routed: null };
+    if (o.route && g >= 0) w.routed = routeDown(a, s, w, g, speed);
+    if (w.routed) w.maxA = Math.max(w.maxA, w.routed.extraHours);
+    // the tide: high water (the scenario's sea level) at the river's peak,
+    // or low water at the peak
+    w.bayAt = amp
+      ? (t) => s.bayLevel - amp * (1 - Math.cos((2 * Math.PI * (t - tPeak - (o.tide.atPeak === 'low' ? 6.21 : 0))) / 12.42))
+      : () => s.bayLevel;
+    w.tide = amp;
+    return w;
   }
+
+  // Time of concentration (hours) for a catchment of A km² (ARR)
+  const tcHours = (Akm2) => 0.76 * Math.pow(Math.max(Akm2, 0.01), 0.38);
+
+  /**
+   * Route the gauge's flood down the river below it (Muskingum-Cunge).
+   * Flow is taken as proportional to depth^(5/3) (a wide channel, Manning),
+   * so the gauge's levels become relative flows. Below the gauge the river
+   * is split into reaches at least one time step of travel long; each
+   * reach's spreading (diffusion D = q / 2S, here 0.3·c·h/S for wave speed
+   * c, flood depth h and water-surface slope S) sets the Muskingum X, and
+   * long, flat, deep reaches get longer reaches so X stays >= 0. Each
+   * tributary joining below the gauge adds the gauge's flood scaled by its
+   * catchment area and shifted by the difference in time of concentration
+   * (small creeks peak sooner); local runoff between tributaries is added
+   * the same way. Each cell's level is then the gauge level that gives the
+   * same fraction of its peak flow (if everything peaked together, as the
+   * steady scenario assumes, levels match the steady surface at the peak).
+   * Tributary channels below the gauge follow the river's level where they
+   * join it (backwater, as in the steady surface).
+   */
+  function routeDown(a, s, w, g, speedKmh) {
+    const { N, rec, chain, stream, acc, order, nOrder } = a;
+    const cellKm2 = (a.cell * a.cell) / 1e6;
+    const Ag = Math.max(acc[g] * cellKm2, 0.01), tcg = tcHours(Ag);
+    const zb = Math.min(a.dem[g] - 1, w.lo - 0.5);       // bed at the gauge
+    const span = w.hi - zb;
+    const qOf = (h) => Math.pow(Math.max(0, (h - zb) / span), 5 / 3);
+    const hOf = (q) => zb + span * Math.pow(Math.max(0, q), 0.6);
+    // the path below the gauge
+    const path = [];
+    const onP = new Int32Array(N).fill(-1);
+    for (let c = g; c >= 0; c = rec[c]) { onP[c] = path.length; path.push(c); }
+    if (path.length < 3) return null;
+    // tributary entries along the path, and which entry each tributary cell is on
+    const entry = new Int32Array(N).fill(-1);   // -1 none, -2 above the gauge
+    entry[g] = -2;
+    for (let j = 0; j < nOrder; j++) {
+      const c = order[j];
+      if (c === g || onP[c] >= 0) continue;
+      const r = rec[c];
+      if (r < 0) continue;
+      if (r === g || entry[r] === -2) { entry[c] = -2; continue; }
+      if (!stream[c]) continue;
+      if (onP[r] >= 0) entry[c] = c;
+      else if (stream[r] && entry[r] >= 0) entry[c] = entry[r];
+    }
+    const cms = speedKmh * 1000;   // m/h
+    const T = w.tEnd - w.tStart;
+    const dt = Math.min(1, Math.max(0.1, Math.min(w.rise, T) / 12));
+    const travel = chain[g] / cms;   // hours from the gauge to the outlet
+    let minLag = 0;
+    const inflow = new Map();   // path index of the junction -> [{A, lag}]
+    for (let c = 0; c < N; c++) {
+      if (entry[c] !== c) continue;
+      const A = acc[c] * cellKm2, lag = tcHours(A) - tcg;
+      const k = onP[rec[c]];
+      (inflow.get(k) || inflow.set(k, []).get(k)).push({ A, lag });
+      if (lag < minLag) minLag = lag;
+    }
+    // local runoff along the path: catchment gained beyond the tributaries
+    for (let k = 1; k < path.length; k++) {
+      const c = path[k], up = path[k - 1];
+      let A = (acc[c] - acc[up]) * cellKm2;
+      for (const e of inflow.get(k) || []) A -= e.A;
+      if (A > 0.01) {
+        const lag = tcHours(A) - tcg;
+        (inflow.get(k) || inflow.set(k, []).get(k)).push({ A, lag, local: true });
+        if (lag < minLag) minLag = lag;
+      }
+    }
+    const T0 = Math.floor(w.tStart + minLag - 2);
+    const nT = Math.ceil((w.tEnd + travel * 2 + 48 - T0) / dt) + 1;
+    const qg = new Float64Array(nT);
+    for (let i = 0; i < nT; i++) qg[i] = qOf(w.gaugeAt(T0 + i * dt));
+    const shifted = (lag, scale, out) => {
+      for (let i = 0; i < nT; i++) {
+        const x = i - lag / dt, i0 = Math.floor(x), f = x - i0;
+        const v0 = qg[Math.min(nT - 1, Math.max(0, i0))], v1 = qg[Math.min(nT - 1, Math.max(0, i0 + 1))];
+        out[i] += scale * (v0 + (v1 - v0) * f);
+      }
+    };
+    // depth and slope along the path (slope over about 3 km)
+    const depth = (c) => Math.max(0.5, w.w1[c] - Math.min(a.dem[c] - 1, w.w0[c] - 0.5));
+    const slopeAt = (k) => {
+      let u = k, d = k;
+      while (u > 0 && chain[path[u]] - chain[path[k]] < 1500) u--;
+      while (d < path.length - 1 && chain[path[k]] - chain[path[d]] < 1500) d++;
+      const L = chain[path[u]] - chain[path[d]];
+      return L > 0 ? Math.max(2e-5, Math.abs(w.w1[path[u]] - w.w1[path[d]]) / L) : 2e-5;
+    };
+    // reaches: nodes at path indices
+    const nodes = [0];
+    let k = 0;
+    while (k < path.length - 1) {
+      const D = Math.min(0.3 * cms * depth(path[k]) / slopeAt(k), 5e8);
+      const Lmin = Math.min(Math.max(cms * dt, (2 * D) / cms, a.cell), 60000);
+      let j = k + 1;
+      while (j < path.length - 1 && chain[path[k]] - chain[path[j]] < Lmin) j++;
+      nodes.push(j);
+      k = j;
+    }
+    // route, reach by reach; peak reference flows add up the same inflows
+    const flows = [];
+    let Q = Float64Array.from(qg), Qref = Math.max(...qg);
+    const addInflows = (k0, k1, into) => {   // inflows joining at path index k0 < k <= k1
+      let ref = 0;
+      for (let kk = k0 + 1; kk <= k1; kk++) for (const e of inflow.get(kk) || []) {
+        const sc = e.A / Ag;
+        shifted(e.lag, sc, into);
+        ref += sc * Math.max(...qg);
+      }
+      return ref;
+    };
+    flows.push({ k: 0, Q, ref: Qref });
+    for (let n = 1; n < nodes.length; n++) {
+      const k0 = nodes[n - 1], k1 = nodes[n];
+      const I = Float64Array.from(Q);
+      Qref += addInflows(k0, k1, I);
+      const L = Math.max(a.cell, chain[path[k0]] - chain[path[k1]]);
+      let D = 0;
+      for (let kk = k0; kk < k1; kk++) D += 0.3 * cms * depth(path[kk]) / slopeAt(kk);
+      D = Math.min(D / Math.max(1, k1 - k0), 5e8);
+      const K = L / cms;
+      const X = Math.max(0, Math.min(0.5 - D / (cms * L), (cms * dt) / (2 * L), 0.5));
+      const den = K * (1 - X) + dt / 2;
+      const C0 = (dt / 2 - K * X) / den, C1 = (dt / 2 + K * X) / den, C2 = (K * (1 - X) - dt / 2) / den;
+      const O = new Float64Array(nT);
+      O[0] = I[0];
+      for (let i = 1; i < nT; i++) O[i] = Math.max(0, C0 * I[i] + C1 * I[i - 1] + C2 * O[i - 1]);
+      Q = O;
+      flows.push({ k: k1, Q, ref: Qref, K, X });
+    }
+    // each path cell sits between two nodes
+    const cellA = new Int32Array(N).fill(-1), cellF = new Float32Array(N);
+    for (let n = 1; n < flows.length; n++) {
+      const k0 = flows[n - 1].k, k1 = flows[n].k, L = chain[path[k0]] - chain[path[k1]];
+      for (let kk = k0; kk <= k1; kk++) {
+        cellA[path[kk]] = n - 1;
+        cellF[path[kk]] = L > 0 ? (chain[path[k0]] - chain[path[kk]]) / L : 1;
+      }
+    }
+    // tributary channels below the gauge back up from the river they join
+    // (as in the steady surface), so they follow its level at the junction
+    for (let c = 0; c < N; c++) {
+      const e = entry[c];
+      if (e < 0 || !stream[c]) continue;
+      const j = rec[e];
+      cellA[c] = cellA[j]; cellF[c] = cellF[j];
+    }
+    const qPk = Math.max(...qg);
+    return {
+      T0, dt, nT, flows, cellA, cellF, hOf, qPk,
+      reaches: flows.slice(1).map((f) => ({ km: (chain[path[0]] - chain[path[f.k]]) / 1000, K: f.K, X: f.X })),
+      tributaries: Array.from(inflow.values()).flat().filter((e) => !e.local).length,
+      extraHours: (T0 + nT * dt) - w.tEnd,
+      peakAt(n) { const f = flows[n]; let m = 0, im = 0; for (let i = 0; i < nT; i++) if (f.Q[i] / f.ref > m) { m = f.Q[i] / f.ref; im = i; } return { frac: m, hours: T0 + im * dt }; },
+    };
+  }
+
   function waveSurface(a, w, t, out) {
     const wse = out || new Float64Array(a.N).fill(NaN);
-    const span = w.hi - w.lo;
+    const span = w.hi - w.lo, R = w.routed;
+    let ti = 0, tf = 0;
+    if (R) { const x = Math.min(R.nT - 1, Math.max(0, (t - R.T0) / R.dt)); ti = Math.min(R.nT - 2, Math.floor(x)); tf = x - ti; }
+    const bay = w.bayAt ? w.bayAt(t) : NaN;
     for (const c of w.cells) {
-      const h = w.at[w.band[c]](t - w.arrive[c]);
-      wse[c] = w.w0[c] + ((w.w1[c] - w.w0[c]) * (h - w.lo)) / span;
+      let h;
+      if (R && R.cellA[c] >= 0) {
+        const n = R.cellA[c], f = R.cellF[c], A = R.flows[n], B = R.flows[n + 1];
+        const qa = (A.Q[ti] + (A.Q[ti + 1] - A.Q[ti]) * tf) / A.ref, qb = (B.Q[ti] + (B.Q[ti + 1] - B.Q[ti]) * tf) / B.ref;
+        h = R.hOf((qa + (qb - qa) * f) * R.qPk);
+      } else h = w.at[w.band[c]](t - w.arrive[c]);
+      let v = w.w0[c] + ((w.w1[c] - w.w0[c]) * (h - w.lo)) / span;
+      if (w.tide && bay > v) v = bay;
+      wse[c] = v;
     }
     return wse;
   }
@@ -747,7 +938,7 @@
       const t = t0 + k * step;
       gauge[k] = w.gaugeAt(t);
       waveSurface(a, w, t, wse);
-      const run = inundate(a, Object.assign({}, s, { wse }));
+      const run = inundate(a, Object.assign({}, s, { wse, bayLevel: w.bayAt(t) }));
       let n = 0;
       for (let c = 0; c < N; c++) {
         if (!run.wet[c] || (a.ocean && a.ocean[c])) continue;
