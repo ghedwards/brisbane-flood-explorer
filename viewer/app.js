@@ -3229,11 +3229,15 @@
           halfKm: size[0], cellM: size[1], center: a.c, keepN: a.n, quiet: true,
         });
         if (!ok) continue;
+        // wait until the model is registered on the map, so its settings are
+        // saved with it rather than lost when it is next selected
+        for (let t = 0; t < 80 && !(state.areaKey && areaByNumber(a.n) && areaByNumber(a.n).key === state.areaKey); t++) await new Promise((r) => setTimeout(r, 100));
         if (a.ctl) CTL_KEYS.forEach((key) => { if (key !== 'streamArea' && a.ctl[key] != null) ctl[key].value = a.ctl[key]; });
         state.controls = (a.cp || []).map(([la, lo, level, label]) => ({ cell: streamCellAt(la, lo), level, label })).filter((c) => c.cell >= 0);
         state.base = null;
         syncOutputs();
         runScenario();
+        saveActive();
       }
       if (st.active != null) {
         const a = areaByNumber(st.active);

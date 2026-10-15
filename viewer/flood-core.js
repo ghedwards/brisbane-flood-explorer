@@ -672,7 +672,10 @@
         if (nx < 0 || ny < 0 || nx >= W || ny >= H) continue;
         const n = ny * W + nx;
         if (wet[n] || !valid[n] || !(dem[n] < level[n])) continue;
-        wet[n] = 1; kind[n] = 1; depth[n] = level[n] - dem[n]; q[qt++] = n;
+        // land beside a creek floods to the creek's level, but a flash flood
+        // has too little water to fill pits far below the creek (quarries)
+        const r = recvStream[n];
+        wet[n] = 1; kind[n] = 1; depth[n] = Math.min(level[n] - dem[n], (r >= 0 ? rise[r] : 0) + 0.5); q[qt++] = n;
       }
     }
     // overland flow away from creeks
