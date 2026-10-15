@@ -369,3 +369,7 @@ details > div { display: grid; gap: 14px; }
   .leaflet-bottom.leaflet-right { bottom: calc(var(--bar) + env(safe-area-inset-bottom, 0px)); }
 }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+.storm-tide { border: 1px solid var(--line); border-radius: 10px; padding: 8px 12px; display: grid; gap: 8px; margin-top: 10px; }
+.storm-tide summary { cursor: pointer; font-weight: 600; font-size: 13.5px; }
+.storm-tide[open] { padding-bottom: 12px; }
+#tideM { width: 70px; font: 13.5px var(--font-body); padding: 4px 6px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--ink); }

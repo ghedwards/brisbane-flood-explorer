@@ -16,7 +16,7 @@ URL = sys.argv[1] if len(sys.argv) > 1 else "http://localhost:8000/"
 
 
 KEY = []          # key results, shown together in one annotation at the end
-KEY_WORDS = ("Presets checked", "Recorded floods", "Best match", "Impact", "Storm", "Joined", "Share link", "Satellite check",
+KEY_WORDS = ("Storm tide", "Presets checked", "Recorded floods", "Best match", "Impact", "Storm", "Joined", "Share link", "Satellite check",
              "Presets anchored", "Presets on LiDAR", "Phone Layers", "Council layer", "Downloads", "Rain radar",
              "Address search", "Flood warnings", "Echuca", "Extended model", "Area study")
 
@@ -560,6 +560,8 @@ def main() -> int:
         except Exception as e:
             imp = {"error": str(e)[:200]}
         note("notice" if imp and imp.get("buildings") else "warning", f"Impact at Rockhampton: {json.dumps(imp)}")
+        if imp and imp.get("buildings") and imp.get("damage") is None:
+            failures.append(f"impact count has no damage estimate: {imp}")
         if imp and imp.get("error") and "OpenStreetMap" not in imp.get("error", "") and "Failed to fetch" not in imp.get("error", ""):
             failures.append(f"impact count failed: {imp}")
         page.screenshot(path="smoke-impact.png")
@@ -620,7 +622,17 @@ def main() -> int:
                             "ms": loc.get("ms"), "error": loc.get("error"), "snap": snap, "stats": stats[:120],
                             "anchor": status().get("presetAnchor"), "lidar": loc.get("lidar"), "kind": pre.get("kind")})
             page.screenshot(path=f"smoke-preset-{pre['id']}.png")
+            if pre["id"] == "goldcoast" and loc.get("ok"):
+                tide = page.evaluate("window.__floodStormTide('hat', 2.0, 0.3)")
+                note("notice", f"Storm tide at Gold Coast: {json.dumps(tide)}")
+                if not (tide and tide.get("port") == "Gold Coast Seaway" and 3.0 < tide.get("bay", 0) < 4.0):
+                    failures.append(f"storm tide builder failed: {tide}")
             if pre["id"] == "echuca" and loc.get("ok"):
+                try:
+                    vrec = page.evaluate("window.__floodFindRecorded()")
+                except Exception as e:
+                    vrec = f"error: {e}"
+                note("notice", f"Recorded floods at Echuca (Victoria): {vrec}; {json.dumps(status().get('vicRecorded'))}")
                 n_cls = page.evaluate("window.__floodApplyGaugeLevels ? window.__floodApplyGaugeLevels('major') : -1")
                 note("notice", f"Echuca major flood class applied at {n_cls} gauge(s); level points {status().get('levelPoints')}")
         loose = [r["id"] for r in results if r.get("kind") == "river" and not ((r.get("anchor") or {}).get("gauge"))]

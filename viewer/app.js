@@ -848,6 +848,12 @@
       dynamicLayers: [{ id: 1, source: { type: 'mapLayer', mapLayerId: 1 }, minScale: 0, maxScale: 0 }],
       attribution: 'Flood planning &copy; State of New South Wales (Department of Planning), from local environmental plans',
       legend: 'NSW flood planning areas from council planning schemes', swatch: '#3b6fb6' },
+    { name: 'Queensland storm tide hazard areas (state)', state: 'QLD-TIDE',
+      url: 'https://spatial-gis.information.qld.gov.au/arcgis/rest/services/PlanningCadastre/CoastalManagement/MapServer',
+      layers: [11, 12], opacity: 0.45, minZoom: 6,
+      dynamicLayers: [11, 12].map((id) => ({ id, source: { type: 'mapLayer', mapLayerId: id }, minScale: 0, maxScale: 0 })),
+      attribution: 'Storm tide hazard &copy; State of Queensland',
+      legend: 'Queensland storm tide hazard areas (high and medium), from the State Planning Policy mapping', swatch: '#00838f' },
     { name: 'Queensland recorded floods, 1974–2019 (state)', state: 'QLD-REC',
       url: 'https://spatial-gis.information.qld.gov.au/arcgis/rest/services/InlandWaters/FloodLines/MapServer',
       layers: [12, 13, 14, 15, 16, 17, 18, 19, 20], opacity: 0.45, minZoom: 6,
@@ -1130,6 +1136,10 @@
       for (const o of NATIONAL_OVERLAYS) overlays[o.name] = makeWmsOverlay(L, o);
       for (const o of STATE_OVERLAYS) { const l = makeStateOverlay(o); if (l) overlays[o.name] = l; }
       for (const o of COUNCIL_OVERLAYS) { const l = makeCouncilOverlay(o); if (l) overlays[o.name] = l; }
+      overlays['Victorian recorded floods (state)'] = L.tileLayer.wms('https://opendata.maps.vic.gov.au/geoserver/wms', {
+        layers: VIC_LAYER, format: 'image/png', transparent: true, opacity: 0.55, zIndex: 4,
+        attribution: 'Victorian flood history &copy; State of Victoria (DEECA), CC BY 4.0',
+      });
       const fhLayers = floodHubOverlays(L);
       Object.assign(overlays, fhLayers);
       const fh = state.floodhub;
@@ -2830,6 +2840,67 @@
     return !!f;
   };
 
+  /* ---------- storm tide for coastal models */
+  // Queensland standard ports: highest astronomical tide and mean high water
+  // springs in metres AHD (MSQ 2025 semidiurnal tidal planes, converted with
+  // MSQ's standard port datum levels).
+  const TIDE_PORTS = [
+    ['Gold Coast Seaway', -27.94, 153.43, 1.97, 1.47, 0.760], ['Brisbane Bar', -27.37, 153.17, 2.78, 2.22, 1.243],
+    ['Mooloolaba', -26.68, 153.13, 2.21, 1.70, 0.990], ['Urangan', -25.30, 152.91, 4.33, 3.54, 2.040],
+    ['Bundaberg (Burnett Heads)', -24.76, 152.40, 3.68, 2.94, 1.693], ['Gladstone', -23.83, 151.25, 4.87, 4.01, 2.268],
+    ['Rosslyn Bay', -23.16, 150.79, 5.21, 4.28, 2.360], ['Mackay Outer Harbour', -21.10, 149.23, 6.62, 5.35, 2.941],
+    ['Bowen', -20.02, 148.25, 3.77, 2.88, 1.776], ['Townsville', -19.25, 146.83, 4.22, 3.17, 1.856],
+    ['Lucinda', -18.52, 146.33, 4.06, 3.04, 1.844], ['Cairns', -16.92, 145.78, 3.57, 2.67, 1.643],
+    ['Port Douglas', -16.48, 145.46, 3.40, 2.54, 1.581], ['Weipa', -12.67, 141.86, 3.33, 3.01, 1.752], ['Karumba', -17.49, 140.83, 4.85, 3.91, 2.184],
+  ].map(([name, lat, lon, hat, mhws, ahd]) => ({ name, lat, lon, hat: Math.round((hat - ahd) * 100) / 100, mhws: Math.round((mhws - ahd) * 100) / 100 }));
+  const SURGES = [['Tropical low', 0.5], ['Category 1–2 cyclone', 1.0], ['Category 3 cyclone', 2.0], ['Category 4–5 cyclone', 3.0]];
+  function tidePort() {
+    const g = state.geo;
+    if (!g) return null;
+    const c = [(g.north + g.south) / 2, (g.east + g.west) / 2];
+    let best = null;
+    for (const p of TIDE_PORTS) { const km = kmBetween([p.lat, p.lon], c); if (km < 150 && (!best || km < best.km)) best = { ...p, km }; }
+    return best;
+  }
+  function stormTideTotal() { return parseFloat($('tideM').value || 0) + parseFloat($('surgeM').value) + parseFloat($('setupM').value); }
+  function renderStormTide(fromTideChoice) {
+    const p = tidePort();
+    $('tidePort').innerHTML = p
+      ? `Nearest standard port: <strong>${escapeHtml(p.name)}</strong> (${Math.round(p.km)} km): high spring tide ${p.mhws.toFixed(2)} m, highest astronomical tide ${p.hat.toFixed(2)} m AHD (Maritime Safety Queensland).`
+      : 'No Queensland standard port within 150 km: enter the tide height for this coast (metres above sea level).';
+    if (fromTideChoice && p) {
+      const t = $('tideLevel').value;
+      $('tideM').value = (t === 'hat' ? p.hat : t === 'mhws' ? p.mhws : 0).toFixed(2);
+    } else if (fromTideChoice && $('tideLevel').value === 'msl') $('tideM').value = '0';
+    $('surgeOut').textContent = `${parseFloat($('surgeM').value).toFixed(1)} m`;
+    $('setupOut').textContent = `${parseFloat($('setupM').value).toFixed(1)} m`;
+    $('applyStormTide').textContent = `Set bay level to ${stormTideTotal().toFixed(2)} m`;
+    const box = $('surgePresets');
+    if (!box.childElementCount) {
+      box.innerHTML = SURGES.map(([n, m], i) => `<button type="button" class="btn small" data-surge="${i}">${n}<br><small>${m} m surge</small></button>`).join('');
+      box.querySelectorAll('[data-surge]').forEach((b) => b.addEventListener('click', () => { $('surgeM').value = SURGES[+b.dataset.surge][1]; renderStormTide(); applyStormTide(); }));
+    }
+  }
+  function applyStormTide() {
+    const v = Math.round(stormTideTotal() * 100) / 100;
+    ctl.bayLevel.max = Math.max(2.5, Math.ceil(v + 1));
+    ctl.bayLevel.value = v;
+    state.base = null;
+    syncOutputs();
+    runScenario();
+    status.stormTide = { bay: v, port: (tidePort() || {}).name || null };
+    return status.stormTide;
+  }
+  $('stormTide').addEventListener('toggle', () => { if ($('stormTide').open) renderStormTide(true); });
+  $('tideLevel').addEventListener('change', () => renderStormTide(true));
+  ['tideM', 'surgeM', 'setupM'].forEach((id) => $(id).addEventListener('input', () => renderStormTide()));
+  $('applyStormTide').addEventListener('click', applyStormTide);
+  window.__floodStormTide = (tide, surge, setup) => {
+    $('stormTide').open = true; $('tideLevel').value = tide || 'hat'; renderStormTide(true);
+    if (surge != null) $('surgeM').value = surge; if (setup != null) $('setupM').value = setup;
+    renderStormTide(); return applyStormTide();
+  };
+
   /* ---------- storm (flash flooding) controls */
   function renderStorm() {
     const mode = ctl.floodType.value, on = mode !== 'river';
@@ -3460,6 +3531,12 @@
     const rep = area.reportId && reports.find((r) => r.id === area.reportId);
     const repHtml = rep ? Array.from(rep.el.querySelectorAll('.reading, .classes, .warn-item')).map((el) => el.outerHTML).join('') : '';
     const sat = $('satCheck').dataset.key === String(state.areaKey) ? $('satCheck').innerHTML : '';
+    const impact = area.impact && !area.impact.error ? $('impactBox').innerHTML : '';
+    const recScores = area.recScores ? Object.entries(area.recScores).map(([id, html]) => {
+      const rec = RECORDED.find((r) => r.id === id) || (area.recorded || []).find((r) => r.id === id);
+      return `<h3>${escapeHtml(rec ? rec.name : id)}</h3>${html.replace(/<button[\s\S]*?<\/button>/g, '')}`;
+    }).join('') : '';
+    const storm = ctl.floodType.value !== 'river' ? `<p>${escapeHtml($('summaryLine').textContent)}</p><p>${$('stormSummary').innerHTML}</p>` : '';
     const g = state.geo, img = area.overlay && area.overlay._floodUrl;
     const w = window.open('', '_blank');
     if (!w) { say('Allow pop-ups to open the printable report.'); return false; }
@@ -3473,6 +3550,9 @@
       <h2>Result</h2><div class="stats">${$('stats').innerHTML}</div>
       <h2>Scenario</h2><table>${rows}${pts}</table>
       ${img ? `<h2>Flood extent</h2><div class="map"><img src="${img}" alt="Flood depth map"><p class="hint">Area ${g.south.toFixed(4)}° to ${g.north.toFixed(4)}° latitude, ${g.west.toFixed(4)}° to ${g.east.toFixed(4)}° longitude. Darker blue is deeper water.</p></div>` : ''}
+      ${storm ? `<h2>Storm</h2>${storm}` : ''}
+      ${impact ? `<h2>What's affected</h2>${impact}` : ''}
+      ${recScores ? `<h2>Accuracy against recorded floods</h2>${recScores}` : ''}
       ${repHtml ? `<h2>Gauge</h2>${repHtml}` : ''}
       ${sat ? `<h2>Satellite check</h2>${sat}` : ''}
       <h2>About this model</h2><p>${escapeHtml((state.areaMeta && state.areaMeta.source) || '')}</p>
@@ -3615,7 +3695,7 @@
     // buildings
     const nB = d.bx.length;
     const floorH = parseFloat($('floorHeight').value);
-    let bWet = 0, bDeep = 0, hWet = 0, overFloor = 0, workWet = 0;
+    let bWet = 0, bDeep = 0, hWet = 0, overFloor = 0, workWet = 0, damage = 0;
     const bCell = new Int32Array(nB), bFlood = new Uint8Array(nB);
     for (let i = 0; i < nB; i++) {
       const c = cellOf(d.by[i], d.bx[i]);
@@ -3627,8 +3707,9 @@
         if (d.isWork[i]) workWet++;
         if (z >= 0.5) bDeep++;
       }
-      if (z > floorH && z > 0) overFloor++;
+      if (z > floorH && z > 0) { overFloor++; damage += damageShare(z - floorH); }
     }
+    damage *= Math.max(0, parseFloat($('bldValue').value) || 0);
     // evacuation: dry roads still joined to the edge of the model area by
     // dry roads; dry buildings whose nearest road is cut off are isolated
     const net = d.net;
@@ -3716,8 +3797,21 @@
     const sitesHit = d.sites.map((s) => ({ ...s, depth: depthAt(cellOf(s.lat, s.lon)) })).filter((s) => s.depth >= 0.15).sort((x, y) => y.depth - x.depth);
     return {
       buildings: nB, bWet, bDeep, hWet, homesTagged: d.isHome.reduce((x, y) => x + y, 0), workWet, workTagged: d.isWork.reduce((x, y) => x + y, 0),
-      overFloor, floorH, isolatedB, peopleIsolated, cutEdges, islandEdges, people, cutKm, roadKm, worstRoads, sites: d.sites.length, sitesHit,
+      overFloor, floorH, damage, isolatedB, peopleIsolated, cutEdges, islandEdges, people, cutKm, roadKm, worstRoads, sites: d.sites.length, sitesHit,
     };
+  }
+  // Indicative damage: the EU Joint Research Centre's global depth–damage
+  // function for residential buildings in Oceania (Huizinga et al. 2017),
+  // share of a building's value lost against water depth (m), applied to the
+  // depth above the floor.
+  const JRC_OCEANIA_RES = [[0, 0], [0.5, 0.475], [1, 0.64], [1.5, 0.715], [2, 0.788], [3, 0.929], [4, 0.967], [5, 0.983], [6, 1]];
+  function damageShare(d) {
+    if (d <= 0) return 0;
+    for (let k = 1; k < JRC_OCEANIA_RES.length; k++) {
+      const [d1, f1] = JRC_OCEANIA_RES[k], [d0, f0] = JRC_OCEANIA_RES[k - 1];
+      if (d <= d1) return f0 + ((f1 - f0) * (d - d0)) / (d1 - d0);
+    }
+    return 1;
   }
   let impactLayer = null;
   function renderImpact() {
@@ -3730,7 +3824,7 @@
     const r = computeImpact(d);
     if (!r) return;
     status.impact = {
-      buildings: r.buildings, bWet: r.bWet, overFloor: r.overFloor, workWet: r.workWet, isolated: r.isolatedB,
+      buildings: r.buildings, bWet: r.bWet, overFloor: r.overFloor, workWet: r.workWet, isolated: r.isolatedB, damage: Math.round(r.damage),
       people: r.people == null ? null : Math.round(r.people), peopleIsolated: r.peopleIsolated == null ? null : Math.round(r.peopleIsolated),
       cutKm: Math.round(r.cutKm * 10) / 10, sites: r.sites, sitesHit: r.sitesHit.length,
     };
@@ -3741,7 +3835,9 @@
         <div class="stat"><div class="label">Roads cut</div><div class="v">${r.cutKm.toFixed(1)}<small>km</small></div></div>
         <div class="stat"><div class="label">Key sites flooded</div><div class="v">${r.sitesHit.length}<small> of ${r.sites}</small></div></div>
         <div class="stat"><div class="label">Water above floor</div><div class="v">${n(r.overFloor)}<small> buildings</small></div></div>
+        <div class="stat"><div class="label">Indicative damage</div><div class="v">${r.damage >= 1e6 ? `$${(r.damage / 1e6).toFixed(1)}<small>m</small>` : `$${n(r.damage / 1000)}<small>k</small>`}</div></div>
         <div class="stat"><div class="label">Cut off, still dry</div><div class="v">${n(r.isolatedB)}<small> buildings${r.peopleIsolated != null ? ` · ≈${n(r.peopleIsolated)} people` : ''}</small></div></div></div>
+      <p class="hint"><strong>Damage</strong> applies the EU Joint Research Centre's global depth–damage curve for homes in Oceania to the water above each building's floor, times the value per building you set: an order-of-magnitude guide, not an insurance or recovery estimate.</p>
       <p class="hint"><strong>Daytime:</strong> ${n(r.workWet)} flooded buildings are mapped as workplaces, shops, schools or public buildings${r.workTagged ? '' : ' (few buildings here are mapped by type)'}; the people figure counts residents, so daytime numbers in business areas will differ. <strong>Cut off</strong> means the building's nearest road is dry but no dry road leads out of the model area (orange on the map); flooded roads are red.</p>
       <p class="hint">Flooded means at least 15 cm of water at the building or site; ${n(r.bDeep)} buildings have more than 50 cm${r.homesTagged ? `; ${n(r.hWet)} of the flooded buildings are mapped as homes` : ''}. Roads are cut where water is over 30 cm deep.</p>
       ${r.worstRoads.length ? `<p><strong>Roads cut:</strong> ${r.worstRoads.map(([nm, km]) => `${escapeHtml(nm)} (${km < 1 ? `${Math.round(km * 1000)} m` : `${km.toFixed(1)} km`})`).join(', ')}</p>` : ''}
@@ -3776,6 +3872,7 @@
   $('impactBtn').addEventListener('click', () => countImpact());
   $('floorHeight').addEventListener('input', () => { $('floorHeightOut').textContent = `${parseFloat($('floorHeight').value).toFixed(1)} m`; renderImpact(); });
   $('showRoadImpact').addEventListener('change', () => renderImpact());
+  $('bldValue').addEventListener('change', () => renderImpact());
   window.__floodCountImpact = countImpact;
 
   /* ---------- accuracy: compare with recorded floods */
@@ -3795,6 +3892,30 @@
     { id: 'q2017l', name: '2017 flood line, Logan and Albert rivers (Qld)', url: `${QLD_FLOODLINES}/19` },
     { id: 'q2019w', name: '2019 flood lines, western Queensland', url: `${QLD_FLOODLINES}/20` },
   ];
+  // Victoria's flood history (DEECA, CC BY 4.0) holds many events in one
+  // layer: features in the model area are grouped into one entry per event.
+  const VIC_WFS = 'https://opendata.maps.vic.gov.au/geoserver/wfs';
+  const VIC_LAYER = 'open-data-platform:vic_flood_history_public';
+  const toRings = (geom) => (!geom ? null : geom.type === 'Polygon' ? geom.coordinates : geom.type === 'MultiPolygon' ? geom.coordinates.flat() : null);
+  async function victorianRecorded(g) {
+    if (g.south > -33.9 || g.north < -39.3 || g.east < 140.9 || g.west > 150.1) return [];   // outside Victoria
+    const p = new URLSearchParams({ service: 'WFS', version: '1.0.0', request: 'GetFeature', typeName: VIC_LAYER, outputFormat: 'application/json', srsName: 'EPSG:4326', maxFeatures: '3000', bbox: `${g.west},${g.south},${g.east},${g.north}` });
+    const j = await (await fetch(`${VIC_WFS}?${p}`)).json();
+    const feats = (j.features || []).filter((f) => toRings(f.geometry));
+    if (!feats.length) return [];
+    const keys = Object.keys(feats[0].properties || {});
+    const key = keys.find((k) => /event/i.test(k)) || keys.find((k) => /(^|_)name/i.test(k)) || keys.find((k) => /year|date/i.test(k));
+    const groups = new Map();
+    for (const f of feats) {
+      const v = key ? String(f.properties[key] ?? 'unnamed event') : 'recorded floods';
+      if (!groups.has(v)) groups.set(v, []);
+      groups.get(v).push({ geometry: { rings: toRings(f.geometry) } });
+    }
+    status.vicRecorded = { key, events: groups.size, features: feats.length };
+    return Array.from(groups.entries()).sort((x, y) => y[1].length - x[1].length).slice(0, 12)
+      .map(([v, fs], i) => ({ id: `vic${i}`, name: `Victoria: ${v} (Victorian flood history)`, features: fs }));
+  }
+
   async function findRecorded() {
     const g = state.geo, area = state.areaKey && areaReg.get(state.areaKey);
     if (!g || !area) return [];
@@ -3809,6 +3930,7 @@
       } catch (err) { /* service down: skip */ }
     }));
     found.sort((x, y) => RECORDED.indexOf(x) - RECORDED.indexOf(y));
+    try { found.push(...await victorianRecorded(g)); } catch (err) { /* service unavailable */ }
     area.recorded = found;
     status.recorded = found.map((r) => r.id);
     renderRecorded();
@@ -3817,7 +3939,7 @@
   function renderRecorded() {
     const box = $('recordedBox'), area = state.areaKey && areaReg.get(state.areaKey);
     if (!box || !area || !area.recorded) { if (box) box.innerHTML = ''; return; }
-    if (!area.recorded.length) { box.innerHTML = '<p class="hint">No recorded flood outlines are published for this area in the sources the app knows (Queensland flood lines and Brisbane City Council).</p>'; return; }
+    if (!area.recorded.length) { box.innerHTML = '<p class="hint">No recorded flood outlines are published for this area in the sources the app knows (Queensland flood lines, Brisbane City Council and Victoria\'s flood history). New South Wales doesn\'t publish its recorded flood outlines as an open map service.</p>'; return; }
     box.innerHTML = area.recorded.map((r) => `<div class="rec-row"><span>${escapeHtml(r.name)}</span>
       <span class="downloads"><button type="button" class="btn small" data-rec-score="${r.id}">Score this scenario</button><button type="button" class="btn small" data-rec-fit="${r.id}">Find the matching level</button></span>
       <div class="rec-out" id="recOut-${r.id}">${area.recScores && area.recScores[r.id] ? area.recScores[r.id] : ''}</div></div>`).join('')
@@ -3830,7 +3952,7 @@
     area.recMasks = area.recMasks || {};
     const key = `${rec.id}:${a.W}`;
     if (area.recMasks[key]) return area.recMasks[key];
-    const feats = await esriFeatures(rec.url, g, { simplify: (a.cell / 2) * degPerM });
+    const feats = rec.features || await esriFeatures(rec.url, g, { simplify: (a.cell / 2) * degPerM });
     const px = drawRings(feats, g, a.W, a.H, () => '#000');
     const flood = new Uint8Array(a.N);
     for (let c = 0; c < a.N; c++) flood[c] = px[4 * c + 3] > 127 ? 1 : 0;
@@ -3855,7 +3977,8 @@
   }
   const scoreText = (s, km2) => `<strong>Agreement ${Math.round(s.csi * 100)}/100.</strong> The scenario floods ${Math.round(s.captured * 100)}% of the recorded flood; ${Math.round(s.extra * 100)}% of what it floods nearby was dry in the record (${(s.fa * km2).toFixed(2)} km²).`;
   async function scoreRecorded(id) {
-    const rec = RECORDED.find((r) => r.id === id), area = state.areaKey && areaReg.get(state.areaKey);
+    const area = state.areaKey && areaReg.get(state.areaKey);
+    const rec = RECORDED.find((r) => r.id === id) || (area && (area.recorded || []).find((r) => r.id === id));
     if (!rec || !area || !state.run) return null;
     const out = $(`recOut-${id}`);
     if (out) out.innerHTML = '<p class="hint">Fetching the recorded outline…</p>';
@@ -3877,7 +4000,8 @@
   // Calibrate: try river levels at the gauge and keep the one whose flood
   // best matches the recorded outline.
   async function fitRecorded(id) {
-    const rec = RECORDED.find((r) => r.id === id), area = state.areaKey && areaReg.get(state.areaKey);
+    const area = state.areaKey && areaReg.get(state.areaKey);
+    const rec = RECORDED.find((r) => r.id === id) || (area && (area.recorded || []).find((r) => r.id === id));
     const a = state.a;
     if (!rec || !area || !a || state.gauge < 0) return null;
     const out = $(`recOut-${id}`);

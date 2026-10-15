@@ -141,6 +141,27 @@
         <input type="range" id="bayLevel" min="0" max="2.5" step="0.05">
         <p class="hint">Tide plus storm surge at the river mouth.</p>
       </div>
+      <details class="storm-tide" id="stormTide">
+        <summary>Build a storm tide</summary>
+        <p class="hint" id="tidePort"></p>
+        <div class="storm-row">
+          <label>Tide <select id="tideLevel" aria-label="Tide level">
+            <option value="msl">Mean sea level</option><option value="mhws">High spring tide (MHWS)</option><option value="hat" selected>Highest astronomical tide</option>
+          </select></label>
+          <label>Tide height <input type="number" id="tideM" step="0.05" value="1.5" aria-label="Tide height in metres above sea level"> m</label>
+        </div>
+        <div class="slider">
+          <div class="row"><label for="surgeM">Storm surge</label><output id="surgeOut">1.0 m</output></div>
+          <input type="range" id="surgeM" min="0" max="5" step="0.1" value="1">
+        </div>
+        <div class="class-btns" id="surgePresets"></div>
+        <div class="slider">
+          <div class="row"><label for="setupM">Wave setup</label><output id="setupOut">0.3 m</output></div>
+          <input type="range" id="setupM" min="0" max="1.5" step="0.1" value="0.3">
+        </div>
+        <div class="link-row"><button type="button" class="btn small" id="applyStormTide">Set bay level to 2.8 m</button></div>
+        <p class="hint">Storm tide = tide + surge + wave setup, in metres above sea level (AHD). The surge buttons are examples: real surge depends on the cyclone's track, speed and the shape of the coast and seabed. Queensland's mapped storm tide hazard areas are in Layers.</p>
+      </details>
     </fieldset>
 
     <fieldset id="levelPointsSet">
@@ -159,6 +180,7 @@
         <input type="range" id="floorHeight" min="0" max="3" step="0.1" value="0.3">
         <p class="hint">About 0.3 m for slab-on-ground homes; older Queensland and northern homes are often raised 1 to 2.5 m.</p>
       </div>
+      <label class="storm-row">Value per building (structure and contents) <span>$<input type="number" id="bldValue" min="0" step="10000" value="400000" aria-label="Value per building in dollars" style="width:110px"></span></label>
       <label class="check"><input type="checkbox" id="showRoadImpact" checked> Show flooded (red) and cut-off (orange) roads on the map</label>
       <div id="impactBox"></div>
     </fieldset>

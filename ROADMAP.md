@@ -28,10 +28,10 @@ would add, how it could be built from open data, and what to watch for.
   stream network) and add a time slider showing when water reaches each
   street and how long it stays. Needs hydrograph shapes: from Water Data
   Online history for real events, or a synthetic triangle for scenarios.
-- **Storm tide.** Combine Bureau tide predictions (or the published
-  highest astronomical tide by port) with a surge height for coastal models,
-  with cyclone presets for north Queensland. Watch the datum: tide tables
-  are relative to chart datum, not AHD.
+- **Storm tide beyond Queensland.** The storm tide builder fills in tides
+  for Queensland standard ports; other states' tidal planes (in AHD) would
+  extend it, and Bureau tide predictions would allow "this week's
+  highest tide".
 - **Design rainfall from the Bureau.** Storm mode currently offers example
   storms and links to the Bureau's design rainfall (IFD) tool. Fetching the
   IFD table for the model's location would give real "1% annual chance"
@@ -42,11 +42,11 @@ would add, how it could be built from open data, and what to watch for.
   in sealed areas, so small storms aren't overstated in sewered suburbs.
 - **Levees and flood gates.** Burn known levees (where states publish
   them) into the terrain, with a "levee fails" option.
-- **More recorded floods for the accuracy check.** Queensland flood lines
-  and Brisbane City Council outlines are built in. Candidates: NSW SES and
-  council flood studies (Northern Rivers 2022), Victorian Flood Database
-  extents, and Digital Earth Australia's satellite-observed water for
-  specific flood dates (cloud permitting).
+- **More recorded floods for the accuracy check.** Queensland flood lines,
+  Brisbane City Council outlines and Victoria's flood history are built in.
+  New South Wales doesn't publish recorded outlines as an open service
+  (Northern Rivers 2022 would be the priority); Digital Earth Australia's
+  satellite-observed water for specific flood dates is another option.
 - **Victoria's statewide flood extent** (1% chance), if it becomes
   available as an open map service.
 
@@ -65,8 +65,10 @@ height setting), daytime workplaces, and places cut off from a dry road out.
 - **Measured floor heights.** Councils hold surveyed floor levels for some
   floodplains; where any are published openly they would replace the
   single typical floor height.
-- **Damage estimates.** Australian depth–damage curves could turn
-  over-floor depths into indicative repair costs.
+- **Australian damage curves.** Damage currently uses the EU JRC global
+  curve for Oceania homes; the NSW residential flood damage curves (by
+  house type) or Geoscience Australia's vulnerability models would be
+  more local, if published as numbers.
 
 ## Data coverage
 
