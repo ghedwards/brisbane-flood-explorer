@@ -390,6 +390,11 @@ def main() -> int:
             lp1 = status().get("levelPoints", 0) or 0
             if lp1 != lp0 + 1:
                 failures.append(f"adding a level point failed: {lp0} -> {lp1}")
+            try:
+                sat = page.evaluate("window.__floodSatCheck()")
+            except Exception as e:
+                sat = {"ok": False, "error": str(e)[:200]}
+            note("notice" if sat and sat.get("ok") else "warning", f"Satellite check of the pinned model: {json.dumps(sat)}; LiDAR share {(status().get('local') or {}).get('lidar')}")
         wst = status().get("warnings")
         note("notice", f"Flood warnings in the app: {json.dumps(wst)}; gauges ringed: {status().get('warnedGauges')}")
 

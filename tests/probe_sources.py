@@ -26,6 +26,10 @@ PROBES = {
         "https://www.bom.gov.au/waterdata/services?service=kisters&type=QueryServices&format=json&request=getStationList&parameterType_name=Water%20Course%20Level&station_no=540198&returnfields=station_no,station_name",
     "GA DEM-H elevation (WCS GeoTIFF)":
         "https://services.ga.gov.au/gis/services/DEM_SRTM_1Second_Hydro_Enforced_2024/MapServer/WCSServer?service=WCS&version=1.0.0&request=GetCoverage&coverage=1&crs=EPSG:4326&bbox=" + BRIS + "&width=64&height=64&format=GeoTIFF",
+    "GA 5 m LiDAR elevation (WCS GeoTIFF)":
+        "https://services.ga.gov.au/gis/services/DEM_LiDAR_5m_2025/MapServer/WCSServer?service=WCS&version=1.0.0&request=GetCoverage&coverage=1&crs=EPSG:4326&bbox=" + BRIS + "&width=64&height=64&format=GeoTIFF",
+    "DEA water observations frequency (WCS GeoTIFF)":
+        "https://ows.dea.ga.gov.au/?service=WCS&version=1.0.0&request=GetCoverage&coverage=ga_ls_wo_fq_myear_3&measurements=frequency&crs=EPSG:4326&bbox=" + BRIS + "&width=64&height=64&format=GeoTIFF",
     "Copernicus GLO-30 DEM (S3 COG range read)":
         "https://copernicus-dem-30m.s3.amazonaws.com/Copernicus_DSM_COG_10_S28_00_E153_00_DEM/Copernicus_DSM_COG_10_S28_00_E153_00_DEM.tif",
     "DEA Waterbodies (WFS)":

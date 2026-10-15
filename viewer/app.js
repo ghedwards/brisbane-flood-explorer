@@ -1581,8 +1581,10 @@
     const river = `<button type="button" class="btn${coastFirst ? '' : ' primary'}" data-model="model">Model river flooding</button>`;
     const coast = `<button type="button" class="btn${coastFirst ? ' primary' : ''}" data-model="modelcoast">Model coastal flooding</button>`;
     box.innerHTML = `<div class="place-row"><span class="pin-num" style="background:${color}">${u.n}</span><span>${escapeHtml(u.name)}</span></div>
-      <p class="hint">Model flooding around this ${u.r ? (u.r.kind === 'storage' ? 'dam' : 'gauge') : 'place'} from Geoscience Australia's elevation data (about 30 m). It keeps number ${u.n}.</p>
-      <div class="btns">${coastFirst ? coast + river : river + coast}</div>`;
+      <p class="hint">Model flooding around this ${u.r ? (u.r.kind === 'storage' ? 'dam' : 'gauge') : 'place'} from Geoscience Australia's elevation data. It keeps number ${u.n}.</p>
+      <div class="btns">${coastFirst ? coast + river : river + coast}</div>
+      <label class="check"><input type="checkbox" id="lidarPref"${useLidar() ? ' checked' : ''}> Use 5 m LiDAR elevation where it exists (bare earth; slower)</label>`;
+    $('lidarPref').addEventListener('change', (e) => { try { localStorage.setItem(LIDAR_PREF, e.target.checked ? 'on' : 'off'); } catch (err) { /* per visit only */ } });
     box.querySelectorAll('[data-model]').forEach((b) => b.addEventListener('click', () => placeAction(b.dataset.model, u.n)));
   }
 
@@ -2247,7 +2249,7 @@
   function showScenarioEmpty(empty) {
     scenarioEmpty = empty;
     Array.from($('scenarioEmpty').parentElement.children).forEach((el) => {
-      if (el.id !== 'scenarioEmpty' && el.id !== 'scenarioModel' && el.id !== 'edgeNote' && el.id !== 'levelPointsSet') el.hidden = empty || (el.id === 'eventsSet' && !state.eventsApply);
+      if (el.id !== 'scenarioEmpty' && el.id !== 'scenarioModel' && el.id !== 'edgeNote' && el.id !== 'levelPointsSet' && el.id !== 'checkSet') el.hidden = empty || (el.id === 'eventsSet' && !state.eventsApply);
     });
     if (empty) { $('stats').innerHTML = ''; state.edges = []; }
     renderEdgeNote();
@@ -2772,7 +2774,10 @@
     if (!set) return;
     const local = state.a && state.geo;
     set.hidden = !local || scenarioEmpty;
+    $('checkSet').hidden = set.hidden;
     if (set.hidden) return;
+    const sc = $('satCheck');
+    if (sc.dataset.key && sc.dataset.key !== String(state.areaKey)) { sc.innerHTML = ''; sc.dataset.key = ''; }
     const inside = gaugesInModel(), withZero = inside.filter((f) => { const c = classFor(f.properties); return c && c.zero != null; });
     const withClass = inside.filter((f) => classFor(f.properties));
     let ch = '';
@@ -2889,14 +2894,79 @@
   }
   window.__floodAddLevelPoint = (lat, lon) => addLevelPointAt({ lat, lng: lon });
 
+  // Compare the model's flood with Digital Earth Australia's record of how
+  // often satellites have seen water at each spot (Landsat, 1987 on).
+  const DEA_WCS = 'https://ows.dea.ga.gov.au/';
+  async function compareWithSatellite() {
+    const a = state.a, g = state.geo, run = state.run, key = state.areaKey;
+    const box = $('satCheck');
+    if (!a || !g || !run) return null;
+    box.dataset.key = String(key);
+    box.innerHTML = '<p class="hint">Fetching the satellite water record for this area…</p>';
+    const W = Math.min(a.W, 1000), H = Math.round(W * a.H / a.W);
+    const url = `${DEA_WCS}?service=WCS&version=1.0.0&request=GetCoverage&coverage=ga_ls_wo_fq_myear_3&measurements=frequency`
+      + `&crs=EPSG:4326&bbox=${g.west},${g.south},${g.east},${g.north}&width=${W}&height=${H}&format=GeoTIFF`;
+    let freq, fw, fh;
+    try {
+      const r = await fetch(url);
+      if (!r.ok) throw new Error(`the satellite service returned ${r.status}`);
+      const buf = await r.arrayBuffer();
+      try { const t = F.parseSimpleTiff(buf); freq = t.data; fw = t.W; fh = t.H; } catch (err) {
+        await loadGeoTiffLib();
+        const img = await (await window.GeoTIFF.fromArrayBuffer(buf)).getImage();
+        fw = img.getWidth(); fh = img.getHeight();
+        freq = (await img.readRasters({ samples: [0] }))[0];
+      }
+    } catch (err) {
+      box.innerHTML = `<p class="hint">Couldn't fetch the satellite record: ${escapeHtml(err.message || String(err))}.</p>`;
+      status.satCheck = { ok: false, error: String(err.message || err) };
+      return status.satCheck;
+    }
+    if (state.areaKey !== key) return null;
+    // compare on the satellite grid: "seen wet" = water in at least 1% of
+    // clear observations, ignoring the sea and permanent water (over 80%)
+    let sat = 0, mod = 0, hit = 0, perm = 0;
+    for (let y = 0; y < fh; y++) {
+      const ym = Math.min(a.H - 1, Math.floor(((y + 0.5) / fh) * a.H));
+      for (let x = 0; x < fw; x++) {
+        const f = freq[y * fw + x];
+        const xm = Math.min(a.W - 1, Math.floor(((x + 0.5) / fw) * a.W));
+        const c = ym * a.W + xm;
+        if (a.ocean && a.ocean[c]) continue;
+        if (Number.isFinite(f) && f > 0.8) { perm++; continue; }
+        const s0 = Number.isFinite(f) && f >= 0.01 && f <= 1, m0 = run.wet[c] === 1;
+        if (s0) sat++;
+        if (m0) mod++;
+        if (s0 && m0) hit++;
+      }
+    }
+    const px = (g.east - g.west) * 111.32 * Math.cos(((g.north + g.south) / 2) * Math.PI / 180) * (g.north - g.south) * 110.574 / (fw * fh);
+    const km = (n) => `${(n * px).toFixed(1)} km²`;
+    const pct = (x, y) => (y ? `${Math.round((100 * x) / y)}%` : '–');
+    const csi = sat + mod - hit ? hit / (sat + mod - hit) : 0;
+    status.satCheck = { ok: true, sat, mod, hit, csi: Math.round(csi * 100) / 100 };
+    box.innerHTML = `<div class="stats-mini">
+      <p><strong>${pct(hit, sat)}</strong> of the land satellites have seen under water (${km(sat)}) is flooded in this scenario.</p>
+      <p><strong>${pct(hit, mod)}</strong> of this scenario's flood (${km(mod)}) is land satellites have seen under water.</p>
+      <p>Agreement score <strong>${Math.round(csi * 100)}</strong>/100 (overlap ÷ either).</p></div>
+      <p class="hint">Satellite record: Digital Earth Australia water observations, Landsat 1987 to now, counting land seen wet in at least 1% of clear passes and leaving out permanent water and the sea. Clouds hide many floods' peaks, and the record mixes many events, so a perfect match isn't expected: low first figure means the scenario is smaller than past floods; low second figure means it floods land that hasn't been seen wet.</p>`;
+    return status.satCheck;
+  }
+  $('satCheckBtn').addEventListener('click', () => compareWithSatellite());
+  window.__floodSatCheck = compareWithSatellite;
+
   /* ---------- on-demand flood modelling */
 
-  async function fetchDemWindow(lat, lon, halfKm, cellM) {
+  const windowBox = (lat, lon, halfKm) => {
     const dLat = (halfKm * 1000) / 110574;
     const dLon = (halfKm * 1000) / (111320 * Math.cos((lat * Math.PI) / 180));
-    const w = lon - dLon, e = lon + dLon, s = lat - dLat, n = lat + dLat;
-    const W = Math.round((2 * halfKm * 1000) / cellM), H = W;
-    const url = `${DEMH_WCS}?service=WCS&version=1.0.0&request=GetCoverage&coverage=1&crs=EPSG:4326`
+    return [lon - dLon, lat - dLat, lon + dLon, lat + dLat];
+  };
+
+  // Read one GeoTIFF window from a GA elevation WCS.
+  async function fetchRaster(base, box, W, H) {
+    const [w, s, e, n] = box;
+    const url = `${base}?service=WCS&version=1.0.0&request=GetCoverage&coverage=1&crs=EPSG:4326`
       + `&bbox=${w.toFixed(6)},${s.toFixed(6)},${e.toFixed(6)},${n.toFixed(6)}&width=${W}&height=${H}&format=GeoTIFF`;
     // GA's service occasionally drops a request (its error replies carry no
     // CORS header, so the browser reports a network failure): try again
@@ -2924,6 +2994,13 @@
       nd = img.getGDALNoData();
       try { tiffBounds = img.getBoundingBox(); } catch (e2) { tiffBounds = null; }
     }
+    return { iw, ih, data, nd, tiffBounds };
+  }
+
+  async function fetchDemWindow(lat, lon, halfKm, cellM) {
+    const [w, s, e, n] = windowBox(lat, lon, halfKm);
+    const W = Math.round((2 * halfKm * 1000) / cellM), H = W;
+    const { iw, ih, data, nd, tiffBounds } = await fetchRaster(DEMH_WCS, [w, s, e, n], W, H);
     const dem = new Float32Array(iw * ih), valid = new Uint8Array(iw * ih);
     let land = 0;
     for (let i = 0; i < iw * ih; i++) {
@@ -2938,6 +3015,38 @@
     if (tiffBounds && tiffBounds.length === 4 && Math.abs(tiffBounds[0] - w) < 0.05 && Math.abs(tiffBounds[3] - n) < 0.05) bounds = tiffBounds;
     const cell = ((bounds[2] - bounds[0]) * 111320 * Math.cos((lat * Math.PI) / 180)) / iw;
     return { grid: { W: iw, H: ih, cell, dem, valid }, bounds };
+  }
+
+  // Geoscience Australia's 5 m bare-earth LiDAR elevation covers towns,
+  // the coast and the Murray-Darling floodplains. Where it covers enough of
+  // a model window it replaces DEM-H (gaps filled from DEM-H); it has no
+  // buildings or trees in it, unlike the 30 m model.
+  const LIDAR_WCS = 'https://services.ga.gov.au/gis/services/DEM_LiDAR_5m_2025/MapServer/WCSServer';
+  const LIDAR_PREF = 'floodExplorer.lidar';
+  const useLidar = () => { try { return localStorage.getItem(LIDAR_PREF) !== 'off'; } catch (e) { return true; } };
+  async function withLidar(grid, bounds, halfKm) {
+    const cellL = halfKm <= 10 ? 15 : grid.cell;          // 15 m for 20 km models
+    const W = Math.round((bounds[2] - bounds[0]) * 111320 * Math.cos((((bounds[1] + bounds[3]) / 2) * Math.PI) / 180) / cellL);
+    const H = Math.round((bounds[3] - bounds[1]) * 110574 / cellL);
+    const r = await fetchRaster(LIDAR_WCS, bounds, W, H);
+    const { iw, ih, data, nd } = r;
+    const N = iw * ih, dem = new Float32Array(N), valid = new Uint8Array(N);
+    let have = 0;
+    for (let y = 0; y < ih; y++) {
+      const yd = Math.min(grid.H - 1, Math.floor(((y + 0.5) / ih) * grid.H));
+      for (let x = 0; x < iw; x++) {
+        const i = y * iw + x, v = data[i];
+        if (Number.isFinite(v) && v !== nd && v > -100 && v < 9000) { dem[i] = v; have++; } else {
+          const xd = Math.min(grid.W - 1, Math.floor(((x + 0.5) / iw) * grid.W));
+          dem[i] = grid.dem[yd * grid.W + xd];
+        }
+        valid[i] = 1;
+      }
+    }
+    const share = have / N;
+    if (share < 0.2) return { grid, share };
+    const cell = ((bounds[2] - bounds[0]) * 111320 * Math.cos((((bounds[1] + bounds[3]) / 2) * Math.PI) / 180)) / iw;
+    return { grid: { W: iw, H: ih, cell, dem, valid }, share };
   }
 
   async function modelHere(lat, lon, opts) {
@@ -2959,7 +3068,17 @@
         }
       }
       if (!got) throw lastErr || new Error('no elevation data');
-      const { grid, bounds } = got;
+      let { grid } = got;
+      const { bounds } = got;
+      let lidarShare = 0;
+      if (useLidar() && o.lidar !== false) {
+        setBusy(true, 'Checking for LiDAR elevation here…');
+        try {
+          const l = await withLidar(grid, bounds, H0);
+          lidarShare = l.share;
+          if (l.share >= 0.2) grid = l.grid;
+        } catch (err) { lidarShare = -1; /* service unavailable: keep DEM-H */ }
+      }
       setBusy(true, 'Working out how water flows here…');
       await nextFrame();
       const col = Math.round(((lon - bounds[0]) / (bounds[2] - bounds[0])) * grid.W);
@@ -2971,7 +3090,10 @@
         id: 'local', areaKey: key, local: true, kind: o.kind, name: o.name, bounds_lonlat: bounds, reportId: o.reportId || null, presetId: o.presetId || null, pinN: o.pinN != null ? o.pinN : null,
         keepN: o.keepN != null ? o.keepN : null, halfKm: o.halfKm || 10, gaugeLatLon: [lat, lon], centerLatLon: o.center || [lat, lon],
         gauge: { col, row }, streamAreaKm2: o.streamAreaKm2 || Math.max(0.5, Math.min(4, (grid.W * grid.H * grid.cell * grid.cell) / 1e6 * 0.004)),
-        source: 'Terrain: Geoscience Australia 1-second (about 30 m) hydrologically enforced elevation model (DEM-H), CC BY 4.0, read live from GA.',
+        lidarShare,
+        source: lidarShare >= 0.2
+          ? `Terrain: Geoscience Australia 5 m LiDAR elevation (bare earth) for ${Math.round(lidarShare * 100)}% of this area, resampled to ${Math.round(grid.cell)} m, with the 1-second DEM-H filling the rest; CC BY 4.0, read live from GA.`
+          : 'Terrain: Geoscience Australia 1-second (about 30 m) hydrologically enforced elevation model (DEM-H), CC BY 4.0, read live from GA. No LiDAR covers this area.',
       };
       addModelledOption(key, o.name);
       $('area').value = key;
@@ -2983,7 +3105,7 @@
         syncOutputs();
         runScenario();
       }
-      status.local = { ok: true, key, W: grid.W, H: grid.H, cell: Math.round(grid.cell), ms: Math.round(performance.now() - t0), kind: o.kind, km: 2 * (o.halfKm || 10) };
+      status.local = { ok: true, key, W: grid.W, H: grid.H, cell: Math.round(grid.cell), ms: Math.round(performance.now() - t0), kind: o.kind, km: 2 * (o.halfKm || 10), lidar: Math.round(lidarShare * 100) / 100 };
       openPanel('panel-scenario');
       if (!o.replaceKey) say(o.kind === 'coast'
         ? 'Coastal model ready. Set the bay level and sea-level rise in Scenario.'
