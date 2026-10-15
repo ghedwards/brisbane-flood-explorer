@@ -2323,7 +2323,8 @@
   function onNationalClick(e) {
     const { lat, lng } = e.latlng;
     const near = nearestNamed(lat, lng, 25);
-    spotPopup(e.latlng, `<span class="spot-coord">${lat.toFixed(4)}, ${lng.toFixed(4)}</span>
+    const coord = `${Math.abs(lat).toFixed(4)}° ${lat < 0 ? 'S' : 'N'}, ${Math.abs(lng).toFixed(4)}° ${lng < 0 ? 'W' : 'E'}`;
+    spotPopup(e.latlng, `<span class="spot-coord">${coord}</span>
       ${near ? `<span class="spot-near">${near.km.toFixed(1)} km from ${escapeHtml(near.f.properties.name)}</span>` : ''}`,
     'Add as a place', () => addPin(lat, lng));
   }
