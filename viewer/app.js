@@ -1175,7 +1175,6 @@
   const areaReg = new Map();
   let localCount = 0;
   let geoToken = 0;   // bumped whenever the active area changes
-  const MAX_AREAS = 6;
   const CTL_KEYS = ['gaugeLevel', 'bayLevel', 'slr', 'extra', 'grad', 'streamArea'];
 
   function areaFields() {
@@ -1189,9 +1188,13 @@
     };
   }
 
+  // Saving happens as an area is left. An inactive area keeps only its
+  // terrain, settings and the flood picture on the map; the flow analysis
+  // and flood grids (most of the memory) are rebuilt when it is reopened,
+  // so any number of areas can stay on the map.
   function saveActive() {
     const area = state.areaKey && areaReg.get(state.areaKey);
-    if (area) Object.assign(area, areaFields());
+    if (area) Object.assign(area, areaFields(), { a: null, base: null, run: null, terrain: null });
   }
 
   function ensureArea(key) {
@@ -1213,12 +1216,6 @@
       areaReg.set(key, area);
       selectedNum = area.n;
       if (hiddenNums.has(area.n)) setPlaceHidden(area.n, false);
-      // keep memory in check: drop the oldest inactive area
-      if (areaReg.size > MAX_AREAS) {
-        const oldest = Array.from(areaReg.keys()).find((k) => k !== key);
-        removeArea(oldest, { quiet: true });
-        say(`Removed the oldest modelled area to make room (up to ${MAX_AREAS} at once).`);
-      }
     } else {
       area.overlay.setBounds(bounds);
     }
@@ -1301,7 +1298,13 @@
     syncOutputs();
     renderInfo();
     renderNotice();
-    if (state.run) { drawStats(scenario()); drawProfile(scenario()); }
+    if (!state.a && state.grid) {
+      // reopened: rebuild the flow analysis and rerun its scenario
+      state.a = F.analyse(state.grid, { streamAreaKm2: state.streamAreaKm2 });
+      state.terrain = terrainRGBA(state.a);
+      state.base = null;
+      runScenario();
+    } else if (state.run) { drawStats(scenario()); drawProfile(scenario()); }
     state.edges = state.run && state.a ? floodEdges(state.a, state.run) : [];
     renderEdgeNote();
     renderAreaList();
@@ -2223,7 +2226,6 @@
   // Reports are kept for every numbered place, but the panel shows one at a
   // time (like the flood Scenario): pick another from Places, its map pin, or
   // the ‹ › buttons. The Report button shows or hides the panel.
-  const MAX_REPORTS = 8;
   const reports = [];
   let activeReport = null;
 
@@ -2450,11 +2452,6 @@
     reports.push(r);
     selectedNum = num;
     $('reportBody').appendChild(el);
-    // keep at most MAX_REPORTS: drop the oldest that has no flood model
-    while (reports.length > MAX_REPORTS) {
-      const drop = reports.find((x) => x !== r && !areaForReport(x)) || reports.find((x) => x !== r);
-      closeReport(drop);
-    }
     selectPlace(r.n);
   }
   window.__floodOpenStorage = (index) => {
@@ -2715,11 +2712,11 @@
   window.__floodModelHere = modelHere;
 
   /* ---------- study an area: drag a box, pull in everything inside */
-  // Opens reports for the gauges and dams in the box, covers it with up to
-  // four flood models (each run from a gauge where there is one, or from a
+  // Opens reports for every gauge and dam in the box, covers the whole box
+  // with flood models (each run from a gauge where there is one, or from a
   // pinned spot), and switches on the state flood layer.
   let suppressClickUntil = 0;
-  const STUDY_MAX_MODELS = 4, STUDY_MAX_REPORTS = 6;
+  const STUDY_CONFIRM_MODELS = 12;   // ask before building more than this
   status.study = null;
 
   function setStudyMode(on) {
@@ -2773,16 +2770,13 @@
     const S = b.getSouth(), N = b.getNorth(), Wl = b.getWest(), E = b.getEast();
     const midLat = (S + N) / 2;
     const wKm = (E - Wl) * 111.32 * Math.cos(midLat * Math.PI / 180), hKm = (N - S) * 110.574;
-    // smallest model size that covers the box in at most four windows
+    // the finest model size that covers the box in a handful of windows;
+    // bigger boxes use the largest size and as many windows as they need
     let size = null, nx = 0, ny = 0;
     for (const [half, cell] of MODEL_SIZES) {
+      size = [half, cell];
       nx = Math.max(1, Math.ceil(wKm / (2 * half) - 0.05)); ny = Math.max(1, Math.ceil(hKm / (2 * half) - 0.05));
-      if (nx * ny <= STUDY_MAX_MODELS) { size = [half, cell]; break; }
-    }
-    if (!size) {
-      say(`That box is about ${Math.round(wKm)} × ${Math.round(hKm)} km. Draw one up to about 160 km across.`);
-      status.study = { ok: false, error: 'too big' };
-      return status.study;
+      if (nx * ny <= 4) break;
     }
     const inBox = (f) => { const [lo, la] = f.geometry.coordinates; return la >= S && la <= N && lo >= Wl && lo <= E; };
     const rank = { forecast: 0, information: 1, tide: 2, river: 3 };
@@ -2801,7 +2795,17 @@
       t.tide = gauges.find((f) => f.properties.kind === 'tide' && (() => { const [lo, la] = f.geometry.coordinates; return la >= t.s && la <= t.n && lo >= t.w && lo <= t.e; })()) || null;
       tiles.push(t);
     }
-    // a single window centred on the box (or on each tile)
+    // skip parts already covered by a model on the map
+    const covered = (t) => Array.from(areaReg.values()).some((a) => {
+      const bb = a.areaMeta && a.areaMeta.bounds_lonlat;
+      return bb && bb[0] <= t.w && bb[2] >= t.e && bb[1] <= t.s && bb[3] >= t.n;
+    });
+    const todo = tiles.filter((t) => !covered(t));
+    if (todo.length > STUDY_CONFIRM_MODELS
+      && !window.confirm(`This box needs ${todo.length} flood models (${2 * size[0]} km each), which takes a while and a lot of memory. Build them all?`)) {
+      status.study = { ok: false, error: 'cancelled', models: todo.length };
+      return status.study;
+    }
     const summary = { ok: true, km: 2 * size[0], tiles: tiles.length, models: 0, reports: 0, gauges: gauges.length, dams: dams.length, layers: [] };
     status.study = Object.assign({ running: true }, summary);
     state.lmap.fitBounds(b, { padding: [30, 30] });
@@ -2812,19 +2816,20 @@
       if (sl && sl.layer && !state.lmap.hasLayer(sl.layer)) { sl.layer.userOn = true; sl.layer.addTo(state.lmap); summary.layers.push(sl.name); }
     }
     if (summary.layers.length) { syncLayerLists(); renderOverlayLegend(); }
-    // reports: each tile's gauge first, then dams and other gauges
-    const want = [...tiles.map((t) => t.gauge || t.tide).filter(Boolean), ...dams, ...gauges.filter((f) => ['forecast', 'information', 'tide'].includes(f.properties.kind))];
+    // reports for every gauge and dam in the box, tile gauges first
+    const want = [...tiles.map((t) => t.gauge || t.tide).filter(Boolean), ...dams, ...gauges];
     const seen = new Set();
     for (const f of want) {
       const id = `${f.properties.kind}:${f.properties.id}`;
-      if (seen.has(id) || seen.size >= STUDY_MAX_REPORTS) continue;
+      if (seen.has(id)) continue;
       seen.add(id);
       if (!reports.some((r) => r.id === id)) summary.reports++;
       openReport(f);
     }
     // models, one per tile
-    for (const [k, t] of tiles.entries()) {
-      setBusy(true, `Modelling part ${k + 1} of ${tiles.length} of the area…`);
+    summary.models = tiles.length - todo.length;   // already covered
+    for (const [k, t] of todo.entries()) {
+      setBusy(true, `Modelling part ${k + 1} of ${todo.length} of the area…`);
       const src = t.gauge || t.tide;
       let ok;
       if (src) {
