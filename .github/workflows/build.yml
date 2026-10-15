@@ -47,7 +47,7 @@ jobs:
         run: pip install -r pipeline/requirements.txt
 
       - name: Test the data fetchers
-        run: python -m unittest tests/test_floodhub.py tests/test_national.py tests/test_council.py tests/test_floodinfo.py tests/test_events.py
+        run: python -m unittest tests/test_floodhub.py tests/test_national.py tests/test_council.py tests/test_floodinfo.py tests/test_events.py tests/test_osm.py
 
       # Terrain only needs rebuilding when the area or the pipeline changes.
       - name: Restore built terrain
@@ -136,10 +136,30 @@ jobs:
           mkdir -p cache
           python pipeline/fetch_levees.py cache/levees.geojson | tee levees.log
 
+      # OpenStreetMap buildings, roads and key sites for the presets, so
+      # impact counts don't depend on the busy Overpass service. Each run
+      # refreshes a few (missing first, then over 30 days old); the cache
+      # always restores the latest set.
+      - name: Restore OpenStreetMap copies
+        uses: actions/cache@v6
+        with:
+          path: cache/osm
+          key: osm-${{ github.run_id }}
+          restore-keys: osm-
+
+      - name: Refresh OpenStreetMap copies for the presets (a few per run)
+        continue-on-error: true
+        timeout-minutes: 30
+        run: |
+          python pipeline/fetch_osm.py viewer/app.js cache/osm --max 12 --days 30 | tee osm.log
+
       - name: Publish recorded floods and levees
         run: |
           [ -f cache/events.json ] && cp cache/events.json site/data/events.json || true
           [ -f cache/levees.geojson ] && cp cache/levees.geojson site/data/levees.geojson || true
+          if [ -f cache/osm/index.json ]; then mkdir -p site/data/osm && cp cache/osm/*.json site/data/osm/; fi
+          echo "::notice::$(grep -E '^OpenStreetMap copies' osm.log 2>/dev/null || echo 'OpenStreetMap copies: none')"
+          grep '^warning:' osm.log 2>/dev/null | head -3 | sed 's/^warning:/::warning::OpenStreetMap copy /' || true
           echo "::notice::$(grep -E '^Recorded floods' events.log 2>/dev/null || echo 'Recorded floods: from cache')"
           grep '^warning:' events.log 2>/dev/null | head -4 | sed 's/^warning:/::warning::Recorded flood /' || true
           echo "::notice::$(grep -E '^Levees' levees.log 2>/dev/null || echo 'Levees: from cache')"

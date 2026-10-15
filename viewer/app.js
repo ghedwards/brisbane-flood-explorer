@@ -3651,8 +3651,40 @@
     }
     throw last || new Error('OpenStreetMap service unavailable');
   }
+  // The build keeps copies of OpenStreetMap for the presets (data/osm/):
+  // used when one covers the whole model, so counts don't wait on Overpass
+  let osmIndex;
+  async function osmCopy(g) {
+    if (osmIndex === undefined) {
+      try { const r = await fetch('data/osm/index.json'); osmIndex = r.ok ? await r.json() : []; } catch (err) { osmIndex = []; }
+    }
+    const hit = (osmIndex || []).find((x) => x.bbox[0] <= g.south && x.bbox[1] <= g.west && x.bbox[2] >= g.north && x.bbox[3] >= g.east);
+    if (!hit) return null;
+    try {
+      const r = await fetch(`data/osm/${hit.id}.json`);
+      if (!r.ok) return null;
+      const d = await r.json();
+      const inBox = (lat, lon) => lat >= g.south && lat <= g.north && lon >= g.west && lon <= g.east;
+      const bx = [], by = [], isHome = [], isWork = [];
+      for (let i = 0; i < d.f.length; i++) {
+        const lon = d.b[2 * i], lat = d.b[2 * i + 1];
+        if (!inBox(lat, lon)) continue;
+        bx.push(lon); by.push(lat); isHome.push(d.f[i] & 1 ? 1 : 0); isWork.push(d.f[i] & 2 ? 1 : 0);
+      }
+      // roads with any point in the model (kept whole, so they join up)
+      const roads = [];
+      for (const [name, type, seq] of d.roads) {
+        if (!seq.some((k) => inBox(d.nodes[2 * k], d.nodes[2 * k + 1]))) continue;
+        roads.push({ name, type, pts: seq.map((k) => ({ lat: d.nodes[2 * k], lon: d.nodes[2 * k + 1] })), nodes: seq });
+      }
+      const sites = d.sites.filter((x) => inBox(x[2], x[3])).map(([name, kind, lat, lon]) => ({ name, kind, lat, lon }));
+      return { bx, by, isHome: Uint8Array.from(isHome), isWork: Uint8Array.from(isWork), roads, sites, copy: { id: hit.id, fetched: d.fetched } };
+    } catch (err) { return null; }
+  }
   async function loadImpactData(area) {
     const g = area.geo || state.geo;
+    const copy = await osmCopy(g);
+    if (copy) return finishImpactData(g, copy.bx, copy.by, copy.isHome, copy.isWork, copy.roads, copy.sites, copy.copy);
     const bb = `${g.south},${g.west},${g.north},${g.east}`;
     // sections are separated by markers so ids-only blocks can be told apart
     const mark = (n) => `make marker name="${n}";out;`;
@@ -3681,6 +3713,9 @@
     }
     const isHome = new Uint8Array(bx.length), isWork = new Uint8Array(bx.length);
     for (const [id, i] of bIdx) { if (homes.has(id)) isHome[i] = 1; if (work.has(id)) isWork[i] = 1; }
+    return finishImpactData(g, bx, by, isHome, isWork, roads, sites, null);
+  }
+  async function finishImpactData(g, bx, by, isHome, isWork, roads, sites, copy) {
     // road network: nodes shared between ways join them
     const nodeIdx = new Map(), nlat = [], nlon = [], edges = [];
     roads.forEach((rd, ri) => {
@@ -3701,7 +3736,7 @@
       const key = feats.length && Object.keys(feats[0].attributes || {}).find((k) => /^tot_p_p$/i.test(k));
       if (key) sa1 = { feats, pop: feats.map((f) => Number(f.attributes[key]) || 0) };
     } catch (err) { sa1 = null; }
-    return { bx: Float64Array.from(bx), by: Float64Array.from(by), isHome, isWork, roads, net, sites, sa1, fetched: Date.now() };
+    return { bx: Float64Array.from(bx), by: Float64Array.from(by), isHome, isWork, roads, net, sites, sa1, fetched: copy ? Date.parse(copy.fetched) : Date.now(), copy };
   }
   function cellOf(lat, lon) {
     const g = state.geo, a = state.a;
@@ -3857,6 +3892,7 @@
       buildings: r.buildings, bWet: r.bWet, overFloor: r.overFloor, workWet: r.workWet, isolated: r.isolatedB, damage: Math.round(r.damage),
       people: r.people == null ? null : Math.round(r.people), peopleIsolated: r.peopleIsolated == null ? null : Math.round(r.peopleIsolated),
       cutKm: Math.round(r.cutKm * 10) / 10, sites: r.sites, sitesHit: r.sitesHit.length,
+      source: d.copy ? `copy:${d.copy.id}` : 'live',
     };
     const n = (x) => Math.round(x).toLocaleString('en-AU');
     box.innerHTML = `<div class="stats">
@@ -3872,7 +3908,7 @@
       <p class="hint">Flooded means at least 15 cm of water at the building or site; ${n(r.bDeep)} buildings have more than 50 cm${r.homesTagged ? `; ${n(r.hWet)} of the flooded buildings are mapped as homes` : ''}. Roads are cut where water is over 30 cm deep.</p>
       ${r.worstRoads.length ? `<p><strong>Roads cut:</strong> ${r.worstRoads.map(([nm, km]) => `${escapeHtml(nm)} (${km < 1 ? `${Math.round(km * 1000)} m` : `${km.toFixed(1)} km`})`).join(', ')}</p>` : ''}
       ${r.sitesHit.length ? `<p><strong>Key sites:</strong> ${r.sitesHit.slice(0, 12).map((s) => `${escapeHtml(s.name)} <small>(${s.kind.toLowerCase()}, ${s.depth.toFixed(1)} m)</small>`).join('; ')}${r.sitesHit.length > 12 ? ` and ${r.sitesHit.length - 12} more` : ''}</p>` : ''}
-      <p class="hint">Buildings, roads and sites: © OpenStreetMap contributors (ODbL), complete only where mapped. People: ABS 2021 Census by SA1, spread across each area's buildings${r.people == null ? ' (not available here right now)' : ''}. Estimates for screening only.</p>`;
+      <p class="hint">Buildings, roads and sites: © OpenStreetMap contributors (ODbL), complete only where mapped${d.copy ? ` (the site's copy from ${escapeHtml(new Date(d.copy.fetched).toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' }))})` : ''}. People: ABS 2021 Census by SA1, spread across each area's buildings${r.people == null ? ' (not available here right now)' : ''}. Estimates for screening only.</p>`;
     // mark flooded key sites, cut roads and cut-off roads on the map
     if (state.lmap) {
       if (!impactLayer) impactLayer = window.L.layerGroup().addTo(state.lmap);
