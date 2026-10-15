@@ -16,7 +16,7 @@ URL = sys.argv[1] if len(sys.argv) > 1 else "http://localhost:8000/"
 
 
 KEY = []          # key results, shown together in one annotation at the end
-KEY_WORDS = ("Recorded flood over time", "Flood over time", "Levees", "Storm tide", "Presets checked", "Recorded floods", "Best match", "Impact", "Storm", "Joined", "Share link", "Satellite check",
+KEY_WORDS = ("Sea reached", "Recorded flood over time", "Flood over time", "Levees", "Storm tide", "Presets checked", "Recorded floods", "Best match", "Impact", "Storm", "Joined", "Share link", "Satellite check",
              "Presets anchored", "Presets on LiDAR", "Phone Layers", "Council layer", "Downloads", "Rain radar",
              "Address search", "Flood warnings", "Echuca", "Extended model", "Area study")
 
@@ -616,6 +616,7 @@ def main() -> int:
         if which != "all":
             presets = [x for x in presets if x["id"] in quick]
         note("notice", f"Presets checked: {len(presets)} ({which})")
+        seas = []
         for pre in presets:
             before = (status().get("local") or {}).get("key")
             page.select_option("#area", f"preset:{pre['id']}")
@@ -648,6 +649,13 @@ def main() -> int:
                 if not (dl and dl.get("levees", 0) >= 1 and ff and ff.get("failed", 0) >= 1):
                     failures.append(f"levee tools failed: {fd} / {dl} / {ff}")
                 page.screenshot(path="smoke-levees.png")
+            if loc.get("ok"):
+                sea = page.evaluate("window.__floodSeaInfo ? window.__floodSeaInfo() : null")
+                seas.append(f"{pre['id']}: {json.dumps(sea)}")
+                if pre["id"] in ("goldcoast", "carnarvon") and sea and not sea.get("hasSea"):
+                    failures.append(f"tides not offered on the coast at {pre['id']}: {sea}")
+                if pre["id"] in ("echuca", "lismore") and sea and sea.get("hasSea"):
+                    failures.append(f"tides offered inland at {pre['id']}: {sea}")
             if pre["id"] == "goldcoast" and loc.get("ok"):
                 tide = page.evaluate("window.__floodStormTide('hat', 2.0, 0.3)")
                 note("notice", f"Storm tide at Gold Coast: {json.dumps(tide)}")
@@ -674,6 +682,7 @@ def main() -> int:
                     page.screenshot(path="smoke-timeline-recorded.png")
                 else:
                     note("warning", "No recorded flood readings near Echuca (events.json missing or not matched)")
+        note("notice", "Sea reached below the gauge: " + " | ".join(seas))
         loose = [r["id"] for r in results if r.get("kind") == "river" and not ((r.get("anchor") or {}).get("gauge"))]
         anchored = [f"{r['id']}→{r['anchor']['gauge']} ({r['anchor']['km']} km)" for r in results if (r.get("anchor") or {}).get("gauge")]
         note("notice", f"Presets anchored to a BoM gauge: {len(anchored)}; not anchored: {', '.join(loose) or 'none'}")

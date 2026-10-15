@@ -4306,9 +4306,25 @@
   function hasSea() {
     const a = state.a;
     if (!a || !a.ocean) return false;
-    if (a.hasSea === undefined) { a.hasSea = false; for (let c = 0; c < a.N; c += 3) if (a.ocean[c]) { a.hasSea = true; break; } }
+    // the river below the gauge has to reach real sea (several metres of
+    // it, not a blank edge of the elevation tile)
+    const g = state.gauge >= 0 ? state.gauge : a.mainOutlet;
+    if (a.hasSeaFrom !== g) {
+      a.hasSeaFrom = g; a.hasSea = false;
+      let n = 0;
+      for (let c = g; c >= 0 && n < 50; c = a.rec[c]) if (a.ocean[c] && a.dem[c] < -0.5) n++;
+      a.hasSea = n >= 3;
+    }
     return a.hasSea;
   }
+  window.__floodSeaInfo = () => {
+    const a = state.a;
+    if (!a) return null;
+    let oc = 0, po = 0, pmin = Infinity, last = -1;
+    for (let c = 0; c < a.N; c++) if (a.ocean[c]) oc++;
+    for (let c = state.gauge >= 0 ? state.gauge : a.mainOutlet; c >= 0; c = a.rec[c]) { last = c; if (a.ocean[c]) { po++; pmin = Math.min(pmin, a.dem[c]); } }
+    return { hasSea: hasSea(), oceanCells: oc, cells: a.N, pathOcean: po, pathMin: Number.isFinite(pmin) ? +pmin.toFixed(2) : null, outletDem: last >= 0 ? +a.dem[last].toFixed(2) : null };
+  };
   function renderTideRow() {
     const row = $('tideRow');
     if (!row) return;
