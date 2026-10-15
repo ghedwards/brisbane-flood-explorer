@@ -4087,7 +4087,6 @@
   // where served), or are drawn by hand. They are burned into a copy of the
   // model's terrain (the original is kept as area.baseGrid), then the flow
   // analysis is rebuilt.
-  const VIC_LEVEES = 'open-data-platform:coastallevees';
   let defenceLayer = null, drawing = null, breachFor = null;
   const defs = () => { const a = state.areaKey && areaReg.get(state.areaKey); if (!a) return null; return (a.defences = a.defences || { levees: [], gates: [], allFail: false }); };
   const lineKm = (pts) => { let k = 0; for (let i = 1; i < pts.length; i++) k += kmBetween(pts[i - 1], pts[i]); return k; };
@@ -4133,17 +4132,6 @@
         found++;
       });
     } catch (e4) { /* no levee file */ }
-    // Victoria's coastal levees (DEECA), if the state map server provides them
-    if (g.south < -33.9 && g.north > -39.3 && g.east > 140.9 && g.west < 150.1) {
-      try {
-        const p = new URLSearchParams({ service: 'WFS', version: '1.0.0', request: 'GetFeature', typeName: VIC_LEVEES, outputFormat: 'application/json', srsName: 'EPSG:4326', maxFeatures: '500', bbox: `${g.west},${g.south},${g.east},${g.north}` });
-        const j = await (await fetch(`${VIC_WFS}?${p}`)).json();
-        (j.features || []).forEach((f, i) => {
-          const lines = f.geometry && (f.geometry.type === 'LineString' ? [f.geometry.coordinates] : f.geometry.type === 'MultiLineString' ? f.geometry.coordinates : []);
-          lines.forEach((ln, k) => { d.levees.push({ id: `vic${i}-${k}`, src: 'Victoria (coastal levees)', name: 'Coastal levee', pts: ln.map(([x, y]) => [y, x]), height: null, failed: false, breaches: [] }); found++; });
-        });
-      } catch (e3) { /* not served */ }
-    }
     status.defences = { levees: d.levees.length, gates: d.gates.length, found, gatesFound: gates, error: err };
     await applyDefences();
     return status.defences;

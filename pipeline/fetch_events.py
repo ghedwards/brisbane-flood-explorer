@@ -33,6 +33,25 @@ def km(lat1, lon1, lat2, lon2):
     return math.hypot(dx, dy)
 
 
+def candidates(ev, gauges):
+    """Gauges within 8 km, best first: named for the river or town, then
+    forecast before information gauges, then nearest."""
+    pat = re.compile(ev.get("match", "."), re.I)
+    out = []
+    for f in gauges:
+        p = f["properties"]
+        if not p.get("station") or p.get("kind") == "tide":
+            continue
+        lon, lat = f["geometry"]["coordinates"][:2]
+        d = km(ev["lat"], ev["lon"], lat, lon)
+        if d > 8:
+            continue
+        named = bool(pat.search(f"{p.get('name', '')} {p.get('basin', '')}"))
+        rank = {"forecast": 0, "information": 1}.get(p.get("kind"), 2)
+        out.append(((0 if named else 100) + rank * 3 + d, f, d))
+    return sorted(out, key=lambda x: x[0])
+
+
 def pick_gauge(ev, gauges):
     pat = re.compile(ev.get("match", "."), re.I)
     best = None
@@ -89,18 +108,23 @@ def hourly(points, start):
 
 def fetch_event(ev, gauges):
     out = {"id": ev["id"], "name": ev["name"], "lat": ev["lat"], "lon": ev["lon"]}
-    g = pick_gauge(ev, gauges)
-    if not g:
+    cands = candidates(ev, gauges)
+    if not cands:
         out["error"] = "no Bureau gauge with readings within 8 km"
         return out
-    _, f, d = g
+    # the first candidate with a water level series on Water Data Online
+    # (many Bureau flood gauges are not on it; nearby state gauges usually are)
+    ts = None
+    for _, f, d in cands[:8]:
+        ts = pick_series(f["properties"]["station"])
+        if ts:
+            break
+    if not ts:
+        out["error"] = f"none of the {min(8, len(cands))} gauges within 8 km has a water level series on Water Data Online"
+        return out
     p = f["properties"]
     lon, lat = f["geometry"]["coordinates"][:2]
     out["gauge"] = {"name": p.get("name"), "station": p.get("station"), "id": p.get("id"), "lat": lat, "lon": lon, "km": round(d, 2)}
-    ts = pick_series(p["station"])
-    if not ts:
-        out["error"] = "no water level series for this gauge"
-        return out
     ts_id, ts_name = ts
     out["ts_name"] = ts_name
     aest = dt.timezone(dt.timedelta(hours=10))

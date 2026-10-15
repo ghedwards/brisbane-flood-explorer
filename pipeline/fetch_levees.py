@@ -24,14 +24,23 @@ from pathlib import Path
 
 UA = {"User-Agent": "brisbane-flood-explorer (github.com/ghedwards/brisbane-flood-explorer)"}
 SEED = "https://datasets.seed.nsw.gov.au/api/3/action/package_search"
+DATANSW = "https://data.nsw.gov.au/data/api/3/action/package_search"
 VIC_WFS = "https://opendata.maps.vic.gov.au/geoserver/wfs"
-VIC_LAYER = "open-data-platform:coastallevees"
+VIC_LAYER = None   # looked up from the server's capabilities
 
 
 def get(url, timeout=90):
     req = urllib.request.Request(url, headers=UA)
     with urllib.request.urlopen(req, timeout=timeout) as r:
         return r.read()
+
+
+def get_json(url, timeout=90):
+    body = get(url, timeout)
+    try:
+        return json.loads(body)
+    except ValueError:
+        raise RuntimeError(f"not JSON: {body[:80]!r}") from None
 
 
 def round_line(coords):
@@ -76,8 +85,17 @@ def shapefile_lines(zbytes, name, source):
 def nsw_levees(notes):
     feats = []
     q = urllib.parse.urlencode({"q": "levee centreline", "rows": 100})
-    res = json.loads(get(f"{SEED}?{q}"))
-    pkgs = res.get("result", {}).get("results", [])
+    pkgs, why = None, []
+    for api in (SEED, DATANSW):   # SEED, or the NSW data portal that lists the same datasets
+        try:
+            pkgs = get_json(f"{api}?{q}").get("result", {}).get("results", [])
+            if pkgs:
+                notes.append(f"catalogue {api.split('/')[2]}: {len(pkgs)} datasets")
+                break
+        except Exception as e:  # noqa: BLE001
+            why.append(f"{api.split('/')[2]}: {str(e)[:70]}")
+    if not pkgs:
+        raise RuntimeError("; ".join(why) or "no levee datasets found")
     for pkg in pkgs:
         title = pkg.get("title", "")
         if "levee" not in title.lower():
@@ -99,9 +117,17 @@ def nsw_levees(notes):
 
 
 def vic_coastal(notes):
-    p = urllib.parse.urlencode({"service": "WFS", "version": "1.0.0", "request": "GetFeature", "typeName": VIC_LAYER,
+    # find the coastal levee layer's name in the server's list of layers
+    caps = get(f"{VIC_WFS}?service=WFS&version=1.0.0&request=GetCapabilities", timeout=180).decode("utf-8", "replace")
+    import re
+    names = [n for n in re.findall(r"<Name>([^<]*levee[^<]*)</Name>", caps, flags=re.I)]
+    if not names:
+        raise RuntimeError("no levee layer on the Victorian map server")
+    layer = next((n for n in names if "coast" in n.lower()), names[0])
+    notes.append(f"Victoria layer {layer}")
+    p = urllib.parse.urlencode({"service": "WFS", "version": "1.0.0", "request": "GetFeature", "typeName": layer,
                                 "outputFormat": "application/json", "srsName": "EPSG:4326", "maxFeatures": "20000"})
-    j = json.loads(get(f"{VIC_WFS}?{p}", timeout=120))
+    j = get_json(f"{VIC_WFS}?{p}", timeout=180)
     feats = []
     for f in j.get("features", []):
         g = f.get("geometry") or {}
