@@ -617,7 +617,8 @@
    * size), spreading to connected low land beside them; elsewhere runoff
    * concentrating downhill shows as overland flow where it is at least
    * 10 cm deep; and runoff fills dips in the ground (the gaps the
-   * depression-filled surface bridges) up to the volume draining into them.
+   * depression-filled surface bridges) up to the volume draining into them;
+   * dips over 5 m deep (quarries, dams, data gaps) are left out.
    * Pipes, culverts and timing are ignored, so small storms in sewered
    * areas are overstated.
    * Returns { wet, depth, level, kind (0 dry, 1 creek, 2 overland, 3 pond, 4 sea), summary }.
@@ -710,6 +711,9 @@
       for (const list of cells) {
         let accMax = 0, lo = Infinity, hi = -Infinity;
         for (const c of list) { if (acc[c] > accMax) accMax = acc[c]; if (dem[c] < lo) lo = dem[c]; if (filled[c] > hi) hi = filled[c]; }
+        // dips more than 5 m deep are quarries, dams or gaps in the data,
+        // not places a storm newly floods
+        if (hi - lo > (o.maxPondDepth ?? 5)) continue;
         const vol = (L) => { let v = 0; for (const c of list) if (L > dem[c]) v += Math.min(L, filled[c]) - dem[c]; return v * cellA; };
         const vin = ex * accMax * cellA;
         let L = hi;

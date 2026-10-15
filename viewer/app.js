@@ -2960,6 +2960,7 @@
     const set = $('levelPointsSet');
     if (!set) return;
     const local = state.a && state.geo;
+    status.levelPoints = (state.controls || []).length;
     set.hidden = !local || scenarioEmpty || ctl.floodType.value === 'flash';
     $('checkSet').hidden = !local || scenarioEmpty;
     $('impactSet').hidden = !local || scenarioEmpty;
@@ -2983,7 +2984,6 @@
     $('classLevels').innerHTML = ch;
     $('classLevels').querySelectorAll('[data-cls]').forEach((b) => b.addEventListener('click', () => applyGaugeLevels(b.dataset.cls)));
     const pts = state.controls || [];
-    status.levelPoints = pts.length;
     $('levelPoints').innerHTML = pts.map((p, i) => `<div class="level-point"><span>${escapeHtml(p.label || `Point ${i + 1}`)}</span>
       <input type="number" step="0.05" value="${p.level.toFixed(2)}" data-lp="${i}" aria-label="Water level at ${escapeHtml(p.label || `point ${i + 1}`)} in metres">
       <button type="button" class="icon-btn" data-lp-drop="${i}" aria-label="Remove this level point" title="Remove">×</button></div>`).join('');
