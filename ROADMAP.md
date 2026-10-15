@@ -40,11 +40,21 @@ would add, how it could be built from open data, and what to watch for.
 - **Stormwater in storm mode.** Subtract a typical pipe capacity (for
   example the 10% to 5% annual chance storm in urban areas) from runoff
   in sealed areas, so small storms aren't overstated in sewered suburbs.
-- **More levee data.** OpenStreetMap, the NSW levee audit shapefiles and
-  Victoria's coastal levees (where downloadable) are collected. Levee crest
-  heights from surveys would beat crests read from the terrain. Levee
-  overtopping fills the protected area to the river level without a volume
-  limit, so short overtopping is overstated.
+- **More levee data.** Levees come from OpenStreetMap and whatever
+  `pipeline/fetch_levees.py` collects. The NSW levee audit (about 130
+  datasets listed on data.nsw.gov.au) is found, but SEED refuses the
+  downloads from GitHub's servers (HTTP 403), and Victoria's open map
+  server has no levee layer. Options: run the script from a home or office
+  computer and commit `levees.geojson`, or ask DCCEEW NSW for an open
+  service. Levee crest heights from surveys would beat crests read from
+  the terrain. Overtopping fills the protected area to the river level
+  without a volume limit, so short overtopping is overstated.
+- **Recorded floods hour by hour.** `config/events.json` lists 17 floods;
+  the build fetches hourly gauge readings from Water Data Online for those
+  with a nearby station holding a level series for the dates. Lismore
+  2022 and Rockhampton 2017 have no such station (their flood gauges
+  aren't on Water Data Online); the Bureau's flood-warning gauge archive
+  would fill them, through the same access route as above.
 - **More recorded floods for the accuracy check.** Queensland flood lines,
   Brisbane City Council outlines and Victoria's flood history are built in.
   New South Wales doesn't publish recorded outlines as an open service

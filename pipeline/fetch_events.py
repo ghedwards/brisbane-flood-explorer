@@ -95,22 +95,27 @@ def nearby_stations(ev, limit=12):
     return [x[1] for x in sorted(out, key=lambda x: x[0])][:limit]
 
 
-def pick_series(station):
+def series_list(station):
+    """The station's water level series, finest first (merged before raw)."""
     rows = kiwis({"request": "getTimeseriesList", "station_no": station, "parametertype_name": "Water Course Level",
                   "returnfields": "ts_id,ts_name"})
     if not rows or not isinstance(rows, list) or len(rows) < 2:
-        return None
+        return []
     header, data = rows[0], rows[1:]
     i_id, i_nm = header.index("ts_id"), header.index("ts_name")
+    out = []
     for want in PREFERRED:
-        for r in data:
-            if want in str(r[i_nm]) and "Merged" in str(r[i_nm]):
-                return str(r[i_id]), str(r[i_nm])
-    for want in PREFERRED:
-        for r in data:
-            if want in str(r[i_nm]):
-                return str(r[i_id]), str(r[i_nm])
-    return None
+        for merged in (True, False):
+            for r in data:
+                nm = str(r[i_nm])
+                if want in nm and ("Merged" in nm) == merged and (str(r[i_id]), nm) not in out:
+                    out.append((str(r[i_id]), nm))
+    return out
+
+
+def pick_series(station):
+    got = series_list(station)
+    return got[0] if got else None
 
 
 def parse_time(s):
@@ -130,52 +135,52 @@ def hourly(points, start):
     return [[h, round(sum(vs) / len(vs), 3)] for h, vs in sorted(bins.items())]
 
 
-def fetch_event(ev, gauges):
-    out = {"id": ev["id"], "name": ev["name"], "lat": ev["lat"], "lon": ev["lon"]}
-    cands = candidates(ev, gauges)
-    if not cands:
-        out["error"] = "no Bureau gauge with readings within 8 km"
-        return out
-    # the first candidate with a water level series on Water Data Online
-    # (many Bureau flood gauges are not on it; nearby state gauges usually are)
-    ts = None
-    for _, f, d in cands[:8]:
-        ts = pick_series(f["properties"]["station"])
-        if ts:
-            break
-    if not ts:
-        # look for any Water Data Online station around the town instead
-        # (state-run gauges that aren't on the Bureau's flood gauge list)
-        f, d = None, None
-        for st in nearby_stations(ev):
-            ts = pick_series(st["station"])
-            if ts:
-                lon, lat = st["lon"], st["lat"]
-                f = {"properties": {"name": st["name"], "station": st["station"]}, "geometry": {"coordinates": [lon, lat]}}
-                d = km(ev["lat"], ev["lon"], lat, lon)
-                break
-    if not ts:
-        out["error"] = f"no water level series on Water Data Online at the {min(8, len(cands))} gauges or other stations within 8 km"
-        return out
-    p = f["properties"]
-    lon, lat = f["geometry"]["coordinates"][:2]
-    out["gauge"] = {"name": p.get("name"), "station": p.get("station"), "id": p.get("id"), "lat": lat, "lon": lon, "km": round(d, 2)}
-    ts_id, ts_name = ts
-    out["ts_name"] = ts_name
-    aest = dt.timezone(dt.timedelta(hours=10))
-    start = dt.datetime.fromisoformat(ev["start"]).replace(tzinfo=aest)
-    end = dt.datetime.fromisoformat(ev["end"]).replace(tzinfo=aest) + dt.timedelta(days=1)
+def readings(ts_id, start, end):
     res = kiwis({"request": "getTimeseriesValues", "ts_id": ts_id, "from": start.isoformat(), "to": end.isoformat(),
                  "returnfields": "Timestamp,Value"})
     entry = res[0] if isinstance(res, list) and res else res if isinstance(res, dict) else {}
-    series = hourly(entry.get("data") or [], start)
-    if len(series) < 6:
-        out["error"] = f"too few readings ({len(series)}) in the window"
-        return out
-    out["start"] = start.isoformat()
-    out["series"] = series
-    pk = max(series, key=lambda r: r[1])
-    out["peak"] = {"hours": pk[0], "level": pk[1]}
+    return hourly(entry.get("data") or [], start)
+
+
+def fetch_event(ev, gauges):
+    out = {"id": ev["id"], "name": ev["name"], "lat": ev["lat"], "lon": ev["lon"]}
+    aest = dt.timezone(dt.timedelta(hours=10))
+    start = dt.datetime.fromisoformat(ev["start"]).replace(tzinfo=aest)
+    end = dt.datetime.fromisoformat(ev["end"]).replace(tzinfo=aest) + dt.timedelta(days=1)
+    # Bureau flood gauges near the town first, then any other Water Data
+    # Online station near it (many flood gauges aren't on Water Data Online,
+    # and some series don't reach back to older floods)
+    stations = []
+    for _, f, d in candidates(ev, gauges)[:8]:
+        p = f["properties"]
+        lon, lat = f["geometry"]["coordinates"][:2]
+        stations.append({"name": p.get("name"), "station": p.get("station"), "id": p.get("id"), "lat": lat, "lon": lon, "km": round(d, 2)})
+    tried, with_series = 0, 0
+    for k in range(2):
+        if k == 1:
+            seen = {s_["station"] for s_ in stations}
+            stations = [dict(st, km=round(km(ev["lat"], ev["lon"], st["lat"], st["lon"]), 2))
+                        for st in nearby_stations(ev) if st["station"] not in seen]
+        for st in stations:
+            tried += 1
+            sl = series_list(st["station"])
+            with_series += bool(sl)
+            for ts_id, ts_name in sl[:4]:
+                series = readings(ts_id, start, end)
+                if len(series) >= 6:
+                    out["gauge"] = st
+                    out["ts_name"] = ts_name
+                    out["start"] = start.isoformat()
+                    out["series"] = series
+                    pk = max(series, key=lambda r: r[1])
+                    out["peak"] = {"hours": pk[0], "level": pk[1]}
+                    return out
+    if not tried:
+        out["error"] = "no gauge or Water Data Online station within 8 km"
+    elif not with_series:
+        out["error"] = f"none of the {tried} gauges and stations within 8 km has a water level series on Water Data Online"
+    else:
+        out["error"] = f"{with_series} of {tried} stations within 8 km have water levels, but none for these dates"
     return out
 
 
