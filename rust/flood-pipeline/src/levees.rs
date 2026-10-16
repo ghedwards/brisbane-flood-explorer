@@ -22,7 +22,7 @@ const VIC_WFS: &str = "https://opendata.maps.vic.gov.au/geoserver/wfs";
 pub type Get<'a> = &'a dyn Fn(&str, u64) -> R<Vec<u8>>;
 
 pub fn get(url: &str, timeout: u64) -> R<Vec<u8>> {
-    net::get(url, &[("Accept", "application/json, application/zip, */*")], timeout).map(|r| r.body).map_err(|e| format!("{}: {}", clip(url, 100), e))
+    net::get(url, &[("Accept", "application/json, application/zip, */*")], timeout).map(|r| r.body).map_err(|e| e.to_string())
 }
 
 fn get_json(g: Get, url: &str, timeout: u64) -> R<Value> {

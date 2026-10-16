@@ -8,6 +8,10 @@ on:
     branches: [main]
     paths: ["rust/flood-pipeline/**", "tests/compare_pipeline.py", ".github/workflows/pipeline-compare.yml"]
   workflow_dispatch:
+    inputs:
+      only:
+        description: "Steps to run, e.g. 'sea,dem' (empty: all)"
+        default: ""
 
 permissions:
   contents: read
@@ -44,6 +48,7 @@ jobs:
           mkdir -p ../cmp
 
       - name: National gauges
+        if: inputs.only == '' || inputs.only == null || contains(inputs.only, 'national') || contains(inputs.only, 'events') || contains(inputs.only, 'sea') || contains(inputs.only, 'ratings') || contains(inputs.only, 'wh')
         continue-on-error: true
         run: |
           python pipeline/fetch_national.py cmp/py/national > cmp/national-py.log 2>&1 &
@@ -52,6 +57,7 @@ jobs:
           for f in cmp/national-py.log cmp/national-rs.log; do echo "::notice::$f: $(grep -vE '^(tile |  no tile|note:|got:|warning:)' $f | grep . | tail -1 | cut -c1-500)"; done
           python tests/compare_pipeline.py cmp/py/national cmp/rs/national national
       - name: Flood classes and warnings
+        if: inputs.only == '' || inputs.only == null || contains(inputs.only, 'floodinfo')
         continue-on-error: true
         run: |
           python pipeline/fetch_floodinfo.py cmp/py/fi > cmp/fi-py.log 2>&1 &
@@ -60,6 +66,7 @@ jobs:
           for f in cmp/fi-py.log cmp/fi-rs.log; do echo "::notice::$f: $(grep -vE '^(tile |  no tile|note:|got:|warning:)' $f | grep . | tail -1 | cut -c1-500)"; done
           python tests/compare_pipeline.py cmp/py/fi cmp/rs/fi floodinfo
       - name: Recorded floods (first four events)
+        if: inputs.only == '' || inputs.only == null || contains(inputs.only, 'events') || contains(inputs.only, 'sea')
         continue-on-error: true
         run: |
           python -c "import json; c=json.load(open('config/events.json')); c['events']=c['events'][:4]; json.dump(c, open('cmp/events4.json','w'))"
@@ -70,15 +77,20 @@ jobs:
           for f in cmp/ev-py.log cmp/ev-rs.log; do echo "::notice::$f: $(grep -vE '^(tile |  no tile|note:|got:|warning:)' $f | grep . | tail -1 | cut -c1-500)"; done
           python tests/compare_pipeline.py cmp/py/ev cmp/rs/ev events
       - name: Sea levels (those floods)
+        if: inputs.only == '' || inputs.only == null || contains(inputs.only, 'sea')
         continue-on-error: true
         timeout-minutes: 20
         run: |
+          mkdir -p cmp/py/sea cmp/rs/sea
           python pipeline/fetch_sealevels.py cmp/py/ev/events.json cmp/py/sea/sea.json > cmp/sea-py.log 2>&1 &
           flood sealevels cmp/py/ev/events.json cmp/rs/sea/sea.json > cmp/sea-rs.log 2>&1 || true
           wait
           for f in cmp/sea-py.log cmp/sea-rs.log; do echo "::notice::$f: $(grep -vE '^(tile |  no tile|note:|got:|warning:)' $f | grep . | tail -1 | cut -c1-500)"; done
+          grep -hE '^(note|warning|got)' cmp/sea-py.log | head -4 | cut -c1-600 | sed 's/^/::notice::python /'
+          grep -hE '^(note|warning|got)' cmp/sea-rs.log | head -4 | cut -c1-600 | sed 's/^/::notice::rust /'
           python tests/compare_pipeline.py cmp/py/sea cmp/rs/sea sealevels
       - name: Ratings (20 gauges)
+        if: inputs.only == '' || inputs.only == null || contains(inputs.only, 'ratings')
         continue-on-error: true
         run: |
           G=cmp/py/national/gauges.geojson
@@ -88,6 +100,7 @@ jobs:
           for f in cmp/rt-py.log cmp/rt-rs.log; do echo "::notice::$f: $(grep -vE '^(tile |  no tile|note:|got:|warning:)' $f | grep . | tail -1 | cut -c1-500)"; done
           python tests/compare_pipeline.py cmp/py/rt cmp/rs/rt ratings
       - name: Tides
+        if: inputs.only == '' || inputs.only == null || contains(inputs.only, 'tides')
         continue-on-error: true
         run: |
           python pipeline/fetch_tides.py cmp/py/td/tides.json > cmp/td-py.log 2>&1 &
@@ -96,6 +109,7 @@ jobs:
           for f in cmp/td-py.log cmp/td-rs.log; do echo "::notice::$f: $(grep -vE '^(tile |  no tile|note:|got:|warning:)' $f | grep . | tail -1 | cut -c1-500)"; done
           python tests/compare_pipeline.py cmp/py/td cmp/rs/td tides
       - name: Workers
+        if: inputs.only == '' || inputs.only == null || contains(inputs.only, 'workers')
         continue-on-error: true
         run: |
           python pipeline/fetch_workers.py cmp/py/wk/workers.json > cmp/wk-py.log 2>&1 &
@@ -104,6 +118,7 @@ jobs:
           for f in cmp/wk-py.log cmp/wk-rs.log; do echo "::notice::$f: $(grep -vE '^(tile |  no tile|note:|got:|warning:)' $f | grep . | tail -1 | cut -c1-500)"; done
           python tests/compare_pipeline.py cmp/py/wk cmp/rs/wk workers
       - name: Levees
+        if: inputs.only == '' || inputs.only == null || contains(inputs.only, 'levees')
         continue-on-error: true
         run: |
           python pipeline/fetch_levees.py cmp/py/lv/levees.geojson > cmp/lv-py.log 2>&1 &
@@ -112,6 +127,7 @@ jobs:
           for f in cmp/lv-py.log cmp/lv-rs.log; do echo "::notice::$f: $(grep -vE '^(tile |  no tile|note:|got:|warning:)' $f | grep . | tail -1 | cut -c1-500)"; done
           python tests/compare_pipeline.py cmp/py/lv cmp/rs/lv levees
       - name: Water history (one minute)
+        if: inputs.only == '' || inputs.only == null || contains(inputs.only, 'wh')
         continue-on-error: true
         env:
           WATERHISTORY_BUDGET_S: "60"
@@ -130,12 +146,14 @@ jobs:
           for k in [k for k in both if k not in same][:3]: print(k, str(a[k])[:200], "|", str(b[k])[:200])
           EOF
       - name: Flood Hub (no key)
+        if: inputs.only == '' || inputs.only == null || contains(inputs.only, 'floodhub')
         continue-on-error: true
         run: |
           python pipeline/fetch_floodhub.py config/brisbane.json cmp/py/fh
           flood floodhub config/brisbane.json cmp/rs/fh
           python tests/compare_pipeline.py cmp/py/fh cmp/rs/fh floodhub
       - name: Council layers
+        if: inputs.only == '' || inputs.only == null || contains(inputs.only, 'council')
         continue-on-error: true
         timeout-minutes: 25
         run: |
@@ -145,6 +163,7 @@ jobs:
           for f in cmp/co-py.log cmp/co-rs.log; do echo "::notice::$f: $(grep -vE '^(tile |  no tile|note:|got:|warning:)' $f | grep . | tail -1 | cut -c1-500)"; done
           python tests/compare_pipeline.py cmp/py/council cmp/rs/council council
       - name: DEA mosaic
+        if: inputs.only == '' || inputs.only == null || contains(inputs.only, 'dea')
         continue-on-error: true
         timeout-minutes: 20
         run: |
@@ -154,6 +173,7 @@ jobs:
           for f in cmp/dea-py.log cmp/dea-rs.log; do echo "::notice::$f: $(grep -vE '^(tile |  no tile|note:|got:|warning:)' $f | grep . | tail -1 | cut -c1-500)"; done
           python tests/compare_pipeline.py cmp/py/dea cmp/rs/dea dea
       - name: DEM, hydrology and export
+        if: inputs.only == '' || inputs.only == null || contains(inputs.only, 'dem')
         continue-on-error: true
         timeout-minutes: 30
         env:
@@ -164,6 +184,8 @@ jobs:
           flood dem config/brisbane.json cmp/rs/work > cmp/dem-rs.log 2>&1 || true
           wait
           for f in cmp/dem-py.log cmp/dem-rs.log; do echo "::notice::$f: $(grep -vE '^(tile |  no tile|note:|got:|warning:)' $f | grep . | tail -1 | cut -c1-500)"; done
+          grep -h '^tile georef' cmp/dem-rs.log | head -2 | sed 's/^/::notice::rust /'
+          python -c "import glob, rasterio; p = sorted(glob.glob('cmp/py/work/tiles/*.tif'))[0]; s = rasterio.open(p); print('::notice::python tile georef:', s.transform, s.width, s.height, s.tags().get('AREA_OR_POINT'), s.profile.get('predictor'), s.profile.get('compress'))"
           rm -rf cmp/py/work/tiles cmp/rs/work/tiles
           python tests/compare_pipeline.py cmp/py/work cmp/rs/work dem
           # the Rust DEM through the RustGIS hydrology, then both exports of it
@@ -172,6 +194,7 @@ jobs:
           flood export config/brisbane.json cmp/rs/work cmp/rs/data
           python tests/compare_pipeline.py cmp/py/data cmp/rs/data export
       - name: Data status
+        if: inputs.only == '' || inputs.only == null || contains(inputs.only, 'status')
         continue-on-error: true
         run: |
           mkdir -p cmp/py/site/data cmp/rs/site/data

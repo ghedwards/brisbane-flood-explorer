@@ -44,28 +44,60 @@ pub fn g_fmt(v: f64) -> String {
     if v == v.trunc() && v.abs() < 1e15 { format!("{}", v as i64) } else { format!("{}", v) }
 }
 
-/// The tiles mosaicked onto one grid at the tiles' resolution over a box.
-fn mosaic(tiles: &[Raster], w: f64, s: f64, e: f64, n: f64) -> Raster {
-    let (dx, dy) = (tiles[0].dx, tiles[0].dy);
-    let (cols, rows) = (((e - w) / dx).round() as usize, ((n - s) / dy).round() as usize);
-    let mut data = vec![NODATA; cols * rows];
-    for r in 0..rows {
-        let y = n - (r as f64 + 0.5) * dy;
-        for c in 0..cols {
-            let x = w + (c as f64 + 0.5) * dx;
-            for t in tiles {
-                let (fc, fr) = ((x - t.x0) / t.dx, (t.y0 - y) / t.dy);
-                if fc >= 0.0 && fr >= 0.0 && (fc as usize) < t.w && (fr as usize) < t.h {
-                    let v = t.get(fc as usize, fr as usize);
-                    if !t.is_nodata(v) {
-                        data[r * cols + c] = v;
-                        break;
-                    }
+/// The tiles as one seamless grid of source pixels (they share a pixel
+/// grid at these latitudes), sampled like GDAL's bilinear warp: a tent
+/// filter that widens to the output cell when resampling to coarser cells.
+pub struct Tiles {
+    tiles: Vec<Raster>,
+    x0: f64,
+    y0: f64,
+    dx: f64,
+    dy: f64,
+}
+
+impl Tiles {
+    pub fn new(tiles: Vec<Raster>) -> Tiles {
+        let (x0, y0, dx, dy) = (tiles[0].x0, tiles[0].y0, tiles[0].dx, tiles[0].dy);
+        Tiles { tiles, x0, y0, dx, dy }
+    }
+
+    /// The value of global source pixel (column, row), if any tile has data there.
+    fn get(&self, gc: i64, gr: i64) -> Option<f64> {
+        let (x, y) = (self.x0 + (gc as f64 + 0.5) * self.dx, self.y0 - (gr as f64 + 0.5) * self.dy);
+        for t in &self.tiles {
+            let (fc, fr) = ((x - t.x0) / t.dx, (t.y0 - y) / t.dy);
+            if fc >= 0.0 && fr >= 0.0 && (fc as usize) < t.w && (fr as usize) < t.h {
+                let v = t.get(fc as usize, fr as usize);
+                return if t.is_nodata(v) { None } else { Some(v) };
+            }
+        }
+        None
+    }
+
+    /// Sample at (lon, lat); `sx`, `sy`: output cell size in source pixels.
+    pub fn sample(&self, lon: f64, lat: f64, sx: f64, sy: f64) -> Option<f64> {
+        let fx = (lon - self.x0) / self.dx - 0.5;
+        let fy = (self.y0 - lat) / self.dy - 0.5;
+        let (rx, ry) = (sx.max(1.0), sy.max(1.0));
+        let (mut sum, mut wsum) = (0.0, 0.0);
+        for gr in (fy - ry).ceil() as i64..=(fy + ry).floor() as i64 {
+            let wy = 1.0 - (gr as f64 - fy).abs() / ry;
+            if wy <= 0.0 {
+                continue;
+            }
+            for gc in (fx - rx).ceil() as i64..=(fx + rx).floor() as i64 {
+                let wx = 1.0 - (gc as f64 - fx).abs() / rx;
+                if wx <= 0.0 {
+                    continue;
+                }
+                if let Some(v) = self.get(gc, gr) {
+                    sum += wx * wy * v;
+                    wsum += wx * wy;
                 }
             }
         }
+        if wsum > 0.0 { Some(sum / wsum) } else { None }
     }
-    Raster { w: cols, h: rows, data, nodata: Some(NODATA), x0: w, dx, y0: n, dy, epsg: Some(4326) }
 }
 
 pub fn run(config_path: &str, out_dir: &str) -> R<String> {
@@ -90,8 +122,10 @@ pub fn run(config_path: &str, out_dir: &str) -> R<String> {
     if tiles.is_empty() {
         return Err("No DEM tiles found for this area.".into());
     }
-    let src = mosaic(&tiles, w - pad, s - pad, e + pad, n + pad);
-    drop(tiles);
+    for t in &tiles {
+        println!("tile georef: x0 {} y0 {} dx {} dy {} size {}x{}", t.x0, t.y0, t.dx, t.dy, t.w, t.h);
+    }
+    let src = Tiles::new(tiles);
     let crs = s_or_empty(cfg.get("crs"));
     let dst = Proj::from_name(&crs).ok_or_else(|| format!("unsupported CRS {}", crs))?;
     let epsg: u32 = crs.trim().to_uppercase().trim_start_matches("EPSG:").parse().map_err(err)?;
@@ -112,11 +146,15 @@ pub fn run(config_path: &str, out_dir: &str) -> R<String> {
     let (maxx, maxy) = ((maxx / cell).ceil() * cell, (maxy / cell).ceil() * cell);
     let (width, height) = (((maxx - minx) / cell).round() as usize, ((maxy - miny) / cell).round() as usize);
     let mut dem = vec![NODATA as f32; width * height];
+    // the output cell in source pixels, at the middle of the area
+    let mid = (s + n) / 2.0;
+    let sx = cell / (src.dx * 111320.0 * mid.to_radians().cos());
+    let sy = cell / (src.dy * 110574.0);
     for r in 0..height {
         for c in 0..width {
             let (x, y) = (minx + (c as f64 + 0.5) * cell, maxy - (r as f64 + 0.5) * cell);
             let (lon, lat) = dst.to_lonlat(x, y);
-            if let Some(v) = src.bilinear(lon, lat) {
+            if let Some(v) = src.sample(lon, lat, sx, sy) {
                 dem[r * width + c] = v as f32;
             }
         }
@@ -140,16 +178,22 @@ mod tests {
     }
 
     #[test]
-    fn mosaic_and_resample_a_plane() {
-        // one tile: height = 10 * lon + lat, at 0.001 degrees
-        let (w, h) = (200usize, 200usize);
-        let data: Vec<f64> = (0..w * h).map(|i| {
-            let (c, r) = (i % w, i / w);
-            10.0 * (153.0 + (c as f64 + 0.5) * 0.001) + (-27.0 - (r as f64 + 0.5) * 0.001)
-        }).collect();
-        let t = Raster { w, h, data, nodata: Some(NODATA), x0: 153.0, dx: 0.001, y0: -27.0, dy: 0.001, epsg: Some(4326) };
-        let m = mosaic(&[t], 153.02, -27.18, 153.18, -27.02);
-        let v = m.bilinear(153.1, -27.1).unwrap();
-        assert!((v - (1531.0 - 27.1)).abs() < 1e-6, "{}", v);
+    fn samples_a_plane_across_tiles() {
+        // two tiles side by side: height = 10 * lon + lat, at 0.001 degrees
+        let tile = |lon0: f64| {
+            let (w, h) = (100usize, 100usize);
+            let data: Vec<f64> = (0..w * h).map(|i| {
+                let (c, r) = (i % w, i / w);
+                10.0 * (lon0 + (c as f64 + 0.5) * 0.001) + (-27.0 - (r as f64 + 0.5) * 0.001)
+            }).collect();
+            Raster { w, h, data, nodata: Some(NODATA), x0: lon0, dx: 0.001, y0: -27.0, dy: 0.001, epsg: Some(4326) }
+        };
+        let t = Tiles::new(vec![tile(153.0), tile(153.1)]);
+        // a plane is reproduced exactly, even straddling the tile edge and with a wide filter
+        for (lon, sx) in [(153.05, 1.0), (153.1, 1.0), (153.1003, 1.6)] {
+            let v = t.sample(lon, -27.05, sx, 1.3).unwrap();
+            assert!((v - (10.0 * lon - 27.05)).abs() < if sx > 1.0 { 1e-3 } else { 1e-9 }, "{} {}", lon, v);
+        }
+        assert!(t.sample(152.0, -27.05, 1.0, 1.0).is_none());
     }
 }

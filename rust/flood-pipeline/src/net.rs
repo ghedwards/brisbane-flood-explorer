@@ -37,7 +37,10 @@ impl Resp {
 fn agent(timeout_s: u64) -> ureq::Agent {
     ureq::AgentBuilder::new()
         .timeout_connect(Duration::from_secs(timeout_s.min(60)))
-        .timeout(Duration::from_secs(timeout_s))
+        // like Python's urlopen timeout: per read and write, not in total,
+        // so large or slowly streamed downloads can finish
+        .timeout_read(Duration::from_secs(timeout_s))
+        .timeout_write(Duration::from_secs(timeout_s))
         .redirects(8)
         .try_proxy_from_env(true)
         .build()

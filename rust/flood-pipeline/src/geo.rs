@@ -292,6 +292,7 @@ impl Raster {
     }
     /// Bilinear sample at a map position (pixel centres as in GDAL),
     /// weighting only cells with data; None where there are none.
+    #[cfg(test)]
     pub fn bilinear(&self, x: f64, y: f64) -> Option<f64> {
         let fx = (x - self.x0) / self.dx - 0.5;
         let fy = (self.y0 - y) / self.dy - 0.5;
