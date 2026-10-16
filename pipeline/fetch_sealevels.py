@@ -203,6 +203,8 @@ def sea_for(ev, fetch=erddap, msq=msq_year):
     end = start + dt.timedelta(hours=max(r[0] for r in ev["series"]) + 24)
     # a Queensland gauge nearer than any UHSLC gauge comes first
     q, dq, why_q = msq_for(ev, start, end, msq) if ev["lon"] > 137.9 and ev["lat"] > -29.2 else (None, math.inf, None)
+    if why_q:
+        print(f"note: {ev['id']}: {why_q}")
     if q and (not st or dq <= d):
         return q, None
     if not st:

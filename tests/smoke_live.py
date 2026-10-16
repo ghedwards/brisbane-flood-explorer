@@ -787,7 +787,21 @@ def main() -> int:
     if popup:
         note("notice", f"Popup: {popup}")
     if KEY:
-        print("::notice title=Key results::" + "%0A".join(k.replace("%", "%25").replace("\n", " ") for k in KEY))
+        # GitHub cuts long annotations short: split the key results into a
+        # few notes of about 3,500 characters (it shows 10 notes per step)
+        chunks, cur = [], ""
+        for k in KEY:
+            line = k.replace("%", "%25").replace("\n", " ")
+            if cur and len(cur) + len(line) > 3500:
+                chunks.append(cur)
+                cur = ""
+            cur = f"{cur}%0A{line}" if cur else line
+        if cur:
+            chunks.append(cur)
+        for i, c in enumerate(chunks[:6]):
+            print(f"::notice title=Key results {i + 1} of {min(6, len(chunks))}::" + c)
+        with open(os.environ.get("GITHUB_STEP_SUMMARY", os.devnull), "a") as fh:
+            fh.write("### Key results\n" + "".join(f"- {k}\n" for k in KEY))
     for f in failures:
         note("error", f)
     if not failures:
