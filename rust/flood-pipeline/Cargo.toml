@@ -1,0 +1,21 @@
+[package]
+name = "flood-pipeline"
+version = "0.1.0"
+edition = "2021"
+description = "Flood Explorer's data pipeline: fetches gauges, floods, sea levels, levees, tides and more, and builds the terrain for the site."
+license = "MIT"
+publish = false
+
+[[bin]]
+name = "flood"
+path = "src/main.rs"
+
+[dependencies]
+flood-core = { path = "../flood-core" }
+ureq = "2.12"
+serde_json = { version = "1", features = ["preserve_order"] }
+tiff = "0.9"
+png = "0.17"
+quick-xml = "0.37"
+miniz_oxide = "0.8"
+regex = "1"

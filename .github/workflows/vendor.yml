@@ -1,0 +1,39 @@
+name: Vendor Rust crates
+
+# Puts the Rust crates the pipeline uses (and Cargo.lock) on the
+# rust-vendor branch, so it builds where crates.io can't be reached:
+#   git fetch origin rust-vendor && git worktree add ../vendor rust-vendor
+#   cargo build --offline --config ../vendor/config.toml
+on:
+  push:
+    branches: [main]
+    paths: ["rust/**/Cargo.toml", ".github/workflows/vendor.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  vendor:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - name: Vendor
+        working-directory: rust
+        run: |
+          cargo fetch
+          mkdir -p "$RUNNER_TEMP/out"
+          cargo vendor --versioned-dirs "$RUNNER_TEMP/out/crates" > "$RUNNER_TEMP/out/config.toml"
+          # the printed config points at the vendor folder; make it relative to the branch
+          sed -i "s#directory = \".*\"#directory = \"crates\"#" "$RUNNER_TEMP/out/config.toml"
+          cp Cargo.lock "$RUNNER_TEMP/out/"
+          du -sh "$RUNNER_TEMP/out/crates"
+      - name: Push the rust-vendor branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cd "$RUNNER_TEMP/out"
+          git init -q -b rust-vendor
+          git add -A
+          git -c user.name="github-actions" -c user.email="github-actions@users.noreply.github.com" commit -qm "Vendored crates for ${GITHUB_SHA::8}"
+          git push -qf "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" rust-vendor

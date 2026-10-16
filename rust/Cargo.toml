@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["flood-core", "flood-wasm", "flood-node"]
+members = ["flood-core", "flood-wasm", "flood-node", "flood-pipeline"]
 
 [profile.release]
 opt-level = 3
