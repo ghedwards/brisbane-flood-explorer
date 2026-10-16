@@ -706,6 +706,26 @@
       gaugeAt = (t) => (t <= 0 ? base : t < rise ? base + (peak - base) * 0.5 * (1 - Math.cos((Math.PI * t) / rise))
         : t < rise + fall ? base + (peak - base) * 0.5 * (1 + Math.cos((Math.PI * (t - rise)) / fall)) : base);
     }
+    // A dam release upstream (o.release: { startHours, hours, frac }): extra
+    // flow, as a fraction of the flood's peak flow at the gauge, arriving at
+    // the gauge from startHours for hours, ramping up and down over 3 h.
+    // Levels and flows are related as for routing: flow ~ (level - bed)^b,
+    // with the gauge's measured rating where there is one.
+    let releaseInfo = null;
+    if (o.release && o.release.frac > 0 && o.release.hours > 0) {
+      const rt = o.rating && o.rating.b > 0.5 && o.rating.depth > 0 ? o.rating : null;
+      const zb = rt ? lo - Math.max(0.1, rt.depth) : Math.min(a.dem[g] - 1, lo - 0.5);
+      const bx = rt ? Math.min(4, Math.max(0.8, rt.b)) : 5 / 3, span = hi - zb;
+      const qOf = (h) => Math.pow(Math.max(0, (h - zb) / span), bx), hOf = (q) => zb + span * Math.pow(Math.max(0, q), 1 / bx);
+      const qPeak = qOf(peak), t0 = o.release.startHours, t1 = t0 + o.release.hours, ramp = Math.min(3, o.release.hours / 2);
+      const rel = (t) => (t <= t0 || t >= t1 ? 0 : Math.min(1, (t - t0) / ramp, (t1 - t) / ramp)) * o.release.frac * qPeak;
+      const g0 = gaugeAt;
+      gaugeAt = (t) => { const r = rel(t); return r > 0 ? hOf(qOf(g0(t)) + r) : g0(t); };
+      tStart = Math.min(tStart, t0 - 1); tEnd = Math.max(tEnd, t1 + 1);
+      let top = -Infinity;
+      for (let t = tStart; t <= tEnd; t += 0.5) top = Math.max(top, gaugeAt(t));
+      releaseInfo = { frac: o.release.frac, peakWith: top, rise: top - peak };
+    }
     // the wave flattening as it travels downstream: the gauge's record
     // smoothed with a Gaussian whose spread grows with distance
     const flatten = Math.max(0, o.flatten || 0);
@@ -739,6 +759,7 @@
     }
     const tPeak = rec ? rec.reduce((m, r) => (r[1] > m[1] ? r : m))[0] : rise;
     const w = { lo, hi, w0, w1, cells: Int32Array.from(cells), arrive, minA, maxA, rise, fall, gaugeAt, at, band, tStart, tEnd, tPeak, routed: null };
+    w.release = releaseInfo;
     if (o.route && g >= 0) w.routed = routeDown(a, s, w, g, speed, o.rating);
     if (rec && o.others && o.others.length && g >= 0) w.up = betweenGauges(a, w, g, speed, o.others);
     if (w.routed) w.maxA = Math.max(w.maxA, w.routed.extraHours);

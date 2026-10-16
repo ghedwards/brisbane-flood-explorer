@@ -16,7 +16,7 @@ URL = sys.argv[1] if len(sys.argv) > 1 else "http://localhost:8000/"
 
 
 KEY = []          # key results, shown together in one annotation at the end
-KEY_WORDS = ("Offline reload", "Council layers", "Sea levels", "Storm pipes", "Rating at", "First load", "Keyboard", "Tides at", "Sea reached", "Recorded flood over time", "Flood over time", "Levees", "Storm tide", "Presets checked", "Recorded floods", "Best match", "Impact", "Storm", "Joined", "Share link", "Satellite check",
+KEY_WORDS = ("New tools", "Data status", "Offline reload", "Council layers", "Sea levels", "Storm pipes", "Rating at", "First load", "Keyboard", "Tides at", "Sea reached", "Recorded flood over time", "Flood over time", "Levees", "Storm tide", "Presets checked", "Recorded floods", "Best match", "Impact", "Storm", "Joined", "Share link", "Satellite check",
              "Presets anchored", "Presets on LiDAR", "Phone Layers", "Council layer", "Downloads", "Rain radar",
              "Address search", "Flood warnings", "Echuca", "Extended model", "Area study")
 
@@ -622,6 +622,42 @@ def main() -> int:
         elif not tlr.get("routed"):
             failures.append(f"flood over time wasn't routed below the gauge: {tlr}")
         page.screenshot(path="smoke-timeline.png")
+        # ---- hazard classes, comparing scenarios, the property check, a dam release
+        extra = {}
+        try:
+            hz = page.evaluate("window.__floodColorMode('hazard')")
+            extra["hazard"] = hz.get("hazard")
+            page.screenshot(path="smoke-hazard.png")
+            lvl0 = page.evaluate("parseFloat(document.getElementById('gaugeLevel').value)")
+            page.evaluate("window.__floodPin()")
+            page.evaluate("v => window.__floodSetLevel(v)", lvl0 + 1.0)
+            page.wait_for_timeout(1500)
+            cmp = page.evaluate("window.__floodColorMode('compare')")
+            extra["compare"] = cmp.get("compare")
+            page.screenshot(path="smoke-compare.png")
+            page.evaluate("v => window.__floodSetLevel(v)", lvl0)
+            page.evaluate("window.__floodColorMode('depth')")
+            spot = page.evaluate("window.__floodGaugeLatLng ? window.__floodGaugeLatLng() : null")
+            if spot:
+                extra["property"] = page.evaluate("([la, lo]) => window.__floodCheckProperty(la + 0.004, lo + 0.004, 'Near the gauge')", spot)
+                page.screenshot(path="smoke-property.png")
+            page.evaluate("window.__floodRelease(40, 10, 36)")
+            rel = page.evaluate("window.__floodRunTimeline()")
+            extra["release"] = rel.get("release") if rel else None
+            page.evaluate("window.__floodRelease(0, 10, 36)")
+        except Exception as e:  # noqa: BLE001
+            extra["error"] = str(e)[:300]
+        note("notice", f"New tools at Rockhampton: {json.dumps(extra)}")
+        if not (extra.get("hazard") and sum(extra["hazard"]) > 0):
+            failures.append(f"hazard classes failed: {extra}")
+        if not (extra.get("compare") and extra["compare"].get("onlyNow", 0) > 0):
+            failures.append(f"scenario comparison failed: {extra}")
+        if extra.get("property") is not None and not extra["property"].get("inModel"):
+            failures.append(f"property check failed: {extra}")
+        if extra.get("release") is None or extra["release"] <= 0:
+            note("warning", f"Dam release made no difference: {extra.get('release')}")
+        ds = page.evaluate("window.__floodDataStatus ? window.__floodDataStatus() : null")
+        note("notice", f"Data status: {json.dumps(ds)}")
 
         # ---- on a phone, a swipe scrolls the Layers panel
         mctx = browser.new_context(viewport={"width": 390, "height": 844}, has_touch=True, is_mobile=True)

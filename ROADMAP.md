@@ -67,6 +67,15 @@ would add, how it could be built from open data, and what to watch for.
 - **Victoria's statewide flood extent** (1% chance), if it becomes
   available as an open map service.
 
+- **Hazard, further.** Flow speeds are estimated from depth and slope with
+  fixed roughness; a two-dimensional model (or council hazard mapping
+  where published, now shown for Rockhampton) would be better.
+- **Dam operations.** Releases are entered by hand; reading published
+  release schedules (Seqwater, WaterNSW) during an event would automate it.
+- **Climate, further.** Storm rainfall uplift follows the draft ARR rates;
+  the matching loss adjustments and per-region warming projections could
+  be added.
+
 ## Impact
 
 Done: buildings, people, roads, key sites, water above floor (with a floor
@@ -76,6 +85,9 @@ and when roads close and how long places stay cut off (flood over time).
 - **Daytime counts, further.** Workers come from the ABS place-of-work
   counts by SA2; destination zones (much smaller) would be sharper, but
   their counts are only in TableBuilder, not an open download.
+- **Evacuation centres.** OpenStreetMap has few mapped; councils publish
+  lists on their disaster dashboards (often as PDFs or web pages). Open
+  map services of designated centres would make routes far more useful.
 - **Measured floor heights.** NSW councils publish floor level surveys for
   some flood studies on the NSW flood data portal (SEED), which refuses
   GitHub's servers; collecting them needs the home-computer route. Others

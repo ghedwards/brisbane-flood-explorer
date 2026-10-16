@@ -32,6 +32,7 @@ OVERPASS = ["https://overpass-api.de/api/interpreter",
             "https://overpass.kumi.systems/api/interpreter"]
 UA = {"User-Agent": "brisbane-flood-explorer (github.com/ghedwards/brisbane-flood-explorer)"}
 HALF_KM = 13
+VERSION = 2   # 2: evacuation centres added to the sites; older copies are refetched first
 SITE_KINDS = {
     "hospital": "Hospital", "clinic": "Clinic", "doctors": "Doctors", "school": "School", "kindergarten": "Kindergarten",
     "childcare": "Childcare", "nursing_home": "Aged care", "fire_station": "Fire station", "police": "Police",
@@ -67,7 +68,9 @@ def query(bb):
             f"{mark('work')}way[\"building\"~\"^({WORK})$\"]({b});out ids qt;"
             f"{mark('roads')}way[\"highway\"~\"^({ROAD_TYPES})(_link)?$\"]({b});out body geom qt;"
             f"{mark('sites')}nwr[\"amenity\"~\"^({sites})$\"]({b});out tags center qt;"
-            f"nwr[\"social_facility\"~\"^(nursing_home|assisted_living)$\"]({b});out tags center qt;")
+            f"nwr[\"social_facility\"~\"^(nursing_home|assisted_living)$\"]({b});out tags center qt;"
+            f"nwr[\"emergency\"~\"^(evacuation_centre|evacuation_center)$\"]({b});out tags center qt;"
+            f"nwr[\"evacuation_centre\"=\"yes\"]({b});out tags center qt;nwr[\"evacuation_center\"=\"yes\"]({b});out tags center qt;")
 
 
 def overpass(q, timeout=300):
@@ -124,18 +127,22 @@ def compact(osm, pid, bb):
         elif section == "sites" and e.get("tags"):
             t = e["tags"]
             ll = e.get("center") or ({"lat": e["lat"], "lon": e["lon"]} if "lat" in e else None)
-            kind = SITE_KINDS.get(t.get("amenity", "")) or ("Aged care" if t.get("social_facility") else None)
+            evac = t.get("emergency") in ("evacuation_centre", "evacuation_center") or "yes" in (t.get("evacuation_centre"), t.get("evacuation_center"))
+            kind = "Evacuation centre" if evac else SITE_KINDS.get(t.get("amenity", "")) or ("Aged care" if t.get("social_facility") else None)
             if ll and kind:
                 sites.append([t.get("name") or kind, kind, round(ll["lat"], 6), round(ll["lon"], 6)])
     for i_d, i in idx.items():
         f[i] = (1 if i_d in homes else 0) | (2 if i_d in work else 0)
     now = dt.datetime.now(dt.timezone.utc).replace(microsecond=0).isoformat()
-    return {"id": pid, "bbox": bb, "fetched": now, "b": b, "f": f, "nodes": nodes, "roads": roads, "sites": sites}
+    return {"id": pid, "v": VERSION, "bbox": bb, "fetched": now, "b": b, "f": f, "nodes": nodes, "roads": roads, "sites": sites}
 
 
 def age_days(path):
     try:
-        t = dt.datetime.fromisoformat(json.loads(path.read_text())["fetched"])
+        d = json.loads(path.read_text())
+        if d.get("v", 1) < VERSION:
+            return math.inf
+        t = dt.datetime.fromisoformat(d["fetched"])
         return (dt.datetime.now(dt.timezone.utc) - t).total_seconds() / 86400
     except Exception:  # noqa: BLE001
         return math.inf

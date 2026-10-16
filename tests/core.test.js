@@ -442,3 +442,17 @@ test('storm rainfall uplift for a warmer climate', () => {
   const six = F.stormUplift(6, 2);
   assert.ok(six > Math.pow(1.08, 2) && six < Math.pow(1.15, 2));
 });
+
+test('a dam release raises the river while it runs, and more with a bigger release', () => {
+  const g = a.defaultGauge;
+  const s = scenario(a.dem[g] + 3, { bayLevel: 0.5 });
+  const o = { baseLevel: a.dem[g] + 0.3, riseHours: 12, fallHours: 24, speedKmh: 3 };
+  const w0 = F.waveSetup(a, s, o);
+  const w1 = F.waveSetup(a, s, Object.assign({}, o, { release: { startHours: 20, hours: 30, frac: 0.3 } }));
+  const w2 = F.waveSetup(a, s, Object.assign({}, o, { release: { startHours: 20, hours: 30, frac: 0.6 } }));
+  assert.ok(Math.abs(w1.gaugeAt(10) - w0.gaugeAt(10)) < 1e-9, 'no change before the release');
+  assert.ok(w1.gaugeAt(30) > w0.gaugeAt(30) + 0.05, 'higher during it');
+  assert.ok(w2.gaugeAt(30) > w1.gaugeAt(30), 'a bigger release, higher still');
+  assert.ok(w1.release && w1.release.peakWith >= s.gaugeLevel - 1e-9);
+  assert.ok(Math.abs(w1.gaugeAt(60) - w0.gaugeAt(60)) < 1e-9, 'back to normal after');
+});

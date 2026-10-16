@@ -37,6 +37,13 @@ The app opens on a map of Australia:
 - **Rain radar** overlay from RainViewer's free tier (latest frame; detail stops at zoom 7).
 - **Address search** (OpenStreetMap Nominatim): flies to an address and shows the depth there if a model covers it.
 - **Share and save:** the link button copies a URL that reopens all your places, scenarios, level points and study areas; the same state is kept in your browser for your next visit. The Scenario panel downloads the active model's depth as a GeoTIFF, its outline as GeoJSON, or a printable report.
+- **Flood hazard (H1–H6).** *Show: hazard* on the map key shades the flood by the national hazard classes (Australian Disaster Resilience Guideline 7-3), from H1 (generally safe) to H6 (unsafe for all; all buildings vulnerable), using depth and an estimated flow speed: Manning's equation with the river's water-surface slope beside each spot (channel and floodplain roughness), the ground slope for overland flow, and still water in ponds. The key gives the area in each class. Speeds are a screening estimate, not a two-dimensional model.
+- **Compare scenarios.** *Pin this scenario*, then change anything (level, storm, levees failing, climate): *Show: change from pinned scenario* colours what floods only now (orange) and only in the pinned one (purple), and the panel gives the areas and the change in buildings flooded, water over floors, people, places cut off and roads cut.
+- **Property check.** Tap a spot in a model (or pick a search result) and choose *Check this property*: the depth and hazard there in the current scenario and how much is over the floor of the building; the gauge level at which the spot first floods; when water arrives and how long it's cut off (if flood over time has run); the shortest dry road out of the model area and to the nearest dry evacuation centre, drawn on the map; whether it lies inside any recorded flood outline; and what council flood maps say there.
+- **Evacuation centres** mapped in OpenStreetMap appear with the impact counts (green, or ringed red when flooded), and routes to them avoid roads under more than 30 cm of water. Coverage in OpenStreetMap is patchy; councils' disaster dashboards are the authority.
+- **Dam releases** (flood over time): add a release upstream, as a share of the flood's peak flow or in m³/s where the gauge has a measured rating, with when it reaches the gauge and for how long; it adds to the river's flow through the rating. The panel lists Bureau-listed dams within 150 km and how full they are.
+- **Future climate for storms.** Storm mode can use a climate 1 to 3 °C warmer: rainfall rises by the draft Australian Rainfall and Runoff guidance (about 15% per °C for an hour's storm, 8% for a day's, compounded).
+- **Data status.** The About panel lists what each data source returned in the latest build (OK, from an earlier build, or a problem), with dates, so blocked or stale data is easy to spot.
 - **Works offline and installs like an app.** Add it to a phone's home screen (Share → Add to Home Screen on iPhone, Install app on Android). A service worker keeps the app and the national data, plus the map tiles, terrain and map-service answers you have used, so when the signal drops during a flood the site still opens, saved places rebuild from cached terrain, and areas you've looked at still show; an *Offline* badge says when you're on saved data. New places need a connection.
 - **Keyboard and screen readers:** Tab reaches the map (arrow keys move, plus and minus zoom) and Enter looks at the spot in the middle of the map, as a click would; while choosing an area to study, Enter studies the area in view. Numbered places on the map can be reached with Tab. Busy messages, search results and storm summaries are announced, and colours carry meaning by lightness as well as hue.
 - **Smooth to use:** the scripts are minified in the build, recorded floods and gauge ratings load in the background, and the flow analysis runs in a background worker, so building, extending or reopening models doesn't freeze the page. River presets start from the Bureau gauge on that river and open its report under the same number.
@@ -164,7 +171,7 @@ python3 -m http.server -d viewer 8000
 ```sh
 node --test tests/*.test.js
 python -m unittest tests/test_floodhub.py tests/test_national.py tests/test_council.py tests/test_floodinfo.py \
-  tests/test_events.py tests/test_osm.py tests/test_tides.py tests/test_ratings.py tests/test_sealevels.py tests/test_workers.py   # data fetchers, services mocked
+  tests/test_events.py tests/test_osm.py tests/test_tides.py tests/test_ratings.py tests/test_sealevels.py tests/test_workers.py tests/test_status.py   # data fetchers, services mocked
 ```
 
 The tests check routing (every cell drains), monotonic flooding, water levels at the gauge and mouth, connectivity, and that Whitebox D8 pointers from the pipeline reproduce the browser's own routing exactly.
@@ -192,6 +199,9 @@ tests/                       Node tests for the flood model
 - Dam water history: [DEA Waterbodies](https://knowledge.dea.ga.gov.au/data/product/dea-waterbodies-landsat/) (Geoscience Australia), CC BY 4.0.
 - On-demand terrain: [Geoscience Australia DEM-H](https://data.gov.au/data/dataset/66c4df82-b8bb-48b9-9649-3ac082625c9f), 1-second SRTM-derived hydrologically enforced DEM, CC BY 4.0.
 - Tide heights outside Queensland: [Tidal Statistics for Australia from the EOT20 tidal model](https://doi.org/10.26274/z8b6-zx94) (NESP MaC 3.17, AIMS), CC BY 4.0. Queensland ports: Maritime Safety Queensland tidal planes.
+- Flood hazard classes: Australian Disaster Resilience Guideline 7-3, Flood Hazard (AIDR), CC BY 4.0 (thresholds only).
+- Climate uplift: draft Australian Rainfall and Runoff climate change guidance (Geoscience Australia and contributors).
+- Evacuation centres: OpenStreetMap contributors (ODbL).
 - Recorded sea levels: Maritime Safety Queensland archived tide gauge readings ([Queensland open data](https://www.msq.qld.gov.au/tides/open-data), CC BY 4.0) and the [University of Hawaii Sea Level Center](https://uhslc.soest.hawaii.edu/) hourly data (research quality where available), from the Bureau of Meteorology's Australian tide gauges.
 - Workers by place of work: ABS 2021 Census Working Population Profile (SA2), CC BY 4.0; SA2 boundaries from the ABS.
 - Council flood maps: City of Gold Coast, City of Moreton Bay, Rockhampton Regional Council, Logan City Council, Livingstone Shire Council, Sunshine Coast Council, read live from their public map services.

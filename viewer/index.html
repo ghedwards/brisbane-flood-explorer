@@ -207,6 +207,17 @@
         <label>Wave travels <input type="number" id="waveKmh" min="0.5" max="20" step="0.5" value="3" aria-label="Flood wave speed in km/h" style="width:58px"> km/h</label>
         <label>and <select id="flatten" aria-label="How the wave changes downstream"><option value="route" selected>is routed down the river</option><option value="0">keeps its shape</option><option value="1.5">flattens a little</option><option value="3">flattens a lot</option></select></label>
       </div>
+      <details id="releaseBox"><summary>Dam release upstream</summary>
+        <div class="storm-row">
+          <label>Release <input type="number" id="relFlow" min="0" step="50" value="0" aria-label="Dam release" style="width:72px"></label>
+          <select id="relUnit" aria-label="Release unit"><option value="m3s">m³/s</option><option value="pct" selected>% of the peak flow</option></select>
+        </div>
+        <div class="storm-row">
+          <label>reaching the gauge at hour <input type="number" id="relStart" step="1" value="12" aria-label="Hour the release reaches the gauge" style="width:58px"></label>
+          <label>for <input type="number" id="relHours" min="1" step="1" value="48" aria-label="Hours the release lasts" style="width:58px"> h</label>
+        </div>
+        <p class="hint" id="relNote"></p>
+      </details>
       <div class="storm-row" id="tideRow" hidden>
         <label>Tide <select id="tideCycle" aria-label="Tide during the flood"><option value="">sea stays at the bay level</option><option value="high" selected>high tide at the peak</option><option value="low">low tide at the peak</option><option value="recorded" hidden>recorded sea level</option></select></label>
         <label>rising <input type="number" id="tideAmp" min="0" max="5" step="0.1" value="0.8" aria-label="Tide rise above mean sea level in metres" style="width:58px"> m above mean</label>
@@ -358,6 +369,11 @@
 
 
 <!-- About -->
+<aside class="sheet float" id="panel-property" data-panel data-side="right" aria-labelledby="h-property" hidden>
+  <div class="sheet-head"><h2 id="h-property">Property check</h2><button type="button" class="close" data-close aria-label="Close">×</button></div>
+  <div class="sheet-body"><div id="propertyBox" aria-live="polite"></div></div>
+</aside>
+
 <aside class="sheet float" id="panel-about" data-panel data-side="right" aria-labelledby="h-about" hidden>
   <div class="sheet-head"><h2 id="h-about">About this map</h2><button type="button" class="close" data-close aria-label="Close">×</button></div>
   <div class="sheet-body">

@@ -870,6 +870,10 @@
   $('clearPinned').addEventListener('click', () => clearPinned());
   $('colorMode').addEventListener('change', () => { drawMap(); status.colorMode = colorMode(); });
   window.__floodPin = () => pinScenario();
+  window.__floodGaugeLatLng = () => (state.a && state.gauge >= 0 ? cellLatLng(state.gauge) : null);
+  window.__floodSetLevel = (v) => { ctl.gaugeLevel.value = v; syncOutputs(); runScenario(); return parseFloat(ctl.gaugeLevel.value); };
+  window.__floodRelease = (pct, start, hours) => { $('relUnit').value = 'pct'; $('relFlow').value = pct; $('relStart').value = start; $('relHours').value = hours; return releaseOpts(); };
+  window.__floodWarming = (deg) => { ctl.warming.value = String(deg); runScenario(); return status.flash; };
   window.__floodColorMode = (m) => { $('colorMode').value = m; drawMap(); return { mode: colorMode(), hazard: status.hazard, compare: status.compare }; };
 
   function drawMap() {
@@ -2036,8 +2040,11 @@
       text = describe(c.i);
     }
     say(text);
+    const div = document.createElement('div');
+    div.innerHTML = `<div>${escapeHtml(text)}</div><button type="button" class="btn small" style="margin-top:6px">Check this property</button>`;
+    div.querySelector('button').addEventListener('click', () => { state.lmap.closePopup(); checkProperty(e.latlng.lat, e.latlng.lng); });
     window.L.popup({ closeButton: false, autoPanPadding: [24, 24] })
-      .setLatLng(e.latlng).setContent(escapeHtml(text)).openOn(state.lmap);
+      .setLatLng(e.latlng).setContent(div).openOn(state.lmap);
   }
 
   function onGeoMove(e) {
@@ -3756,7 +3763,9 @@
       extra = '<span class="spot-near">No flood model covers this spot yet.</span>';
     }
     status.searchHit = { inModel: !!hit };
-    spotPopup(ll, `<span class="spot-name">${escapeHtml(label)}</span>${extra}`, 'Add as a place', () => addPin(lat, lon, { name: label }));
+    spotPopup(ll, `<span class="spot-name">${escapeHtml(label)}</span>${extra}<button type="button" class="link-btn spot-check">Check this property</button>`, 'Add as a place', () => addPin(lat, lon, { name: label }));
+    const chk = document.querySelector('.leaflet-popup .spot-check');
+    if (chk) chk.addEventListener('click', () => { state.lmap.closePopup(); checkProperty(lat, lon, label); });
   }
   window.__floodGoTo = goToSearchResult;
 
@@ -4042,7 +4051,9 @@
       ${mark('work')}way["building"~"^(commercial|retail|industrial|office|warehouse|supermarket|school|university|college|hospital|public|civic|government|kindergarten)$"](${bb});out ids qt;
       ${mark('roads')}way["highway"~"^(${ROAD_TYPES})(_link)?$"](${bb});out body geom qt;
       ${mark('sites')}nwr["amenity"~"^(${Object.keys(SITE_KINDS).join('|')})$"](${bb});out tags center qt;
-      nwr["social_facility"~"^(nursing_home|assisted_living)$"](${bb});out tags center qt;`;
+      nwr["social_facility"~"^(nursing_home|assisted_living)$"](${bb});out tags center qt;
+      nwr["emergency"~"^(evacuation_centre|evacuation_center)$"](${bb});out tags center qt;
+      nwr["evacuation_centre"="yes"](${bb});out tags center qt;nwr["evacuation_center"="yes"](${bb});out tags center qt;`;
     const osm = await overpass(q);
     const els = osm.elements || [];
     const bIdx = new Map(), bx = [], by = [], homes = new Set(), work = new Set();
@@ -4055,7 +4066,8 @@
       else if (section === 'roads' && e.geometry) roads.push({ name: (e.tags && (e.tags.name || e.tags.ref)) || '', type: e.tags ? e.tags.highway : '', pts: e.geometry, nodes: e.nodes || [] });
       else if (section === 'sites' && e.tags) {
         const ll = e.center || (e.lat != null ? { lat: e.lat, lon: e.lon } : null);
-        const kind = SITE_KINDS[e.tags.amenity] || (e.tags.social_facility ? 'Aged care' : null);
+        const evac = /^evacuation_cent(re|er)$/.test(e.tags.emergency || '') || e.tags.evacuation_centre === 'yes' || e.tags.evacuation_center === 'yes';
+        const kind = evac ? EVAC : SITE_KINDS[e.tags.amenity] || (e.tags.social_facility ? 'Aged care' : null);
         if (ll && kind) sites.push({ name: e.tags.name || kind, kind, lat: ll.lat, lon: ll.lon });
       }
     }
@@ -4300,6 +4312,7 @@
       <p class="hint"><strong>Daytime:</strong> ${n(r.workWet)} flooded buildings are mapped as workplaces, shops, schools or public buildings${r.workTagged ? '' : ' (few buildings here are mapped by type)'}${r.workers != null ? `; about <strong>${n(r.workers)}</strong> of the ${n(r.workersAll)} people who work in the model area work in flooded buildings (ABS 2021 Census place of work by SA2, spread over each area's mapped workplaces)` : ''}. The people figure above counts residents. <strong>Cut off</strong> means the building's nearest road is dry but no dry road leads out of the model area (orange on the map); flooded roads are red.</p>
       <p class="hint">Flooded means at least 15 cm of water at the building or site; ${n(r.bDeep)} buildings have more than 50 cm${r.homesTagged ? `; ${n(r.hWet)} of the flooded buildings are mapped as homes` : ''}. Roads are cut where water is over 30 cm deep.</p>
       ${r.worstRoads.length ? `<p><strong>Roads cut:</strong> ${r.worstRoads.map(([nm, km]) => `${escapeHtml(nm)} (${km < 1 ? `${Math.round(km * 1000)} m` : `${km.toFixed(1)} km`})`).join(', ')}</p>` : ''}
+      ${(() => { const ev = d.sites.filter((x) => x.kind === EVAC), evh = r.sitesHit.filter((x) => x.kind === EVAC); return ev.length ? `<p><strong>Evacuation centres:</strong> ${ev.length} mapped here (green on the map)${evh.length ? `, <strong>${evh.length} flooded</strong>: ${evh.map((x) => escapeHtml(x.name)).join(', ')}` : ', none flooded'}. Use <em>Check this property</em> for the dry route to one.</p>` : ''; })()}
       ${r.sitesHit.length ? `<p><strong>Key sites:</strong> ${r.sitesHit.slice(0, 12).map((s) => `${escapeHtml(s.name)} <small>(${s.kind.toLowerCase()}, ${s.depth.toFixed(1)} m)</small>`).join('; ')}${r.sitesHit.length > 12 ? ` and ${r.sitesHit.length - 12} more` : ''}</p>` : ''}
       <p class="hint">Buildings, roads and sites: © OpenStreetMap contributors (ODbL), complete only where mapped${d.copy ? ` (the site's copy from ${escapeHtml(new Date(d.copy.fetched).toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' }))})` : ''}. People: ABS 2021 Census by SA1, spread across each area's buildings${r.people == null ? ' (not available here right now)' : ''}. Estimates for screening only.</p>`;
     // mark flooded key sites, cut roads and cut-off roads on the map
@@ -4314,6 +4327,12 @@
         seg(r.cutEdges, { color: '#c62828', weight: 4, opacity: 0.85 });
         seg(r.islandEdges, { color: '#ef6c00', weight: 4, opacity: 0.9, dashArray: '6 4' });
       }
+      // evacuation centres: green when dry, red ring when flooded
+      d.sites.filter((x) => x.kind === EVAC).forEach((x) => {
+        const hitE = r.sitesHit.some((h) => h.lat === x.lat && h.lon === x.lon);
+        window.L.circleMarker([x.lat, x.lon], { radius: 8, color: hitE ? '#c62828' : '#ffffff', weight: 2.5, fillColor: '#1b7837', fillOpacity: 0.95 })
+          .bindTooltip(`${escapeHtml(x.name)} (evacuation centre${hitE ? ', flooded' : ''})`).addTo(impactLayer);
+      });
       r.sitesHit.forEach((s) => window.L.circleMarker([s.lat, s.lon], { radius: 7, color: '#c62828', weight: 2.5, fillColor: '#fff', fillOpacity: 0.9 })
         .bindTooltip(`${s.name}: ${s.kind}, ${s.depth.toFixed(1)} m of water`).addTo(impactLayer));
     }
@@ -4740,11 +4759,40 @@
       hydro: ev ? ev.series : null,
       others: ev && ev.others ? otherGaugeCells(ev) : null,
       rating: gaugeRating(),
+      release: releaseOpts(),
       eventId: ev ? ev.id : null,
     };
   }
   $('floodShape').addEventListener('change', renderShapeChoices);
   $('tideCycle').addEventListener('change', () => { $('tideAmp').disabled = $('tideCycle').value === 'recorded'; });
+  // A dam release: as a share of the flood's peak flow, or in m³/s where the
+  // gauge's rating gives the peak flow to compare with
+  function peakFlowNow() {
+    const rt = gaugeRating(), a = state.a;
+    if (!rt || !a || state.gauge < 0) return null;
+    const board = rt.hmed + (parseFloat(ctl.gaugeLevel.value) - (a.dem[state.gauge] + 0.3));
+    return rt.a * Math.pow(Math.max(0, board - rt.h0), rt.b);
+  }
+  function releaseOpts() {
+    const v = parseFloat($('relFlow').value) || 0;
+    if (v <= 0) return null;
+    let frac = v / 100;
+    if ($('relUnit').value === 'm3s') { const q = peakFlowNow(); if (!q) return null; frac = v / q; }
+    return { startHours: parseFloat($('relStart').value) || 0, hours: Math.max(1, parseFloat($('relHours').value) || 24), frac };
+  }
+  function renderReleaseNote() {
+    const note = $('relNote');
+    if (!note || !state.a || state.gauge < 0) return;
+    const [la, lo] = cellLatLng(state.gauge), q = peakFlowNow();
+    const dams = nat.data ? nat.data.storages.map((f) => ({ f, km: kmBetween([f.geometry.coordinates[1], f.geometry.coordinates[0]], [la, lo]) }))
+      .filter((x) => x.km < 150).sort((x, y) => x.km - y.km).slice(0, 4) : [];
+    note.innerHTML = (q ? `The flood's peak flow at this gauge is about ${q >= 100 ? Math.round(q / 10) * 10 : Math.round(q)} m³/s (from its rating). ` : 'This gauge has no measured rating, so give the release as a share of the peak flow. ')
+      + (dams.length ? `Dams within 150 km: ${dams.map((x) => { const fl = storageFill(x.f.properties); return `${escapeHtml(x.f.properties.name)} (${Math.round(x.km)} km${fl != null ? `, ${Math.round(fl * 100)}% full` : ''})`; }).join('; ')}. A release takes hours to days to reach the gauge; set when it arrives.` : 'No Bureau-listed dams within 150 km.');
+    if ($('relUnit').value === 'm3s' && !q) $('relUnit').value = 'pct';
+  }
+  $('releaseBox').addEventListener('toggle', renderReleaseNote);
+  $('relUnit').addEventListener('change', renderReleaseNote);
+
   // the measured level-to-flow rating of the Bureau gauge at the model's
   // gauge (within 2 km), from the build's fit to Water Data Online records
   function gaugeRating() {
@@ -4851,7 +4899,7 @@
     const R = tl.wave.routed;
     status.timeline = { steps: tl.steps, step: tl.step, event: opts.eventId,
       routed: R ? { reaches: R.reaches.length, km: +(R.reaches[R.reaches.length - 1] || { km: 0 }).km.toFixed(1), peakFrac: +R.peakAt(R.flows.length - 1).frac.toFixed(2), lagHours: Math.round(R.peakAt(R.flows.length - 1).hours - R.peakAt(0).hours), tributaries: R.tributaries } : null,
-      tide: tl.wave.tide || 0, seaRecorded: !!tl.wave.seaRecorded, rated: !!(R && R.rated), upGauges: tl.wave.up ? tl.wave.up.gauges : 0, firstRoad: ac ? ac.firstClose : null, maxIsolated: ac ? ac.maxIso : null, longestHours: ac ? ac.longest : null, roadsClosed: ac ? new Set(ac.roads.map((r) => r.name)).size : null };
+      release: tl.wave.release ? +tl.wave.release.rise.toFixed(2) : null, tide: tl.wave.tide || 0, seaRecorded: !!tl.wave.seaRecorded, rated: !!(R && R.rated), upGauges: tl.wave.up ? tl.wave.up.gauges : 0, firstRoad: ac ? ac.firstClose : null, maxIsolated: ac ? ac.maxIso : null, longestHours: ac ? ac.longest : null, roadsClosed: ac ? new Set(ac.roads.map((r) => r.name)).size : null };
     return status.timeline;
   }
   // Roads and isolation through time, from when each spot is over 0.3 m deep
@@ -4961,6 +5009,7 @@
       const q = rt.a * Math.pow(Math.max(0, board - rt.h0), rt.b);
       parts.push(`Flows from ${escapeHtml(rt.name || 'the gauge')}'s measured rating (Water Data Online daily records${board > rt.hmax ? ', extended above the highest daily level recorded' : ''}): about ${q >= 100 ? Math.round(q / 10) * 10 : Math.round(q)} m³/s at the peak.`);
     }
+    if (tl.wave && tl.wave.release) parts.push(`Dam release: ${Math.round(tl.wave.release.frac * 100)}% of the peak flow from hour ${tl.opts.release.startHours} for ${tl.opts.release.hours} h, raising the gauge's highest level by ${fmt(Math.max(0, tl.wave.release.rise), 2)} m (to ${fmt(tl.wave.release.peakWith, 2)} m).`);
     if (tl.wave && tl.wave.up) parts.push(`Along the river the flood follows the recorded readings at ${tl.wave.up.gauges} more gauge${tl.wave.up.gauges === 1 ? '' : 's'}${tl.wave.up.below ? `, ${tl.wave.up.below} below this one` : ''}: ${escapeHtml(tl.wave.up.names.join(', '))}, blending between gauges along the way.`);
     if (tl.wave && tl.wave.seaRecorded && tl.event && tl.event.sea) parts.push(`Sea: the recorded level at the ${escapeHtml(tl.event.sea.station)} tide gauge (${Math.round(tl.event.sea.km)} km away; University of Hawaii Sea Level Center), tides and surge included, between ${tl.wave.seaRecorded.lo.toFixed(2)} and ${tl.wave.seaRecorded.hi.toFixed(2)} m above mean sea level.`);
     else if (tl.wave && tl.wave.tide) parts.push(`Tide: ${tl.opts.tide.atPeak === 'low' ? 'low' : 'high'} water at the peak, sea between ${(tl.s.bayLevel - 2 * tl.wave.tide).toFixed(2)} m and ${tl.s.bayLevel.toFixed(2)} m.`);
@@ -5500,6 +5549,190 @@
     if (isPhone() || e.target.closest('button, a')) return;
     setScenarioCollapsed(!$('panel-scenario').classList.contains('collapsed'));
   });
+
+  /* ---------- property check: one spot, every answer the app has */
+
+  // Road edges under more than 0.3 m of water in the current run
+  function closedEdges(d) {
+    const run = state.run, a = state.a;
+    if (state.routeCache && state.routeCache.run === run && state.routeCache.d === d) return state.routeCache.closed;
+    const net = d.net, closed = new Uint8Array(net.edges.length);
+    const deep = (c) => c >= 0 && run.wet[c] && !(a.ocean && a.ocean[c]) && run.depth[c] >= 0.3;
+    net.edges.forEach(([u, v], k) => {
+      for (let t = 0; t <= 4 && !closed[k]; t++) {
+        const f = t / 4;
+        if (deep(cellOf(net.lat[u] + (net.lat[v] - net.lat[u]) * f, net.lon[u] + (net.lon[v] - net.lon[u]) * f))) closed[k] = 1;
+      }
+    });
+    state.routeCache = { run, d, closed };
+    return closed;
+  }
+  const EVAC = 'Evacuation centre';
+  // The shortest dry route by road from a spot to the edge of the model and
+  // to the nearest dry evacuation centre (Dijkstra over the road network)
+  function routeOut(lat, lon) {
+    const area = state.areaKey && areaReg.get(state.areaKey), d = area && area.impact, a = state.a, g = state.geo;
+    if (!d || d.error || !d.net || !d.net.lat.length) return null;
+    const net = d.net, nN = net.lat.length, closed = closedEdges(d), run = state.run;
+    const nodeWet = (n) => { const c = cellOf(net.lat[n], net.lon[n]); return c >= 0 && run.wet[c] && run.depth[c] >= 0.3 && !(a.ocean && a.ocean[c]); };
+    const km = (u, v) => Math.hypot((net.lon[v] - net.lon[u]) * 111.32 * Math.cos((net.lat[u] * Math.PI) / 180), (net.lat[v] - net.lat[u]) * 110.574);
+    let start = -1, best = Infinity;
+    for (let n = 0; n < nN; n++) {
+      const dd = (net.lat[n] - lat) ** 2 + ((net.lon[n] - lon) * Math.cos((lat * Math.PI) / 180)) ** 2;
+      if (dd < best) { best = dd; start = n; }
+    }
+    const startKm = Math.sqrt(best) * 111;
+    if (start < 0 || startKm > 0.5) return { none: true };
+    const adj = Array.from({ length: nN }, () => []);
+    net.edges.forEach(([u, v, ri], k) => { if (!closed[k]) { adj[u].push([v, ri]); adj[v].push([u, ri]); } });
+    const mx = ((g.east - g.west) / a.W) * 3, my = ((g.north - g.south) / a.H) * 3;
+    const isExit = (n) => net.lat[n] < g.south + my || net.lat[n] > g.north - my || net.lon[n] < g.west + mx || net.lon[n] > g.east - mx;
+    // evacuation centres: their nearest road node
+    const centres = d.sites.filter((x) => x.kind === EVAC).map((x) => {
+      let nb = -1, bd = Infinity;
+      for (let n = 0; n < nN; n++) { const dd = (net.lat[n] - x.lat) ** 2 + (net.lon[n] - x.lon) ** 2; if (dd < bd) { bd = dd; nb = n; } }
+      return { ...x, node: nb, flooded: (() => { const c = cellOf(x.lat, x.lon); return c >= 0 && run.wet[c] && run.depth[c] >= 0.15; })() };
+    });
+    const centreAt = new Map(centres.filter((x) => !x.flooded && x.node >= 0).map((x) => [x.node, x]));
+    const dist = new Float64Array(nN).fill(Infinity), prev = new Int32Array(nN).fill(-1), via = new Int32Array(nN).fill(-1);
+    const heap = new F._internal.MinHeap(net.edges.length * 2 + 4);
+    if (!nodeWet(start)) { dist[start] = 0; heap.push(0, start); }
+    let exitNode = -1, centreNode = -1;
+    while (heap.n) {
+      const u = heap.pop();
+      if (exitNode < 0 && isExit(u)) exitNode = u;
+      if (centreNode < 0 && centreAt.has(u)) centreNode = u;
+      if (exitNode >= 0 && (centreNode >= 0 || !centreAt.size)) break;
+      for (const [v, ri] of adj[u]) {
+        if (nodeWet(v)) continue;
+        const nd = dist[u] + km(u, v);
+        if (nd < dist[v]) { dist[v] = nd; prev[v] = u; via[v] = ri; heap.push(nd, v); }
+      }
+    }
+    const path = (t) => {
+      if (t < 0) return null;
+      const pts = [], names = [];
+      for (let n = t; n >= 0; n = prev[n]) {
+        pts.push([net.lat[n], net.lon[n]]);
+        const nm = via[n] >= 0 && d.roads[via[n]] ? d.roads[via[n]].name : '';
+        if (nm && names[names.length - 1] !== nm) names.push(nm);
+      }
+      return { km: dist[t], pts: pts.reverse(), via: names.reverse().slice(0, 4) };
+    };
+    return { startKm, toExit: path(exitNode), toCentre: centreNode >= 0 ? Object.assign(path(centreNode), { name: centreAt.get(centreNode).name }) : null,
+      centres: centres.length, centresFlooded: centres.filter((x) => x.flooded).length };
+  }
+  function drawRoute(r) {
+    const L = window.L;
+    if (state.routeLayer) state.routeLayer.clearLayers(); else if (state.lmap) state.routeLayer = L.layerGroup().addTo(state.lmap);
+    if (!r || !state.routeLayer) return;
+    if (r.toExit) L.polyline(r.toExit.pts, { color: '#1b7837', weight: 4, opacity: 0.9, dashArray: '8 6' }).bindTooltip('Dry route out of the model area').addTo(state.routeLayer);
+    if (r.toCentre) L.polyline(r.toCentre.pts, { color: '#1b7837', weight: 5, opacity: 0.95 }).bindTooltip(`Dry route to ${r.toCentre.name}`).addTo(state.routeLayer);
+  }
+  // The gauge level at which this spot first gets wet (binary search)
+  function floodsAtLevel(c) {
+    const a = state.a;
+    if (state.gauge < 0 || ctl.floodType.value === 'flash') return null;
+    const base = scenario(), lo0 = a.dem[state.gauge] + 0.3, hi0 = parseFloat(ctl.gaugeLevel.max) || lo0 + 10;
+    const wetAt = (L) => { const r = F.inundate(a, Object.assign({}, base, { gaugeLevel: L })); return r.wet[c] && !(a.ocean && a.ocean[c]) && !(state.base && state.base.wet[c]); };
+    if (wetAt(lo0)) return { level: lo0, always: true };
+    if (!wetAt(hi0)) return { above: hi0 };
+    let lo = lo0, hi = hi0;
+    for (let k = 0; k < 12 && hi - lo > 0.02; k++) { const m = (lo + hi) / 2; if (wetAt(m)) hi = m; else lo = m; }
+    return { level: hi, rise: hi - lo0 };
+  }
+  async function councilAt(lat, lon) {
+    const out = [];
+    await Promise.all(COUNCIL_OVERLAYS.filter((o) => o.type === 'feature' && o.test && kmBetween(o.test, [lat, lon]) < 150).map(async (o) => {
+      try {
+        const p = new URLSearchParams({ geometry: `${lon},${lat}`, geometryType: 'esriGeometryPoint', inSR: '4326', spatialRel: 'esriSpatialRelIntersects', outFields: '*', returnGeometry: 'false', f: 'json' });
+        const j = await (await fetch(`${o.url}/query?${p}`)).json();
+        for (const f of j.features || []) {
+          const at = f.attributes || {};
+          const text = ['RISK', 'OVL2_DESC', 'CAT_DESC', 'DESCRIPTION', 'LAYER'].map((k) => at[k]).find((v) => v && String(v).trim());
+          out.push(`${o.name.replace(/ \(council\)$/, '')}${text ? `: ${text}` : ''}`);
+        }
+      } catch (err) { /* service down */ }
+    }));
+    return out;
+  }
+  async function checkProperty(lat, lon, label) {
+    openPanel('panel-property');
+    const box = $('propertyBox');
+    const L = window.L, ll = L.latLng(lat, lon), hit = areaAt(ll);
+    const name = label || `${Math.abs(lat).toFixed(4)}° S, ${lon.toFixed(4)}° E`;
+    if (!hit) {
+      box.innerHTML = `<p><strong>${escapeHtml(name)}</strong></p><p>No flood model covers this spot yet.</p><div class="link-row"><button type="button" class="btn small" id="propModel">Model flooding here</button></div>`;
+      $('propModel').addEventListener('click', () => modelHere(lat, lon, { name: label || 'This area' }));
+      status.property = { inModel: false };
+      return status.property;
+    }
+    if (hit.key !== state.areaKey) activateArea(hit.key);
+    await state.ready;
+    const a = state.a, cc = latLngCell(ll), area = areaReg.get(state.areaKey);
+    if (!a || !cc) return null;
+    const c = cc.i, run = state.run;
+    box.innerHTML = `<p><strong>${escapeHtml(name)}</strong> · in ${hit.n}. ${escapeHtml(hit.name)}</p><p class="hint">Working it out…</p>`;
+    if (area.impact == null) { try { await countImpact(); } catch (err) { /* counted without roads */ } }
+    const d = area.impact && !area.impact.error ? area.impact : null;
+    const wet = run.wet[c] && !(a.ocean && a.ocean[c]), depth = wet ? run.depth[c] : 0;
+    const hz = wet ? hazardNow() : null, cls = hz ? hz.cls[c] : 0;
+    // the nearest mapped building, for water over the floor
+    let bi = -1;
+    if (d) { let bd = Infinity; for (let i = 0; i < d.bx.length; i++) { const dd = (d.by[i] - lat) ** 2 + ((d.bx[i] - lon) * Math.cos((lat * Math.PI) / 180)) ** 2; if (dd < bd) { bd = dd; bi = i; } } if (Math.sqrt(bd) * 111000 > 30) bi = -1; }
+    const floorH = parseFloat($('floorHeight').value);
+    const lines = [];
+    lines.push(wet
+      ? `<strong>In this scenario:</strong> ${fmt(depth, 2)} m of water${bi >= 0 ? (depth > floorH ? `, about <strong>${fmt(depth - floorH, 2)} m over the floor</strong> of the building here (floor ${fmt(floorH, 1)} m up)` : ', below the floor of the building here') : ''}; hazard <strong>H${cls}</strong> (${HAZARD_TEXT[cls - 1]}).`
+      : `<strong>In this scenario:</strong> dry${bi >= 0 ? ' (a mapped building is here)' : ''}.`);
+    const lvl = floodsAtLevel(c);
+    if (lvl) {
+      lines.push(lvl.always ? 'Wet even at the river\'s normal level (a channel, lake or low spot).'
+        : lvl.above ? `Stays dry up to the highest level the slider allows (${fmt(lvl.above, 2)} m at the gauge).`
+          : `<strong>Floods when the gauge reaches about ${fmt(lvl.level, 2)} m</strong>, ${fmt(lvl.rise, 2)} m above its normal level.`);
+      status.propertyLevel = lvl.level || null;
+    }
+    // flood over time, if run: when it gets wet, and when it is cut off
+    const tl = area.timeline;
+    if (tl && tl.wetBits) {
+      let k0 = -1;
+      for (let k = 0; k < tl.steps; k++) if (tl.wetBits[k * tl.wordsPerStep + (c >>> 5)] & (1 << (c & 31))) { k0 = k; break; }
+      const toH = (k) => Math.round(tl.t0 + k * tl.step), when = (h) => (tl.event ? fmtWhen(tl.event, h) : hoursLabel(h));
+      const iso = bi >= 0 && tl.access && tl.access.firstIso ? tl.access.firstIso[bi] : -1;
+      lines.push(`<strong>Over time:</strong> ${k0 >= 0 ? `water arrives ${when(toH(k0))}` : 'stays dry'}${iso >= 0 ? `; cut off from ${when(toH(iso))} for about ${Math.round(tl.access.isoSteps[bi] * tl.step)} h` : ''}.`);
+    }
+    // roads out
+    const route = d ? routeOut(lat, lon) : null;
+    drawRoute(route);
+    if (route && !route.none) {
+      const r1 = route.toExit, r2 = route.toCentre;
+      lines.push(r1 ? `<strong>Road out:</strong> a dry route leaves the model area after ${fmt(r1.km, 1)} km${r1.via.length ? ` (${escapeHtml(r1.via.join(', '))})` : ''} (dashed green).`
+        : '<strong>Road out:</strong> <strong>cut off</strong>: no dry road leaves the model area in this scenario.');
+      if (route.centres) lines.push(r2 ? `<strong>Evacuation centre:</strong> ${escapeHtml(r2.name)}, ${fmt(r2.km, 1)} km by dry roads (solid green).${route.centresFlooded ? ` ${route.centresFlooded} of ${route.centres} mapped centres here are flooded.` : ''}`
+        : `<strong>Evacuation centre:</strong> none of the ${route.centres} mapped here can be reached by dry roads.`);
+      else lines.push('<span class="hint">No evacuation centres are mapped in OpenStreetMap in this area; check your council\'s disaster dashboard.</span>');
+    }
+    box.innerHTML = `<p><strong>${escapeHtml(name)}</strong> · in ${hit.n}. ${escapeHtml(hit.name)}</p>${lines.map((x) => `<p>${x}</p>`).join('')}<p class="hint" id="propSlow">Checking recorded floods and council maps…</p>`;
+    status.property = { inModel: true, depth: +depth.toFixed(2), hazard: cls, floodsAt: lvl && lvl.level ? +lvl.level.toFixed(2) : null,
+      route: route && !route.none ? { exitKm: route.toExit ? +route.toExit.km.toFixed(2) : null, centre: route.toCentre ? route.toCentre.name : null, centres: route.centres } : null };
+    // slower: recorded flood outlines and council layers
+    const extra = [];
+    try {
+      if (!area.recorded) await findRecorded();
+      for (const rec of area.recorded || []) {
+        try { const m = await recordedMask(rec); if (m.flood[c]) extra.push(`Inside the recorded ${escapeHtml(rec.name)}.`); } catch (err) { /* skip */ }
+      }
+      if (area.recorded && area.recorded.length && !extra.length) extra.push(`Outside the ${area.recorded.length} recorded flood outline${area.recorded.length === 1 ? '' : 's'} found here.`);
+    } catch (err) { /* no recorded floods */ }
+    const council = await councilAt(lat, lon);
+    if (council.length) extra.push(`Council maps: ${council.map(escapeHtml).join('; ')}.`);
+    const slow = $('propSlow');
+    if (slow) slow.outerHTML = extra.length ? extra.map((x) => `<p>${x}</p>`).join('') : '<p class="hint">No recorded flood outlines or council flood maps cover this spot in the sources the app knows.</p>';
+    status.property.recorded = extra.filter((x) => x.startsWith('Inside')).length;
+    status.property.council = council.length;
+    return status.property;
+  }
+  window.__floodCheckProperty = checkProperty;
 
   // What each data source returned in the latest build (data/status.json)
   async function renderDataStatus() {
