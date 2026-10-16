@@ -99,11 +99,14 @@ def compare_file(p, r):
 def main(pdir, rdir, label=""):
     pdir, rdir = Path(pdir), Path(rdir)
     files = sorted({f.relative_to(pdir) for f in pdir.rglob("*") if f.is_file()} | {f.relative_to(rdir) for f in rdir.rglob("*") if f.is_file()})
-    bad = 0
+    bad, shown = 0, 0
     for f in files:
         p, r = pdir / f, rdir / f
         if not p.exists() or not r.exists():
             print(f"{f}: only in {'rust' if r.exists() else 'python'}")
+            if shown < 6:
+                print(f"::warning::{label} {f}: only in {'rust' if r.exists() else 'python'}")
+                shown += 1
             bad += 1
             continue
         try:
@@ -113,6 +116,10 @@ def main(pdir, rdir, label=""):
         print(f"{f}: {'same' if not msgs else 'DIFFERS'}")
         for m in msgs:
             print(f"    {m}")
+        if msgs and shown < 6:
+            # the details as an annotation, so they can be read without the log
+            print(f"::warning::{label} {f}: " + " | ".join(m[:300] for m in msgs[:8]))
+            shown += 1
         bad += bool(msgs)
     kind = "warning" if bad else "notice"
     print(f"::{kind}::Pipeline {label}: {len(files) - bad} of {len(files)} files match" + (f", {bad} differ" if bad else ""))
