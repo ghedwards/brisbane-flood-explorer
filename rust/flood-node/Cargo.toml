@@ -1,0 +1,13 @@
+[package]
+name = "flood-node"
+version = "0.1.0"
+edition = "2021"
+description = "Loads the WebAssembly interface natively into Node, for tests on machines without the wasm32 target."
+license = "MIT"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+flood-wasm = { path = "../flood-wasm" }

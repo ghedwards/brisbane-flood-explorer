@@ -1266,6 +1266,8 @@
   }
   const BLANK = 'data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==';
   const status = (window.__floodStatus = { mode: 'static', overlayUpdates: 0, tilesLoaded: 0, tileErrors: 0, floodPixels: 0, overlays: {} });
+  status.engine = F.engine || 'js';
+  if (window.FloodCoreReady) window.FloodCoreReady.then(() => { status.engine = F.engine; });
 
   // Offline use: a service worker keeps the app, the national data, map
   // tiles and model terrain that have been used, so the site still opens
@@ -5743,7 +5745,8 @@
     if (!st || !st.sources) { box.innerHTML = '<p class="hint">No status from the build yet.</p>'; return null; }
     const label = { ok: 'OK', cached: 'From an earlier build', problem: 'Problem', missing: 'Not available' };
     const when = (iso) => (iso ? new Date(iso).toLocaleString('en-AU', { day: 'numeric', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit' }) : '');
-    box.innerHTML = `<p class="hint">Built ${escapeHtml(when(st.built))}.</p><ul class="data-status">${st.sources.map((s) => `<li class="st-${escapeHtml(s.state)}">
+    const engine = F.engine === 'rust' ? 'Rust, compiled to WebAssembly' : 'JavaScript';
+    box.innerHTML = `<p class="hint">Built ${escapeHtml(when(st.built))}. Flood model running in ${engine}.</p><ul class="data-status">${st.sources.map((s) => `<li class="st-${escapeHtml(s.state)}">
       <strong>${escapeHtml(s.name)}</strong> <span class="st-badge">${escapeHtml(label[s.state] || s.state)}</span><br>
       <span class="hint">${escapeHtml(s.summary)}${s.fetched ? ` · data from ${escapeHtml(when(s.fetched))}` : ''} · for ${escapeHtml(s.feeds)}</span></li>`).join('')}</ul>`;
     status.dataStatus = st.sources.map((s) => `${s.name}: ${s.state}`);

@@ -1,9 +1,11 @@
 /* Flood Explorer background worker: runs the heavy flow analysis off the
  * page's main thread so building or reopening a model doesn't freeze it. */
-importScripts('flood-core.js');
+importScripts('flood-core.js', 'flood-wasm.js');
 
-self.onmessage = (e) => {
+self.onmessage = async (e) => {
   const { id, grid, opts, kind } = e.data;
+  // the Rust model once it has loaded (the JavaScript one if it can't)
+  if (self.FloodCoreReady) await self.FloodCoreReady;
   try {
     if (kind === 'timeline') {
       const tl = self.FloodCore.floodTimeline(e.data.a, e.data.s, opts);

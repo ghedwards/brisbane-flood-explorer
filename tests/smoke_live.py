@@ -63,6 +63,16 @@ def main() -> int:
                        ownKB: kb(own), allKB: kb(res), requests: res.length, biggest: big };
             }""")
             note("notice", f"First load: {json.dumps(load)}")
+            # the flood model: Rust compiled to WebAssembly (JavaScript if it can't load)
+            try:
+                page.wait_for_function("window.__floodStatus.engine === 'rust'", timeout=15_000)
+            except Exception:
+                pass
+            engine = page.evaluate("window.__floodStatus.engine")
+            if engine == "rust":
+                note("notice", "Flood model: Rust (WebAssembly)")
+            else:
+                failures.append(f"the Rust flood model did not load (engine: {engine})")
             # keyboard: Tab reaches the map, and Enter on it looks at the middle
             page.focus("#lmap")
             page.keyboard.press("Enter")

@@ -1,0 +1,12 @@
+[package]
+name = "flood-wasm"
+version = "0.1.0"
+edition = "2021"
+description = "WebAssembly interface to flood-core for the browser (plain exports, no dependencies)."
+license = "MIT"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+flood-core = { path = "../flood-core" }

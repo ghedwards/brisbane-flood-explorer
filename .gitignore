@@ -4,3 +4,6 @@ viewer/data/
 __pycache__/
 *.pyc
 .DS_Store
+rust/target/
+work-*
+*.node

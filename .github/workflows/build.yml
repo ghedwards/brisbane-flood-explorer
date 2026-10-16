@@ -37,6 +37,38 @@ jobs:
       - name: Test the flood model
         run: node --test tests/*.test.js
 
+      - name: Cache Rust builds
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            rust/target
+          key: rust-${{ hashFiles('rust/**/*.rs', 'rust/**/Cargo.toml', 'rust/Cargo.lock') }}
+          restore-keys: rust-
+
+      # The flood model in Rust: its own tests, then compiled to WebAssembly
+      # for the browser and checked against the JavaScript model's tests and
+      # numbers (tests/parity.js).
+      - name: Build and test the Rust flood model
+        working-directory: rust
+        run: |
+          rustup target add wasm32-unknown-unknown
+          cargo test --release --workspace
+          cargo build --release -p flood-wasm --target wasm32-unknown-unknown
+          cp target/wasm32-unknown-unknown/release/flood_wasm.wasm ../work-flood.wasm
+          echo "::notice::flood.wasm: $(wc -c < ../work-flood.wasm) bytes"
+
+      - name: Test the WebAssembly model
+        env:
+          FLOOD_IMPL: wasm
+          FLOOD_WASM: work-flood.wasm
+        run: |
+          node --test tests/core.test.js
+          node tests/parity.js > work-parity-wasm.txt
+          FLOOD_IMPL=js node tests/parity.js work-parity-wasm.txt
+          (cd rust && cargo run -q --release -p flood-core --example parity) > work-parity-rust.txt
+          FLOOD_IMPL=js node tests/parity.js work-parity-rust.txt
+
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
@@ -87,16 +119,17 @@ jobs:
       - name: Assemble site
         run: |
           mkdir -p site/data
-          cp viewer/index.html viewer/styles.css viewer/app.js viewer/flood-core.js viewer/flood-worker.js viewer/sw.js viewer/manifest.webmanifest site/
+          cp viewer/index.html viewer/styles.css viewer/app.js viewer/flood-core.js viewer/flood-wasm.js viewer/flood-worker.js viewer/sw.js viewer/manifest.webmanifest site/
+          cp work-flood.wasm site/flood.wasm
           mkdir -p site/icons && cp viewer/icons/*.png site/icons/
           # each deploy gets its own app cache, so phones pick up the new version
           sed -i "s/__BUILD__/${GITHUB_SHA::8}-${GITHUB_RUN_NUMBER}/" site/sw.js
           # smaller downloads: minify the scripts and styles (kept as they
           # are if minifying fails or the result doesn't run)
-          if npx --yes esbuild@0.24.0 viewer/app.js viewer/flood-core.js viewer/flood-worker.js viewer/styles.css --minify --target=es2020 --outdir=work/min >/dev/null \
-             && node --check work/min/app.js && node --check work/min/flood-worker.js \
+          if npx --yes esbuild@0.24.0 viewer/app.js viewer/flood-core.js viewer/flood-wasm.js viewer/flood-worker.js viewer/styles.css --minify --target=es2020 --outdir=work/min >/dev/null \
+             && node --check work/min/app.js && node --check work/min/flood-worker.js && node --check work/min/flood-wasm.js \
              && node -e "const F=require('./work/min/flood-core.js'); const a=F.analyse(F.syntheticTerrain()); if(!(a.defaultGauge>=0)) process.exit(1)"; then
-            cp work/min/app.js work/min/flood-core.js work/min/flood-worker.js work/min/styles.css site/
+            cp work/min/app.js work/min/flood-core.js work/min/flood-wasm.js work/min/flood-worker.js work/min/styles.css site/
             echo "::notice::Minified: app.js $(wc -c < viewer/app.js) → $(wc -c < site/app.js) bytes"
           else
             echo "::warning::Minifying failed; publishing the scripts as they are"

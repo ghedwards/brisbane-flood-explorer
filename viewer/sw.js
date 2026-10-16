@@ -15,7 +15,7 @@ const LIBS = 'libs-v1', TILES = 'tiles-v1', TERRAIN = 'terrain-v1', API = 'api-v
 const LIMITS = { [TILES]: 4000, [TERRAIN]: 120, [API]: 600 };
 
 const SHELL = [
-  './', 'index.html', 'styles.css', 'app.js', 'flood-core.js', 'flood-worker.js', 'manifest.webmanifest',
+  './', 'index.html', 'styles.css', 'app.js', 'flood-core.js', 'flood-wasm.js', 'flood.wasm', 'flood-worker.js', 'manifest.webmanifest',
   'icons/icon-192.png', 'icons/icon-512.png', 'icons/apple-touch-icon.png',
   'data/national/gauges-core.min.json', 'data/national/storages.geojson', 'data/national/readings.json', 'data/national/meta.json',
 ];

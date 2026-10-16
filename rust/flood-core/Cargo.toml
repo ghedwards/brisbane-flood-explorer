@@ -1,0 +1,8 @@
+[package]
+name = "flood-core"
+version = "0.1.0"
+edition = "2021"
+description = "Flood Explorer's flood model: terrain analysis, inundation, flood over time, storms, hazard. No dependencies."
+license = "MIT"
+
+[dependencies]

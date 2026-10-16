@@ -1,7 +1,7 @@
 // Run with: node --test tests/
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const F = require('../viewer/flood-core.js');
+const F = require('./model.js');
 
 const grid = F.syntheticTerrain();
 const a = F.analyse(grid);
