@@ -66,12 +66,15 @@ class Sea(unittest.TestCase):
         self.assertIn("Mackay", sea["station"])
         self.assertAlmostEqual(max(v for _, v in sea["series"]), 1.0, delta=0.05)
 
-    def test_main_updates_the_file(self):
+    def test_main_and_merge(self):
         with tempfile.TemporaryDirectory() as d:
-            p = Path(d, "e.json")
+            p, sea, out = Path(d, "e.json"), Path(d, "s.json"), Path(d, "o.json")
             p.write_text(json.dumps({"events": [{"id": "x", "lat": -36.1, "lon": 144.7, "start": "2022-10-12T00:00:00+10:00", "series": [[0, 1]]}]}))
-            fs.main(p)
-            self.assertNotIn("sea", json.loads(p.read_text())["events"][0])
+            fs.main(p, sea)
+            self.assertEqual(json.loads(sea.read_text()), {}, "inland: no tide gauge")
+            sea.write_text(json.dumps({"x": {"station": "S", "series": [[0, 0.5]]}}))
+            fs.merge(p, sea, out)
+            self.assertEqual(json.loads(out.read_text())["events"][0]["sea"]["station"], "S")
 
 
 if __name__ == "__main__":

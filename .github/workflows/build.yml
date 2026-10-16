@@ -124,16 +124,31 @@ jobs:
         uses: actions/cache@v6
         with:
           path: cache/events.json
-          key: events-${{ hashFiles('config/events.json', 'pipeline/fetch_events.py', 'pipeline/fetch_sealevels.py') }}
+          key: events-${{ hashFiles('config/events.json', 'pipeline/fetch_events.py') }}
 
       - name: Fetch recorded flood readings (Water Data Online)
         if: steps.events.outputs.cache-hit != 'true' && steps.national.outcome == 'success'
         continue-on-error: true
-        timeout-minutes: 10
+        timeout-minutes: 20
         run: |
           mkdir -p cache
           python pipeline/fetch_events.py config/events.json site/data/national/gauges.geojson cache/events.json | tee events.log
-          python pipeline/fetch_sealevels.py cache/events.json | tee -a events.log || true
+
+      # Recorded sea levels for those floods (tide gauges): slow downloads,
+      # so their own step, cache and time limit
+      - name: Restore recorded sea levels
+        id: sea
+        uses: actions/cache@v6
+        with:
+          path: cache/sea.json
+          key: sea-${{ hashFiles('config/events.json', 'pipeline/fetch_events.py', 'pipeline/fetch_sealevels.py') }}
+
+      - name: Fetch recorded sea levels (UHSLC, Maritime Safety Queensland)
+        if: steps.sea.outputs.cache-hit != 'true'
+        continue-on-error: true
+        timeout-minutes: 25
+        run: |
+          [ -f cache/events.json ] && python pipeline/fetch_sealevels.py cache/events.json cache/sea.json | tee sea.log || true
 
       - name: Restore levee lines
         id: levees
@@ -219,7 +234,7 @@ jobs:
 
       - name: Publish recorded floods and levees
         run: |
-          [ -f cache/events.json ] && cp cache/events.json site/data/events.json || true
+          [ -f cache/events.json ] && python pipeline/fetch_sealevels.py merge cache/events.json cache/sea.json site/data/events.json || true
           [ -f cache/levees.geojson ] && cp cache/levees.geojson site/data/levees.geojson || true
           [ -f cache/tides.json ] && cp cache/tides.json site/data/tides.json || true
           [ -f cache/ratings.json ] && cp cache/ratings.json site/data/ratings.json || true
@@ -231,8 +246,8 @@ jobs:
           echo "::notice::$(grep -E '^OpenStreetMap copies' osm.log 2>/dev/null || echo 'OpenStreetMap copies: none')"
           grep '^warning:' osm.log 2>/dev/null | head -3 | sed 's/^warning:/::warning::OpenStreetMap copy /' || true
           echo "::notice::$(grep -E '^Recorded floods' events.log 2>/dev/null || echo 'Recorded floods: from cache')"
-          grep -E '^Sea levels' events.log 2>/dev/null | sed 's/^/::notice::/' || true
-          grep -E '^note: ' events.log 2>/dev/null | head -5 | sed 's/^note: /::notice::Sea level /' || true
+          echo "::notice::$(grep -E '^Sea levels' sea.log 2>/dev/null || ([ -f cache/sea.json ] && echo 'Sea levels: from cache') || echo 'Sea levels: none')"
+          grep -E '^(note|warning): ' sea.log 2>/dev/null | head -6 | sed -E 's/^(note|warning): /::notice::Sea level /' || true
           grep -E '^Other gauges' events.log 2>/dev/null | cut -c1-900 | sed 's/^/::notice::/' || true
           grep '^warning:' events.log 2>/dev/null | head -4 | sed 's/^warning:/::warning::Recorded flood /' || true
           echo "::notice::$(grep -E '^Levees' levees.log 2>/dev/null || echo 'Levees: from cache')"
@@ -320,7 +335,7 @@ jobs:
         run: python pipeline/fetch_floodhub.py config/brisbane.json site/data | tee floodhub.log
 
       - name: Data status for the app
-        run: python pipeline/build_status.py site national.log floodinfo.log events.log ratings.log tides.log workers.log osm.log levees.log floodhub.log
+        run: python pipeline/build_status.py site national.log floodinfo.log events.log sea.log ratings.log tides.log workers.log osm.log levees.log floodhub.log
 
       - name: Build summary
         run: |

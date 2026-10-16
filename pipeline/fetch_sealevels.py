@@ -1,6 +1,11 @@
 """Add recorded hourly sea levels to the recorded floods near the coast.
 
-Usage: python pipeline/fetch_sealevels.py <events.json>   (updated in place)
+Usage: python pipeline/fetch_sealevels.py <events.json> <sea.json>
+       python pipeline/fetch_sealevels.py merge <events.json> <sea.json> <out.json>
+
+The first form writes {event id: sea} for the recorded floods; the second
+adds them to the events file the app reads (kept apart so the slow tide
+gauge downloads have their own build step, cache and time limit).
 
 For each recorded flood with readings, finds the nearest of the Australian
 tide gauges in the University of Hawaii Sea Level Center (UHSLC) archive
@@ -147,8 +152,26 @@ def parse_levels(text):
     return out
 
 
+_msq_years = {}
+_msq_budget = {"until": None}
+
+
 def msq_year(site, year):
-    """Readings for one MSQ site and year, or [] if not published."""
+    """Readings for one MSQ site and year, or [] if not published (each file
+    is read once per run; downloads stop after the time budget)."""
+    key = (site.lower(), year)
+    if key in _msq_years:
+        return _msq_years[key]
+    import time
+    if _msq_budget["until"] is None:
+        _msq_budget["until"] = time.time() + 900
+    if time.time() > _msq_budget["until"]:
+        raise RuntimeError("time budget for Queensland files used up")
+    _msq_years[key] = rows = _msq_year(site, year)
+    return rows
+
+
+def _msq_year(site, year):
     cat = msq_catalogue()
     resources = cat.get(site.lower(), [])
     if not resources:
@@ -245,26 +268,44 @@ def sea_for(ev, fetch=erddap, msq=msq_year):
     return None, "; ".join(why)[:300]
 
 
-def main(path):
-    p = Path(path)
-    data = json.loads(p.read_text())
-    done, notes = [], []
+def main(events_path, out_path):
+    data = json.loads(Path(events_path).read_text())
+    done, notes, sea = [], [], {}
     for ev in data.get("events", []):
         if not ev.get("series") or not ev.get("start"):
             continue
-        sea, why = sea_for(ev)
-        if sea:
-            ev["sea"] = sea
-            done.append(f"{ev['id']} ({sea['station']}, {len(sea['series'])} h)")
+        try:
+            got, why = sea_for(ev)
+        except Exception as e:  # noqa: BLE001 - one flood failing shouldn't stop the rest
+            got, why = None, str(e)[:200]
+        if got:
+            sea[ev["id"]] = got
+            done.append(f"{ev['id']} ({got['station']}, {len(got['series'])} h)")
         elif why and "no tide gauge" not in why:
             notes.append(f"{ev['id']}: {why}")
-    p.write_text(json.dumps(data, separators=(",", ":")))
+        Path(out_path).write_text(json.dumps(sea, separators=(",", ":")))   # keep what's done so far
+    Path(out_path).write_text(json.dumps(sea, separators=(",", ":")))
     print(f"Sea levels: {len(done)} recorded floods: {', '.join(done)}")
     for n in notes[:5]:
         print(f"warning: {n}")
 
 
+def merge(events_path, sea_path, out_path):
+    data = json.loads(Path(events_path).read_text())
+    try:
+        sea = json.loads(Path(sea_path).read_text())
+    except (OSError, ValueError):
+        sea = {}
+    for ev in data.get("events", []):
+        if ev.get("id") in sea:
+            ev["sea"] = sea[ev["id"]]
+    Path(out_path).write_text(json.dumps(data, separators=(",", ":")))
+
+
 if __name__ == "__main__":
-    if len(sys.argv) != 2:
+    if len(sys.argv) == 5 and sys.argv[1] == "merge":
+        merge(*sys.argv[2:])
+    elif len(sys.argv) == 3:
+        main(*sys.argv[1:])
+    else:
         sys.exit(__doc__)
-    main(sys.argv[1])
