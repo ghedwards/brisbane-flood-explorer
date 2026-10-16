@@ -1,0 +1,181 @@
+name: Compare Python and Rust pipelines
+
+# Runs each data fetcher in Python and in Rust (the `flood` command) against
+# the live services at the same time, and compares what they write
+# (tests/compare_pipeline.py). Used while moving the pipeline to Rust.
+on:
+  push:
+    branches: [main]
+    paths: ["rust/flood-pipeline/**", "tests/compare_pipeline.py", ".github/workflows/pipeline-compare.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pipeline-compare
+  cancel-in-progress: true
+
+jobs:
+  compare:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pipeline/requirements.txt
+      - run: pip install -r pipeline/requirements.txt
+      - uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            rust/target
+          key: rust-pipeline-${{ hashFiles('rust/**/*.rs', 'rust/**/Cargo.toml', 'rust/Cargo.lock') }}
+          restore-keys: rust-pipeline-
+      - name: Build and test the flood command
+        working-directory: rust
+        run: |
+          cargo test --release -p flood-pipeline
+          cargo build --release -p flood-pipeline
+          echo "$PWD/target/release" >> "$GITHUB_PATH"
+          mkdir -p ../cmp
+
+      - name: National gauges
+        continue-on-error: true
+        run: |
+          python pipeline/fetch_national.py cmp/py/national > cmp/national-py.log 2>&1 &
+          flood national cmp/rs/national > cmp/national-rs.log 2>&1 || true
+          wait
+          tail -3 cmp/national-py.log cmp/national-rs.log
+          python tests/compare_pipeline.py cmp/py/national cmp/rs/national national
+      - name: Flood classes and warnings
+        continue-on-error: true
+        run: |
+          python pipeline/fetch_floodinfo.py cmp/py/fi > cmp/fi-py.log 2>&1 &
+          flood floodinfo cmp/rs/fi > cmp/fi-rs.log 2>&1 || true
+          wait
+          tail -3 cmp/fi-py.log cmp/fi-rs.log
+          python tests/compare_pipeline.py cmp/py/fi cmp/rs/fi floodinfo
+      - name: Recorded floods (first four events)
+        continue-on-error: true
+        run: |
+          python -c "import json; c=json.load(open('config/events.json')); c['events']=c['events'][:4]; json.dump(c, open('cmp/events4.json','w'))"
+          G=cmp/py/national/gauges.geojson
+          python pipeline/fetch_events.py cmp/events4.json $G cmp/py/ev/events.json > cmp/ev-py.log 2>&1 &
+          flood events cmp/events4.json $G cmp/rs/ev/events.json > cmp/ev-rs.log 2>&1 || true
+          wait
+          tail -4 cmp/ev-py.log cmp/ev-rs.log
+          python tests/compare_pipeline.py cmp/py/ev cmp/rs/ev events
+      - name: Sea levels (those floods)
+        continue-on-error: true
+        timeout-minutes: 20
+        run: |
+          python pipeline/fetch_sealevels.py cmp/py/ev/events.json cmp/py/sea/sea.json > cmp/sea-py.log 2>&1 &
+          flood sealevels cmp/py/ev/events.json cmp/rs/sea/sea.json > cmp/sea-rs.log 2>&1 || true
+          wait
+          tail -3 cmp/sea-py.log cmp/sea-rs.log
+          python tests/compare_pipeline.py cmp/py/sea cmp/rs/sea sealevels
+      - name: Ratings (20 gauges)
+        continue-on-error: true
+        run: |
+          G=cmp/py/national/gauges.geojson
+          python pipeline/fetch_ratings.py viewer/app.js $G cmp/py/rt/ratings.json --max 20 > cmp/rt-py.log 2>&1 &
+          flood ratings viewer/app.js $G cmp/rs/rt/ratings.json --max 20 > cmp/rt-rs.log 2>&1 || true
+          wait
+          tail -2 cmp/rt-py.log cmp/rt-rs.log
+          python tests/compare_pipeline.py cmp/py/rt cmp/rs/rt ratings
+      - name: Tides
+        continue-on-error: true
+        run: |
+          python pipeline/fetch_tides.py cmp/py/td/tides.json > cmp/td-py.log 2>&1 &
+          flood tides cmp/rs/td/tides.json > cmp/td-rs.log 2>&1 || true
+          wait
+          tail -2 cmp/td-py.log cmp/td-rs.log
+          python tests/compare_pipeline.py cmp/py/td cmp/rs/td tides
+      - name: Workers
+        continue-on-error: true
+        run: |
+          python pipeline/fetch_workers.py cmp/py/wk/workers.json > cmp/wk-py.log 2>&1 &
+          flood workers cmp/rs/wk/workers.json > cmp/wk-rs.log 2>&1 || true
+          wait
+          tail -2 cmp/wk-py.log cmp/wk-rs.log
+          python tests/compare_pipeline.py cmp/py/wk cmp/rs/wk workers
+      - name: Levees
+        continue-on-error: true
+        run: |
+          python pipeline/fetch_levees.py cmp/py/lv/levees.geojson > cmp/lv-py.log 2>&1 &
+          flood levees cmp/rs/lv/levees.geojson > cmp/lv-rs.log 2>&1 || true
+          wait
+          tail -2 cmp/lv-py.log cmp/lv-rs.log | cut -c1-600
+          python tests/compare_pipeline.py cmp/py/lv cmp/rs/lv levees
+      - name: Water history (one minute)
+        continue-on-error: true
+        env:
+          WATERHISTORY_BUDGET_S: "60"
+        run: |
+          mkdir -p cmp/py/wh cmp/rs/wh
+          cp cmp/py/national/storages.geojson cmp/py/wh/ && cp cmp/py/national/storages.geojson cmp/rs/wh/
+          python pipeline/fetch_waterhistory.py cmp/py/wh > cmp/wh-py.log 2>&1 &
+          flood waterhistory cmp/rs/wh > cmp/wh-rs.log 2>&1 || true
+          wait
+          tail -2 cmp/wh-py.log cmp/wh-rs.log
+          python - <<'EOF'
+          import json
+          a = json.load(open("cmp/py/wh/waterhistory.json")); b = json.load(open("cmp/rs/wh/waterhistory.json"))
+          both = sorted(set(a) & set(b)); same = [k for k in both if {**a[k], "fetched": 0} == {**b[k], "fetched": 0}]
+          print(f"::notice::Pipeline waterhistory: {len(same)} of {len(both)} dams fetched by both match ({len(a)} python, {len(b)} rust)")
+          for k in [k for k in both if k not in same][:3]: print(k, str(a[k])[:200], "|", str(b[k])[:200])
+          EOF
+      - name: Flood Hub (no key)
+        continue-on-error: true
+        run: |
+          python pipeline/fetch_floodhub.py config/brisbane.json cmp/py/fh
+          flood floodhub config/brisbane.json cmp/rs/fh
+          python tests/compare_pipeline.py cmp/py/fh cmp/rs/fh floodhub
+      - name: Council layers
+        continue-on-error: true
+        timeout-minutes: 25
+        run: |
+          python pipeline/render_council_layers.py cmp/py/council > cmp/co-py.log 2>&1 &
+          flood council cmp/rs/council > cmp/co-rs.log 2>&1 || true
+          wait
+          cat cmp/co-py.log cmp/co-rs.log
+          python tests/compare_pipeline.py cmp/py/council cmp/rs/council council
+      - name: DEA mosaic
+        continue-on-error: true
+        timeout-minutes: 20
+        run: |
+          python pipeline/render_dea_mosaic.py cmp/py/dea > cmp/dea-py.log 2>&1 &
+          flood dea cmp/rs/dea > cmp/dea-rs.log 2>&1 || true
+          wait
+          tail -2 cmp/dea-py.log cmp/dea-rs.log
+          python tests/compare_pipeline.py cmp/py/dea cmp/rs/dea dea
+      - name: DEM, hydrology and export
+        continue-on-error: true
+        timeout-minutes: 30
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          pipeline/install_geolibre.sh "$HOME/.local/bin" && export PATH="$HOME/.local/bin:$PATH"
+          python pipeline/fetch_dem.py config/brisbane.json cmp/py/work > cmp/dem-py.log 2>&1 &
+          flood dem config/brisbane.json cmp/rs/work > cmp/dem-rs.log 2>&1 || true
+          wait
+          tail -1 cmp/dem-py.log cmp/dem-rs.log
+          rm -rf cmp/py/work/tiles cmp/rs/work/tiles
+          python tests/compare_pipeline.py cmp/py/work cmp/rs/work dem
+          # the Rust DEM through the RustGIS hydrology, then both exports of it
+          pipeline/run_hydrology.sh config/brisbane.json cmp/rs/work > /dev/null
+          python pipeline/export_viewer.py config/brisbane.json cmp/rs/work cmp/py/data
+          flood export config/brisbane.json cmp/rs/work cmp/rs/data
+          python tests/compare_pipeline.py cmp/py/data cmp/rs/data export
+      - name: Data status
+        continue-on-error: true
+        run: |
+          mkdir -p cmp/py/site/data cmp/rs/site/data
+          cat cmp/*-py.log > cmp/all-py.log; cat cmp/*-rs.log > cmp/all-rs.log
+          python pipeline/build_status.py cmp/py/site cmp/all-py.log
+          flood status cmp/rs/site cmp/all-rs.log
+          python tests/compare_pipeline.py cmp/py/site cmp/rs/site status
