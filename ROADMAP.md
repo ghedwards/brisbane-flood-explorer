@@ -36,6 +36,9 @@ would add, how it could be built from open data, and what to watch for.
   records (Manly Hydraulics Laboratory) aren't open downloads, so NSW
   floods use Fort Denison. Tide predictions would allow "this week's
   highest tide".
+  Some recent Maritime Safety Queensland yearly files (Cairns 2023,
+  Mooloolaba 2022) download empty from the state portal; Cairns 2023 gets
+  its sea level once they are fixed.
 - **Design rainfall from the Bureau.** Storm mode currently offers example
   storms and links to the Bureau's design rainfall (IFD) tool. Fetching the
   IFD table for the model's location would give real "1% annual chance"
