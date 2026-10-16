@@ -22,11 +22,11 @@ CONFIG="$1"
 WORK="$2"
 GL="${GEOLIBRE:-geolibre}"
 
-cfg() { python3 -c "import json,sys; print(json.load(open('$CONFIG'))['$1'])"; }
+cfg() { flood config "$CONFIG" "$1"; }
 CELL="$(cfg cell_m)"
 AREA_KM2="$(cfg stream_area_km2)"
 BREACH="$(cfg breach_max_dist_cells)"
-THRESH="$(python3 -c "print(round($AREA_KM2 * 1e6 / ($CELL * $CELL)))")"
+THRESH="$(awk -v a="$AREA_KM2" -v c="$CELL" 'BEGIN { printf "%d", a * 1e6 / (c * c) + 0.5 }')"
 
 run() {
   echo "::group::geolibre $*"

@@ -53,8 +53,10 @@ jobs:
         working-directory: rust
         run: |
           rustup target add wasm32-unknown-unknown
-          cargo test --release --workspace
+          cargo test --release --workspace   # the model, its WebAssembly interface and the pipeline
           cargo build --release -p flood-wasm --target wasm32-unknown-unknown
+          cargo build --release -p flood-pipeline
+          echo "$PWD/target/release" >> "$GITHUB_PATH"
           cp target/wasm32-unknown-unknown/release/flood_wasm.wasm ../work-flood.wasm
           echo "::notice::flood.wasm: $(wc -c < ../work-flood.wasm) bytes"
 
@@ -69,18 +71,6 @@ jobs:
           (cd rust && cargo run -q --release -p flood-core --example parity) > work-parity-rust.txt
           FLOOD_IMPL=js node tests/parity.js work-parity-rust.txt
 
-      - uses: actions/setup-python@v7
-        with:
-          python-version: "3.12"
-          cache: pip
-          cache-dependency-path: pipeline/requirements.txt
-
-      - name: Install Python packages
-        run: pip install -r pipeline/requirements.txt
-
-      - name: Test the data fetchers
-        run: python -m unittest tests/test_floodhub.py tests/test_national.py tests/test_council.py tests/test_floodinfo.py tests/test_events.py tests/test_osm.py tests/test_tides.py tests/test_ratings.py tests/test_sealevels.py tests/test_workers.py tests/test_status.py
-
       # Terrain only needs rebuilding when the area or the pipeline changes.
       - name: Restore built terrain
         id: terrain
@@ -88,7 +78,7 @@ jobs:
         with:
           path: |
             work/brisbane/*.tif
-          key: terrain-${{ hashFiles('config/brisbane.json', 'pipeline/fetch_dem.py', 'pipeline/run_hydrology.sh', 'pipeline/install_geolibre.sh') }}
+          key: terrain-${{ hashFiles('config/brisbane.json', 'rust/flood-pipeline/src/dem.rs', 'rust/flood-pipeline/src/geo.rs', 'pipeline/run_hydrology.sh', 'pipeline/install_geolibre.sh') }}
 
       - name: Install the GeoLibre runner (RustGIS hydrology tools)
         env:
@@ -108,7 +98,7 @@ jobs:
         id: dem
         if: steps.terrain.outputs.cache-hit != 'true'
         continue-on-error: true
-        run: python pipeline/fetch_dem.py config/brisbane.json work/brisbane
+        run: flood dem config/brisbane.json work/brisbane
 
       - name: Run hydrology with GeoLibre
         id: hydro
@@ -135,7 +125,7 @@ jobs:
             echo "::warning::Minifying failed; publishing the scripts as they are"
           fi
           if [ -f work/brisbane/dem.tif ] && [ -f work/brisbane/d8.tif ]; then
-            python pipeline/export_viewer.py config/brisbane.json work/brisbane site/data
+            flood export config/brisbane.json work/brisbane site/data
           else
             echo "::warning::Brisbane terrain was not built; the site will show the sample terrain only."
             rm -f work/brisbane/*.tif  # never cache a partial build
@@ -144,7 +134,7 @@ jobs:
       - name: Fetch national BoM gauges, dams and readings
         id: national
         continue-on-error: true
-        run: python pipeline/fetch_national.py site/data/national | tee national.log
+        run: flood national site/data/national | tee national.log
 
       - name: Month for the monthly caches
         id: month
@@ -157,7 +147,7 @@ jobs:
         uses: actions/cache@v6
         with:
           path: cache/events.json
-          key: events-${{ hashFiles('config/events.json', 'pipeline/fetch_events.py') }}
+          key: events-${{ hashFiles('config/events.json', 'rust/flood-pipeline/src/events.rs') }}
 
       - name: Fetch recorded flood readings (Water Data Online)
         if: steps.events.outputs.cache-hit != 'true' && steps.national.outcome == 'success'
@@ -165,7 +155,7 @@ jobs:
         timeout-minutes: 20
         run: |
           mkdir -p cache
-          python pipeline/fetch_events.py config/events.json site/data/national/gauges.geojson cache/events.json | tee events.log
+          flood events config/events.json site/data/national/gauges.geojson cache/events.json | tee events.log
 
       # Recorded sea levels for those floods (tide gauges): slow downloads,
       # so their own step, cache and time limit
@@ -174,21 +164,21 @@ jobs:
         uses: actions/cache@v6
         with:
           path: cache/sea.json
-          key: sea-${{ hashFiles('config/events.json', 'pipeline/fetch_events.py', 'pipeline/fetch_sealevels.py') }}
+          key: sea-${{ hashFiles('config/events.json', 'rust/flood-pipeline/src/events.rs', 'rust/flood-pipeline/src/sealevels.rs') }}
 
       - name: Fetch recorded sea levels (UHSLC, Maritime Safety Queensland)
         if: steps.sea.outputs.cache-hit != 'true'
         continue-on-error: true
         timeout-minutes: 25
         run: |
-          [ -f cache/events.json ] && python pipeline/fetch_sealevels.py cache/events.json cache/sea.json | tee sea.log || true
+          [ -f cache/events.json ] && flood sealevels cache/events.json cache/sea.json | tee sea.log || true
 
       - name: Restore levee lines
         id: levees
         uses: actions/cache@v6
         with:
           path: cache/levees.geojson
-          key: levees-${{ steps.month.outputs.month }}-${{ hashFiles('pipeline/fetch_levees.py') }}
+          key: levees-${{ steps.month.outputs.month }}-${{ hashFiles('rust/flood-pipeline/src/levees.rs') }}
 
       - name: Fetch levee lines (NSW levee audit, Victorian coastal levees; monthly)
         if: steps.levees.outputs.cache-hit != 'true'
@@ -196,7 +186,7 @@ jobs:
         timeout-minutes: 15
         run: |
           mkdir -p cache
-          python pipeline/fetch_levees.py cache/levees.geojson | tee levees.log
+          flood levees cache/levees.geojson | tee levees.log
 
       # OpenStreetMap buildings, roads and key sites for the presets, so
       # impact counts don't depend on the busy Overpass service. Each run
@@ -209,14 +199,14 @@ jobs:
         uses: actions/cache@v6
         with:
           path: cache/ratings.json
-          key: ratings-${{ steps.month.outputs.month }}-${{ hashFiles('pipeline/fetch_ratings.py') }}
+          key: ratings-${{ steps.month.outputs.month }}-${{ hashFiles('rust/flood-pipeline/src/ratings.rs') }}
 
       - name: Fit gauge ratings from Water Data Online (monthly)
         if: steps.ratings.outputs.cache-hit != 'true' && steps.national.outcome == 'success'
         continue-on-error: true
         timeout-minutes: 40
         run: |
-          python pipeline/fetch_ratings.py viewer/app.js site/data/national/gauges.geojson cache/ratings.json | tee ratings.log
+          flood ratings viewer/app.js site/data/national/gauges.geojson cache/ratings.json | tee ratings.log
 
       # Workers by place of work per SA2 (ABS 2021 Census); fixed data, so
       # fetched once per change to the script
@@ -225,14 +215,14 @@ jobs:
         uses: actions/cache@v6
         with:
           path: cache/workers.json
-          key: workers-${{ hashFiles('pipeline/fetch_workers.py') }}
+          key: workers-${{ hashFiles('rust/flood-pipeline/src/workers.rs') }}
 
       - name: Fetch workers by place of work (ABS 2021 Census)
         if: steps.workers.outputs.cache-hit != 'true'
         continue-on-error: true
         timeout-minutes: 10
         run: |
-          python pipeline/fetch_workers.py cache/workers.json | tee workers.log
+          flood workers cache/workers.json | tee workers.log
           grep -q '^Workers: [0-9]' workers.log || rm -f cache/workers.json
 
       # Tide heights around the whole coast (AIMS EOT20 tidal statistics);
@@ -242,14 +232,14 @@ jobs:
         uses: actions/cache@v6
         with:
           path: cache/tides.json
-          key: tides-${{ hashFiles('pipeline/fetch_tides.py') }}
+          key: tides-${{ hashFiles('rust/flood-pipeline/src/tides.rs') }}
 
       - name: Fetch tide heights for the whole coast
         if: steps.tides.outputs.cache-hit != 'true'
         continue-on-error: true
         timeout-minutes: 15
         run: |
-          python pipeline/fetch_tides.py cache/tides.json | tee tides.log
+          flood tides cache/tides.json | tee tides.log
           grep -q '^Tides: [0-9]' tides.log || rm -f cache/tides.json
 
       - name: Restore OpenStreetMap copies
@@ -263,11 +253,11 @@ jobs:
         continue-on-error: true
         timeout-minutes: 30
         run: |
-          python pipeline/fetch_osm.py viewer/app.js cache/osm --max 12 --days 30 | tee osm.log
+          flood osm viewer/app.js cache/osm --max 12 --days 30 | tee osm.log
 
       - name: Publish recorded floods and levees
         run: |
-          [ -f cache/events.json ] && python pipeline/fetch_sealevels.py merge cache/events.json cache/sea.json site/data/events.json || true
+          [ -f cache/events.json ] && flood sealevels merge cache/events.json cache/sea.json site/data/events.json || true
           [ -f cache/levees.geojson ] && cp cache/levees.geojson site/data/levees.geojson || true
           [ -f cache/tides.json ] && cp cache/tides.json site/data/tides.json || true
           [ -f cache/ratings.json ] && cp cache/ratings.json site/data/ratings.json || true
@@ -289,7 +279,7 @@ jobs:
         id: floodinfo
         continue-on-error: true
         timeout-minutes: 5
-        run: python pipeline/fetch_floodinfo.py site/data/national | tee floodinfo.log
+        run: flood floodinfo site/data/national | tee floodinfo.log
 
       # Dam water history builds up across runs: restore the latest copy,
       # spend at most ~5 minutes filling in or refreshing dams, save again.
@@ -308,7 +298,7 @@ jobs:
         env:
           WATERHISTORY_BUDGET_S: "300"
         run: |
-          python pipeline/fetch_waterhistory.py site/data/national cache/waterhistory.json | tee wh.log
+          flood waterhistory site/data/national cache/waterhistory.json | tee wh.log
           mkdir -p cache && cp site/data/national/waterhistory.json cache/waterhistory.json
 
       - name: Save dam water history
@@ -327,15 +317,15 @@ jobs:
         uses: actions/cache@v6
         with:
           path: cache/council
-          key: council-${{ steps.month.outputs.month }}-${{ hashFiles('pipeline/render_council_layers.py') }}
+          key: council-${{ steps.month.outputs.month }}-${{ hashFiles('rust/flood-pipeline/src/council.rs') }}
 
       - name: Render council flood images (monthly)
         if: steps.council.outputs.cache-hit != 'true'
         continue-on-error: true
         timeout-minutes: 15
         run: |
-          python pipeline/render_council_layers.py cache/council | tee council.log
-          python -c "import json,sys; m=json.load(open('cache/council/council.json')); sys.exit(0 if len(m['layers'])==2 else 1)" || rm -rf cache/council
+          flood council cache/council | tee council.log
+          jq -e '.layers | length == 2' cache/council/council.json > /dev/null || rm -rf cache/council
 
       - name: Publish council flood images
         run: |
@@ -347,13 +337,13 @@ jobs:
         uses: actions/cache@v6
         with:
           path: cache/dea
-          key: dea-${{ steps.month.outputs.month }}-${{ hashFiles('pipeline/render_dea_mosaic.py') }}
+          key: dea-${{ steps.month.outputs.month }}-${{ hashFiles('rust/flood-pipeline/src/dea.rs') }}
 
       - name: Stitch DEA national images (monthly)
         if: steps.dea.outputs.cache-hit != 'true'
         continue-on-error: true
         timeout-minutes: 15
-        run: python pipeline/render_dea_mosaic.py cache/dea | tee dea.log || rm -rf cache/dea
+        run: flood dea cache/dea | tee dea.log || rm -rf cache/dea
 
       - name: Publish DEA national images
         run: |
@@ -365,10 +355,10 @@ jobs:
         continue-on-error: true
         env:
           FLOOD_FORECASTING_API_KEY: ${{ secrets.FLOOD_FORECASTING_API_KEY }}
-        run: python pipeline/fetch_floodhub.py config/brisbane.json site/data | tee floodhub.log
+        run: flood floodhub config/brisbane.json site/data | tee floodhub.log
 
       - name: Data status for the app
-        run: python pipeline/build_status.py site national.log floodinfo.log events.log sea.log ratings.log tides.log workers.log osm.log levees.log floodhub.log
+        run: flood status site national.log floodinfo.log events.log sea.log ratings.log tides.log workers.log osm.log levees.log floodhub.log
 
       - name: Build summary
         run: |

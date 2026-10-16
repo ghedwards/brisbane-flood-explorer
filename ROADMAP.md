@@ -11,7 +11,7 @@ would add, how it could be built from open data, and what to watch for.
   requests from GitHub's servers (HTTP 403) and the warning files are not on
   its anonymous FTP server. Options:
   - a small scheduled job on a home or office computer (not a cloud
-    server) that runs `pipeline/fetch_floodinfo.py` and commits
+    server) that runs `flood floodinfo` and commits
     `floodclass.json` and `warnings.json` to the repo, or
   - a Bureau registered-user data feed, if one can be obtained.
 - **Google Flood Hub forecasts.** Built in; add the API key as the repo
@@ -132,3 +132,13 @@ and when roads close and how long places stay cut off (flood over time).
 - **Preset audit.** The live check lists which Bureau gauge each river
   preset is anchored to; review any presets that aren't anchored or sit
   far from their gauge.
+- **Rust in RustGIS.** The model (`rust/flood-core`) and pipeline are in
+  Rust; the hydrology still calls GeoLibre as a separate program. If
+  geolibre-rust exposes its tools as a library crate, `flood` could run
+  breach, fill, D8 and HAND in-process; and the model could be offered to
+  RustGIS as a tool working on a DEM and D8 opened there.
+- **Faster single runs.** In the browser one inundation costs about the
+  same in Rust as in JavaScript, because the results are copied out of
+  WebAssembly memory. Returning only what the map draws (or sharing
+  memory) would make interactive updates quicker; analysis, storms and
+  flood timelines are already 1.2–2.6× faster.

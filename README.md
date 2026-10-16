@@ -21,7 +21,7 @@ The app opens on a map of Australia:
 - **Tap any of them for a report:** location, basin or river, operator, the latest daily reading from Water Data Online with a 10-day trend, percentage full for dams, and Google Flood Hub's forecast for a nearby gauge when that feed is connected.
 - **Model flooding here:** from a report, or by tapping anywhere on the map. The app downloads Geoscience Australia's 1-second (about 30 m) hydrologically enforced elevation model (DEM-H) for a 20 km square around the point. It works out how water flows across it in the browser, then runs the same flood model used for Brisbane. River models start with the water 3 m above the river surface at that point. Coastal models start with the bay at 1.5 m, and sea-level rise can be added. Heights are metres above sea level, not the gauge's own datum.
 - **State flood mapping** in the Layers panel: Queensland's statewide Floodplain Assessment Overlay, and NSW flood planning areas from council planning schemes (visible when zoomed in). Victoria's statewide 1% flood extent is not openly published as a web service, so it isn't included yet. Reports for Queensland and NSW gauges and dams have a button to switch on that state's layer.
-- **Layers at every zoom:** where a data server only draws a layer when zoomed in, the app either fetches tiles at the zoom the server allows and scales them to fit (DEA satellite basemaps, down to state-wide view), or the build stitches an Australia-wide or city-wide image once a month that is shown when zoomed out (DEA water history: [`pipeline/render_dea_mosaic.py`](pipeline/render_dea_mosaic.py); Brisbane council likelihood layers: [`pipeline/render_council_layers.py`](pipeline/render_council_layers.py)). NSW's flood planning layer has its server-side scale limit lifted.
+- **Layers at every zoom:** where a data server only draws a layer when zoomed in, the app either fetches tiles at the zoom the server allows and scales them to fit (DEA satellite basemaps, down to state-wide view), or the build stitches an Australia-wide or city-wide image once a month that is shown when zoomed out (DEA water history: [`flood dea`](rust/flood-pipeline/src/dea.rs); Brisbane council likelihood layers: [`flood council`](rust/flood-pipeline/src/council.rs)). NSW's flood planning layer has its server-side scale limit lifted.
 - **Dam reports** also show how much of the dam's surface satellites have seen wet on each clear Landsat pass since 1987, from Digital Earth Australia Waterbodies.
 - **Places: several areas and reports at once.** Reports and modelled areas share one set of numbers: an area modelled from report 2 is also 2, and an area modelled by tapping the map takes the next free number. **Places** sits at the top of the left column, always visible and collapsible, with the flood Scenario beneath it, also always shown and collapsible. The Scenario follows the selected place: its flood scenario if it has been modelled, otherwise buttons to model river or coastal flooding there; reports open on the right, one at a time (‹ › to step through them), so a scenario and a report can be read side by side. Choosing a row works exactly like tapping that number on the map: its flood scenario becomes active and its report shows. Small icons on each row open its report (or the nearest gauge's), zoom to it, or remove it; Tapping a gauge or dam shows a small popup (name, latest reading) with one button to add it as a place and open its report; tapping an empty spot shows its coordinates and the nearest gauge, with the same button to add it as a place: a numbered pin you can model or report on the nearest gauge. The ‹ › buttons in the Scenario and Report panels step through modelled places and reports, selecting each so the map, Places and the other panel follow. There's no limit on modelled areas or reports: each area keeps its own scenario and its flood picture stays on the map; one is active at a time, and inactive areas keep only their terrain and settings, rebuilding their flow analysis (a second or two) when reopened, which keeps memory down.
 - **Levels along the river.** A model's water surface can be pinned at more points than its gauge (*Add a level point*, then tap the river), running straight between them. Where Bureau flood class levels with a gauge zero are available, one tap sets every gauge in the model to its minor, moderate or major level, or to the current reading. Overlapping models can be matched to the active one (*Match overlapping models*), carrying its water level across each seam so the surface is continuous.
@@ -49,7 +49,7 @@ The app opens on a map of Australia:
 - **Smooth to use:** the scripts are minified in the build, recorded floods and gauge ratings load in the background, and the flow analysis runs in a background worker, so building, extending or reopening models doesn't freeze the page. River presets start from the Bureau gauge on that river and open its report under the same number.
 - **Lower Brisbane River** remains available from the menu as the detailed, pre-processed model with historic flood peaks and council layers.
 
-The build fetches the Bureau's gauges, dams and readings every three hours ([`pipeline/fetch_national.py`](pipeline/fetch_national.py)), and each dam's satellite water history once a week ([`pipeline/fetch_waterhistory.py`](pipeline/fetch_waterhistory.py)), because those services don't allow requests straight from a web page. Geoscience Australia's elevation service and Digital Earth Australia's layers do, so the page reads those directly.
+The build fetches the Bureau's gauges, dams and readings every three hours ([`flood national`](rust/flood-pipeline/src/national.rs)), and each dam's satellite water history once a week ([`flood waterhistory`](rust/flood-pipeline/src/waterhistory.rs)), because those services don't allow requests straight from a web page. Geoscience Australia's elevation service and Digital Earth Australia's layers do, so the page reads those directly.
 
 Ideas for future refinement are collected in [ROADMAP.md](ROADMAP.md).
 
@@ -57,17 +57,17 @@ Ideas for future refinement are collected in [ROADMAP.md](ROADMAP.md).
 
 ```mermaid
 flowchart LR
-  A[Copernicus GLO-30 DEM<br/>AWS Open Data] --> B[fetch_dem.py<br/>mosaic, MGA56, 40 m]
+  A[Copernicus GLO-30 DEM<br/>AWS Open Data] --> B[flood dem<br/>tiles to MGA56, 40 m]
   B --> C[GeoLibre / RustGIS tools<br/>breach + fill depressions<br/>D8 pointer, flow accumulation<br/>streams, HAND]
-  C --> D[export_viewer.py<br/>dem.f32, d8.u8, meta.json]
-  D --> E[Browser viewer<br/>scenario sliders, map,<br/>river long-section]
+  C --> D[flood export<br/>dem.f32, d8.u8, meta.json]
+  D --> E[Browser viewer<br/>flood model in Rust,<br/>compiled to WebAssembly]
 ```
 
 GitHub Actions runs the whole pipeline on every push to `main`, publishes the viewer and data to GitHub Pages, then loads the live site in a headless browser to check the interactive map works ([`.github/workflows/build.yml`](.github/workflows/build.yml), [`tests/smoke_live.py`](tests/smoke_live.py)). The check's results appear as annotations on the workflow run, with a screenshot attached.
 
-### 1. Terrain (`pipeline/fetch_dem.py`)
+### 1. Terrain (`flood dem`)
 
-Downloads the Copernicus GLO-30 tiles covering the area in [`config/brisbane.json`](config/brisbane.json), mosaics them, and reprojects to GDA2020 / MGA zone 56 at 40 m. No login is needed.
+Downloads the Copernicus GLO-30 tiles covering the area in [`config/brisbane.json`](config/brisbane.json) and resamples them (bilinear, as GDAL's warp does) to GDA2020 / MGA zone 56 at 40 m. No login is needed.
 
 ### 2. Hydrology with the RustGIS tools (`pipeline/run_hydrology.sh`)
 
@@ -86,7 +86,7 @@ Every step is also available in the RustGIS desktop or web app, so you can open 
 
 ### 3. Flood scenarios (in the browser)
 
-[`viewer/flood-core.js`](viewer/flood-core.js) takes the ground elevations and the D8 flow directions and:
+The flood model is written in Rust ([`rust/flood-core`](rust/flood-core)) and compiled to WebAssembly, so it runs in the page and its background worker ([`viewer/flood-wasm.js`](viewer/flood-wasm.js) gives it the same interface as before). [`viewer/flood-core.js`](viewer/flood-core.js) is the same model in JavaScript: it runs if WebAssembly can't load, or with `?engine=js` in the address, and the build checks that the two give the same numbers ([`tests/parity.js`](tests/parity.js)). The Data status panel says which one is running. The model takes the ground elevations and the D8 flow directions and:
 
 1. Builds the stream network from a minimum catchment area.
 2. Sets a water surface along the river: it varies linearly with river distance from the bay level at the mouth to the chosen level at the gauge, and rises at a set slope (default 0.3 m/km) upstream of the gauge and up tributaries.
@@ -114,7 +114,7 @@ Sea-level rise options run from 0.3 m to 1.1 m, including Queensland's 0.8 m pla
 
 The site can show Google's [Flood Forecasting API](https://developers.google.com/flood-forecasting) data for South East Queensland: forecast flood severity at river gauges (with trend, forecast peak and warning thresholds), Google's forecast flood areas, and flash flood forecasts. The same forecasts appear on [Flood Hub](https://sites.research.google/floods/). The data is free and CC BY 4.0.
 
-The build fetches the forecasts every three hours ([`pipeline/fetch_floodhub.py`](pipeline/fetch_floodhub.py)) and publishes them with the site, so the API key is never exposed in the page. They show in a "Google Flood Hub forecast" panel and as two map layers, which switch on automatically when anything is forecast above normal.
+The build fetches the forecasts every three hours ([`flood floodhub`](rust/flood-pipeline/src/floodhub.rs)) and publishes them with the site, so the API key is never exposed in the page. They show in a "Google Flood Hub forecast" panel and as two map layers, which switch on automatically when anything is forecast above normal.
 
 **To switch it on:**
 
@@ -151,16 +151,28 @@ python3 -m http.server -d viewer 8000   # then open http://localhost:8000
 
 If the map library can't load (offline), it falls back to an illustrative sample terrain, which isn't otherwise in the menu. You can also load your own GeoTIFF or ASCII grid DEM in the page, optionally with a `d8.tif` from the pipeline.
 
-To run the pipeline locally (Linux or macOS, needs Python 3.10+ and the GitHub CLI):
+The data pipeline is one Rust command, `flood` ([`rust/flood-pipeline`](rust/flood-pipeline); `flood` with no arguments lists its steps). To run it locally (Linux or macOS, needs Rust and the GitHub CLI):
 
 ```sh
-pip install -r pipeline/requirements.txt
+cargo build --release --manifest-path rust/Cargo.toml -p flood-pipeline
+export PATH="$PWD/rust/target/release:$PATH"
 pipeline/install_geolibre.sh ~/.local/bin
-python pipeline/fetch_dem.py config/brisbane.json work/brisbane
+flood dem config/brisbane.json work/brisbane
 pipeline/run_hydrology.sh config/brisbane.json work/brisbane
-python pipeline/export_viewer.py config/brisbane.json work/brisbane viewer/data
+flood export config/brisbane.json work/brisbane viewer/data
+flood national viewer/data/national     # gauges, dams and readings
 python3 -m http.server -d viewer 8000
 ```
+
+To build the browser model, add the WebAssembly target and copy the module next to the page:
+
+```sh
+rustup target add wasm32-unknown-unknown
+cargo build --release --manifest-path rust/Cargo.toml -p flood-wasm --target wasm32-unknown-unknown
+cp rust/target/wasm32-unknown-unknown/release/flood_wasm.wasm viewer/flood.wasm
+```
+
+Where crates.io can't be reached, the [`rust-vendor`](../../tree/rust-vendor) branch holds every crate the pipeline uses and its `Cargo.lock` (see [`.github/workflows/vendor.yml`](.github/workflows/vendor.yml)).
 
 **Using LiDAR instead of GLO-30:** download a DEM for your area from ELVIS, reproject it to the area's CRS (EPSG:7856 for Brisbane), save it as `work/brisbane/dem.tif`, and start from the hydrology step. Set `cell_m` in the config to the LiDAR cell size, since the stream threshold depends on it. At 1–5 m the grid gets large, so clip to the reach you care about.
 
@@ -169,9 +181,10 @@ python3 -m http.server -d viewer 8000
 ## Tests
 
 ```sh
-node --test tests/*.test.js
-python -m unittest tests/test_floodhub.py tests/test_national.py tests/test_council.py tests/test_floodinfo.py \
-  tests/test_events.py tests/test_osm.py tests/test_tides.py tests/test_ratings.py tests/test_sealevels.py tests/test_workers.py tests/test_status.py   # data fetchers, services mocked
+node --test tests/*.test.js                                   # the model (JavaScript) and the app
+cargo test --manifest-path rust/Cargo.toml --workspace          # the model and pipeline in Rust (services mocked)
+FLOOD_IMPL=wasm node --test tests/core.test.js                  # the model tests against the WebAssembly build
+FLOOD_IMPL=wasm node tests/parity.js > w.txt && node tests/parity.js w.txt   # same numbers as the JavaScript model
 ```
 
 The tests check routing (every cell drains), monotonic flooding, water levels at the gauge and mouth, connectivity, and that Whitebox D8 pointers from the pipeline reproduce the browser's own routing exactly.
@@ -182,10 +195,15 @@ After every deploy, a live check (`tests/smoke_live.py`) opens the published sit
 
 ```
 config/brisbane.json         area, CRS, cell size, gauge, thresholds
-pipeline/                    DEM download, GeoLibre install + hydrology, export
+rust/flood-core/             the flood model (no outside crates)
+rust/flood-wasm/             its WebAssembly interface for the browser
+rust/flood-pipeline/         `flood`: data fetchers, DEM download and export
+rust/flood-node/             the WebAssembly interface as a Node addon, for tests
+pipeline/                    GeoLibre (RustGIS) install + hydrology script
 viewer/                      static web app: index.html (markup), styles.css, app.js,
-                             flood-core.js (model), flood-worker.js (background analysis)
-tests/                       Node tests for the flood model
+                             flood-wasm.js (Rust model), flood-core.js (JavaScript model),
+                             flood-worker.js (background analysis)
+tests/                       model, app and live-site tests
 .github/workflows/build.yml  CI: test, build terrain, publish to Pages
 ```
 
