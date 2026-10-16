@@ -71,6 +71,7 @@ def compare_file(p, r):
         only = int((np.isfinite(a) != np.isfinite(b)).sum())
         d = np.abs(a[both] - b[both]) if both.any() else np.zeros(1)
         msgs.append(f"cells differing in data/no data: {only}; height diff mean {d.mean():.4f} m, 99th pct {np.percentile(d, 99):.3f} m, max {d.max():.3f} m")
+        print("    " + msgs[-1])
         return msgs if (only > a.size * 0.001 or np.percentile(d, 99) > 0.05 or len(msgs) > 1) else []
     if suf == ".png":
         from PIL import Image

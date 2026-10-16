@@ -125,7 +125,16 @@ pub fn run(config_path: &str, out_dir: &str) -> R<String> {
     for t in &tiles {
         println!("tile georef: x0 {} y0 {} dx {} dy {} size {}x{}", t.x0, t.y0, t.dx, t.dy, t.w, t.h);
     }
-    let src = Tiles::new(tiles);
+    let mut src = Tiles::new(tiles);
+    // diagnostic: FLOOD_DEM_SHIFT="dx,dy" moves the tiles by fractions of a
+    // pixel (to measure an offset against another resampler)
+    if let Ok(v) = std::env::var("FLOOD_DEM_SHIFT") {
+        let p: Vec<f64> = v.split(',').filter_map(|x| x.trim().parse().ok()).collect();
+        if p.len() == 2 {
+            src.x0 += p[0] * src.dx;
+            src.y0 -= p[1] * src.dy;
+        }
+    }
     let crs = s_or_empty(cfg.get("crs"));
     let dst = Proj::from_name(&crs).ok_or_else(|| format!("unsupported CRS {}", crs))?;
     let epsg: u32 = crs.trim().to_uppercase().trim_start_matches("EPSG:").parse().map_err(err)?;

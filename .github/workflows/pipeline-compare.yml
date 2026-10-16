@@ -185,7 +185,14 @@ jobs:
           wait
           for f in cmp/dem-py.log cmp/dem-rs.log; do echo "::notice::$f: $(grep -vE '^(tile |  no tile|note:|got:|warning:)' $f | grep . | tail -1 | cut -c1-500)"; done
           grep -h '^tile georef' cmp/dem-rs.log | head -2 | sed 's/^/::notice::rust /'
-          python -c "import glob, rasterio; p = sorted(glob.glob('cmp/py/work/tiles/*.tif'))[0]; s = rasterio.open(p); print('::notice::python tile georef:', s.transform, s.width, s.height, s.tags().get('AREA_OR_POINT'), s.profile.get('predictor'), s.profile.get('compress'))"
+          python -c "import glob, rasterio; p = sorted(glob.glob('cmp/py/work/tiles/*.tif'))[0]; s = rasterio.open(p); print('::notice::python tile georef:', tuple(s.transform)[:6], s.width, s.height, s.tags().get('AREA_OR_POINT'))"
+          # which half-pixel shift of the tiles reproduces Python's DEM?
+          for sh in "0.5,0.5" "-0.5,-0.5" "0.5,-0.5" "-0.5,0.5"; do
+            mkdir -p "cmp/sh/$sh" && cp -r cmp/rs/work/tiles "cmp/sh/$sh/"
+            FLOOD_DEM_SHIFT="$sh" flood dem config/brisbane.json "cmp/sh/$sh" > /dev/null
+            rm -rf "cmp/sh/$sh/tiles"
+            python tests/compare_pipeline.py cmp/py/work "cmp/sh/$sh" "dem shifted $sh" | grep -E "height diff|match" | sed "s/^ *cells/::notice::shift $sh: cells/" | grep "::" || true
+          done
           rm -rf cmp/py/work/tiles cmp/rs/work/tiles
           python tests/compare_pipeline.py cmp/py/work cmp/rs/work dem
           # the Rust DEM through the RustGIS hydrology, then both exports of it
