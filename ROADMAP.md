@@ -48,7 +48,7 @@ would add, how it could be built from open data, and what to watch for.
   built-up land; council pipe network data (where published) and the
   local design storm would replace the single rate.
 - **More levee data.** Levees come from OpenStreetMap and whatever
-  `pipeline/fetch_levees.py` collects. The NSW levee audit (about 130
+  `flood levees` collects. The NSW levee audit (about 130
   datasets listed on data.nsw.gov.au) is found, but SEED refuses the
   downloads from GitHub's servers (HTTP 403), and Victoria's open map
   server has no levee layer. Options: run the script from a home or office

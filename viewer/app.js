@@ -1138,7 +1138,7 @@
   }
 
   // Australia-wide images of DEA layers, stitched by the build from tiles at
-  // the coarsest zoom DEA will draw (pipeline/render_dea_mosaic.py)
+  // the coarsest zoom DEA will draw (flood dea, rust/flood-pipeline)
   let deaMosaic = null;
   async function loadDeaMosaic() {
     if (deaMosaic) return deaMosaic;
@@ -2226,7 +2226,7 @@
 
 
   /* ------------------------------------------------- Google Flood Hub */
-  // Forecasts are fetched by the GitHub build (pipeline/fetch_floodhub.py)
+  // Forecasts are fetched by the GitHub build (flood floodhub)
   // and published as data/floodhub.json and data/floodhub.geojson, so no API
   // key is exposed in the page.
 
@@ -2491,7 +2491,7 @@
 
   /* ------------------------------------------------------- Australia-wide */
   // The national view: BoM gauges, tide gauges and dams (fetched by the
-  // build, see pipeline/fetch_national.py), a report for whatever is tapped,
+  // build, see flood national), a report for whatever is tapped,
   // and on-demand flood modelling from Geoscience Australia's 1-second
   // hydrologically enforced elevation model (DEM-H), read straight from GA.
 
@@ -3073,7 +3073,7 @@
   // Digital Earth Australia maps every waterbody seen by Landsat since 1987
   // and publishes, for each one, the percentage of its area seen wet on
   // every clear pass. The build fetches these for every BoM dam weekly
-  // (pipeline/fetch_waterhistory.py), because DEA's files block browsers.
+  // (flood waterhistory), because DEA's files block browsers.
   status.waterbodies = {};
 
   let historyPromise = null;
