@@ -185,9 +185,15 @@ def _msq_year(site, year):
         raise RuntimeError(f"no {year} file among {len(resources)} ({names})")
     for r in pick[:2]:
         req = urllib.request.Request(r["url"], headers=UA)
-        with urllib.request.urlopen(req, timeout=120) as resp:
-            body = resp.read()
-            ctype = resp.headers.get("Content-Type", "")
+        body, ctype = b"", ""
+        for attempt in range(3):   # the portal sometimes answers empty: wait and retry
+            with urllib.request.urlopen(req, timeout=120) as resp:
+                body = resp.read()
+                ctype = resp.headers.get("Content-Type", "")
+            if body:
+                break
+            import time
+            time.sleep(10 * (attempt + 1))
         if body[:2] == b"PK":
             import zipfile
             z = zipfile.ZipFile(io.BytesIO(body))
