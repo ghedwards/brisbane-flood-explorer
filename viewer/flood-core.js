@@ -669,8 +669,12 @@
     const lo = Math.min(base, peak - 0.5), hi = Math.max(peak, lo + 0.5);
     // with tides, the river surfaces are worked out at low water; the tide
     // then rises over them near the mouth
-    const amp = o.tide && o.tide.amp > 0 ? o.tide.amp : 0;
-    const sLow = amp ? Object.assign({}, s, { bayLevel: s.bayLevel - 2 * amp }) : s;
+    // o.sea: recorded sea levels for a recorded flood [[hours, m above mean
+    // sea level]], used as the sea instead of the scenario's bay level
+    const sea = o.sea && o.sea.length > 1 ? o.sea : null;
+    const seaLo = sea ? Math.min(...sea.map((r) => r[1])) : 0, seaHi = sea ? Math.max(...sea.map((r) => r[1])) : 0;
+    const amp = sea ? Math.max(0.01, (seaHi - seaLo) / 2) : o.tide && o.tide.amp > 0 ? o.tide.amp : 0;
+    const sLow = sea ? Object.assign({}, s, { bayLevel: seaLo }) : amp ? Object.assign({}, s, { bayLevel: s.bayLevel - 2 * amp }) : s;
     const w0 = streamSurface(a, Object.assign({}, sLow, { gaugeLevel: lo })).wse;
     const w1 = streamSurface(a, Object.assign({}, sLow, { gaugeLevel: hi })).wse;
     const cells = [];
@@ -740,10 +744,19 @@
     if (w.routed) w.maxA = Math.max(w.maxA, w.routed.extraHours);
     // the tide: high water (the scenario's sea level) at the river's peak,
     // or low water at the peak
-    w.bayAt = amp
+    w.bayAt = sea
+      ? (t) => {
+        if (t <= sea[0][0]) return sea[0][1];
+        if (t >= sea[sea.length - 1][0]) return sea[sea.length - 1][1];
+        let i0 = 0, i1 = sea.length - 1;
+        while (i1 - i0 > 1) { const m = (i0 + i1) >> 1; if (sea[m][0] <= t) i0 = m; else i1 = m; }
+        return sea[i0][1] + ((sea[i1][1] - sea[i0][1]) * (t - sea[i0][0])) / Math.max(1e-9, sea[i1][0] - sea[i0][0]);
+      }
+      : amp
       ? (t) => s.bayLevel - amp * (1 - Math.cos((2 * Math.PI * (t - tPeak - (o.tide.atPeak === 'low' ? 6.21 : 0))) / 12.42))
       : () => s.bayLevel;
     w.tide = amp;
+    w.seaRecorded = sea ? { lo: seaLo, hi: seaHi } : null;
     return w;
   }
 

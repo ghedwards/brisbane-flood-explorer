@@ -47,7 +47,7 @@ jobs:
         run: pip install -r pipeline/requirements.txt
 
       - name: Test the data fetchers
-        run: python -m unittest tests/test_floodhub.py tests/test_national.py tests/test_council.py tests/test_floodinfo.py tests/test_events.py tests/test_osm.py tests/test_tides.py tests/test_ratings.py
+        run: python -m unittest tests/test_floodhub.py tests/test_national.py tests/test_council.py tests/test_floodinfo.py tests/test_events.py tests/test_osm.py tests/test_tides.py tests/test_ratings.py tests/test_sealevels.py tests/test_workers.py
 
       # Terrain only needs rebuilding when the area or the pipeline changes.
       - name: Restore built terrain
@@ -121,7 +121,7 @@ jobs:
         uses: actions/cache@v6
         with:
           path: cache/events.json
-          key: events-${{ hashFiles('config/events.json', 'pipeline/fetch_events.py') }}
+          key: events-${{ hashFiles('config/events.json', 'pipeline/fetch_events.py', 'pipeline/fetch_sealevels.py') }}
 
       - name: Fetch recorded flood readings (Water Data Online)
         if: steps.events.outputs.cache-hit != 'true' && steps.national.outcome == 'success'
@@ -130,6 +130,7 @@ jobs:
         run: |
           mkdir -p cache
           python pipeline/fetch_events.py config/events.json site/data/national/gauges.geojson cache/events.json | tee events.log
+          python pipeline/fetch_sealevels.py cache/events.json | tee -a events.log || true
 
       - name: Restore levee lines
         id: levees
@@ -165,6 +166,23 @@ jobs:
         timeout-minutes: 40
         run: |
           python pipeline/fetch_ratings.py viewer/app.js site/data/national/gauges.geojson cache/ratings.json | tee ratings.log
+
+      # Workers by place of work per SA2 (ABS 2021 Census); fixed data, so
+      # fetched once per change to the script
+      - name: Restore worker counts
+        id: workers
+        uses: actions/cache@v6
+        with:
+          path: cache/workers.json
+          key: workers-${{ hashFiles('pipeline/fetch_workers.py') }}
+
+      - name: Fetch workers by place of work (ABS 2021 Census)
+        if: steps.workers.outputs.cache-hit != 'true'
+        continue-on-error: true
+        timeout-minutes: 10
+        run: |
+          python pipeline/fetch_workers.py cache/workers.json | tee workers.log
+          grep -q '^Workers: [0-9]' workers.log || rm -f cache/workers.json
 
       # Tide heights around the whole coast (AIMS EOT20 tidal statistics);
       # they don't change, so fetched once per change to the script
@@ -202,12 +220,15 @@ jobs:
           [ -f cache/levees.geojson ] && cp cache/levees.geojson site/data/levees.geojson || true
           [ -f cache/tides.json ] && cp cache/tides.json site/data/tides.json || true
           [ -f cache/ratings.json ] && cp cache/ratings.json site/data/ratings.json || true
+          [ -f cache/workers.json ] && cp cache/workers.json site/data/workers.json || true
+          echo "::notice::$(grep -E '^Workers' workers.log 2>/dev/null || ([ -f cache/workers.json ] && echo 'Workers: from cache') || echo 'Workers: none')"
           echo "::notice::$(grep -E '^Ratings' ratings.log 2>/dev/null || echo 'Ratings: from cache')"
           echo "::notice::$(grep -E '^Tides' tides.log 2>/dev/null || ([ -f cache/tides.json ] && echo 'Tides: from cache') || echo 'Tides: none')"
           if [ -f cache/osm/index.json ]; then mkdir -p site/data/osm && cp cache/osm/*.json site/data/osm/; fi
           echo "::notice::$(grep -E '^OpenStreetMap copies' osm.log 2>/dev/null || echo 'OpenStreetMap copies: none')"
           grep '^warning:' osm.log 2>/dev/null | head -3 | sed 's/^warning:/::warning::OpenStreetMap copy /' || true
           echo "::notice::$(grep -E '^Recorded floods' events.log 2>/dev/null || echo 'Recorded floods: from cache')"
+          grep -E '^Sea levels' events.log 2>/dev/null | sed 's/^/::notice::/' || true
           grep -E '^Other gauges' events.log 2>/dev/null | cut -c1-900 | sed 's/^/::notice::/' || true
           grep '^warning:' events.log 2>/dev/null | head -4 | sed 's/^warning:/::warning::Recorded flood /' || true
           echo "::notice::$(grep -E '^Levees' levees.log 2>/dev/null || echo 'Levees: from cache')"

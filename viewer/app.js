@@ -3719,6 +3719,21 @@
   // buildings. Counts are for the active model and current scenario.
   const OVERPASS = ['https://overpass-api.de/api/interpreter', 'https://maps.mail.ru/osm/tools/overpass/api/interpreter', 'https://overpass.kumi.systems/api/interpreter'];
   const ABS_SA1 = 'https://geo.abs.gov.au/arcgis/rest/services/Hosted/ABS_2021_Census_G01_SA1/FeatureServer/0';
+  const ABS_SA2 = 'https://geo.abs.gov.au/arcgis/rest/services/ASGS2021/SA2/FeatureServer/0';
+  // workers by place of work per SA2 (ABS 2021 Working Population Profile),
+  // collected by the build; loaded the first time impact is counted
+  let workersP = null;
+  const workersBySa2 = () => (workersP = workersP || fetch('data/workers.json').then((r) => (r.ok ? r.json() : null)).catch(() => null));
+  // area of Esri polygon rings in km² (lon/lat degrees; holes subtract)
+  function ringsKm2(rings) {
+    let a2 = 0;
+    for (const ring of rings || []) {
+      let sum = 0, lat = 0;
+      for (let k = 0; k < ring.length; k++) { const [x0, y0] = ring[k], [x1, y1] = ring[(k + 1) % ring.length]; sum += x0 * y1 - x1 * y0; lat += y0; }
+      a2 += (sum / 2) * 111.32 * 110.574 * Math.cos(((lat / Math.max(1, ring.length)) * Math.PI) / 180);
+    }
+    return Math.abs(a2);
+  }
   const SITE_KINDS = {
     hospital: 'Hospital', clinic: 'Clinic', doctors: 'Doctors', school: 'School', kindergarten: 'Kindergarten', childcare: 'Childcare',
     nursing_home: 'Aged care', fire_station: 'Fire station', police: 'Police', ambulance_station: 'Ambulance', community_centre: 'Community centre',
@@ -3820,7 +3835,17 @@
       const key = feats.length && Object.keys(feats[0].attributes || {}).find((k) => /^tot_p_p$/i.test(k));
       if (key) sa1 = { feats, pop: feats.map((f) => Number(f.attributes[key]) || 0) };
     } catch (err) { sa1 = null; }
-    return { bx: Float64Array.from(bx), by: Float64Array.from(by), isHome, isWork, roads, net, sites, sa1, fetched: copy ? Date.parse(copy.fetched) : Date.now(), copy };
+    // workers: each SA2's workers by place of work (optional)
+    let sa2 = null;
+    try {
+      const wk = await workersBySa2();
+      if (wk && wk.workers) {
+        const feats = await esriFeatures(ABS_SA2, g, { fields: '*', simplify: 50 * degPerM, page: 200 });
+        const key = feats.length && Object.keys(feats[0].attributes || {}).find((k) => /^sa2_code(_?2021)?$/i.test(k));
+        if (key) sa2 = { feats, workers: feats.map((f) => Number(wk.workers[String(f.attributes[key])]) || 0), km2: feats.map((f) => ringsKm2(f.geometry && f.geometry.rings)) };
+      }
+    } catch (err) { sa2 = null; }
+    return { bx: Float64Array.from(bx), by: Float64Array.from(by), isHome, isWork, roads, net, sites, sa1, sa2, fetched: copy ? Date.parse(copy.fetched) : Date.now(), copy };
   }
   function cellOf(lat, lon) {
     const g = state.geo, a = state.a;
@@ -3922,6 +3947,33 @@
         for (let s = 0; s < nS; s++) if (tot[s] > 0) peopleIsolated += d.sa1.pop[s] * (iso[s] / tot[s]);
       }
     }
+    // workers: each SA2's workers (by place of work) spread over its mapped
+    // workplaces (or all its buildings if none are mapped by type), scaled
+    // by how much of the SA2 lies inside the model
+    let workers = null, workersAll = null;
+    if (d.sa2) {
+      if (!d.sa2Grid || d.sa2Key !== state.areaKey + a.W) {
+        const px = drawRings(d.sa2.feats, state.geo, a.W, a.H, (f, i) => `rgb(${(i + 1) >> 16 & 255},${(i + 1) >> 8 & 255},${(i + 1) & 255})`);
+        const idg = new Int32Array(a.N).fill(-1);
+        for (let c = 0; c < a.N; c++) { const v = (px[4 * c] << 16) | (px[4 * c + 1] << 8) | px[4 * c + 2]; if (px[4 * c + 3] > 250 && v > 0 && v <= d.sa2.feats.length) idg[c] = v - 1; }
+        d.sa2Grid = idg; d.sa2Key = state.areaKey + a.W;
+      }
+      const nS = d.sa2.workers.length, wT = new Float64Array(nS), wH = new Float64Array(nS), bT = new Float64Array(nS), bH = new Float64Array(nS), inside = new Float64Array(nS);
+      for (let i = 0; i < nB; i++) {
+        const s = bCell[i] >= 0 ? d.sa2Grid[bCell[i]] : -1;
+        if (s < 0) continue;
+        bT[s]++; if (bFlood[i]) bH[s]++;
+        if (d.isWork[i]) { wT[s]++; if (bFlood[i]) wH[s]++; }
+      }
+      const cellKm2 = (a.cell * a.cell) / 1e6;
+      for (let c = 0; c < a.N; c++) { const s = d.sa2Grid[c]; if (s >= 0) inside[s] += cellKm2; }
+      workers = 0; workersAll = 0;
+      for (let s = 0; s < nS; s++) {
+        const frac = d.sa2.km2[s] > 0 ? Math.min(1, inside[s] / d.sa2.km2[s]) : 0, W = d.sa2.workers[s] * frac;
+        workersAll += W;
+        workers += W * (wT[s] >= 3 ? wH[s] / wT[s] : bT[s] > 0 ? bH[s] / bT[s] : 0);
+      }
+    }
     // roads: length under more than 0.3 m of water (impassable to cars)
     const cutBy = new Map();
     let cutKm = 0, roadKm = 0;
@@ -3945,7 +3997,7 @@
     // key sites
     const sitesHit = d.sites.map((s) => ({ ...s, depth: depthAt(cellOf(s.lat, s.lon)) })).filter((s) => s.depth >= 0.15).sort((x, y) => y.depth - x.depth);
     return {
-      buildings: nB, bWet, bDeep, hWet, homesTagged: d.isHome.reduce((x, y) => x + y, 0), workWet, workTagged: d.isWork.reduce((x, y) => x + y, 0),
+      buildings: nB, bWet, bDeep, hWet, workers, workersAll, homesTagged: d.isHome.reduce((x, y) => x + y, 0), workWet, workTagged: d.isWork.reduce((x, y) => x + y, 0),
       overFloor, floorH, damage, isolatedB, peopleIsolated, cutEdges, islandEdges, people, cutKm, roadKm, worstRoads, sites: d.sites.length, sitesHit,
     };
   }
@@ -3973,7 +4025,7 @@
     const r = computeImpact(d);
     if (!r) return;
     status.impact = {
-      buildings: r.buildings, bWet: r.bWet, overFloor: r.overFloor, workWet: r.workWet, isolated: r.isolatedB, damage: Math.round(r.damage),
+      buildings: r.buildings, bWet: r.bWet, overFloor: r.overFloor, workWet: r.workWet, workers: r.workers == null ? null : Math.round(r.workers), isolated: r.isolatedB, damage: Math.round(r.damage),
       people: r.people == null ? null : Math.round(r.people), peopleIsolated: r.peopleIsolated == null ? null : Math.round(r.peopleIsolated),
       cutKm: Math.round(r.cutKm * 10) / 10, sites: r.sites, sitesHit: r.sitesHit.length,
       source: d.copy ? `copy:${d.copy.id}` : 'live',
@@ -3988,7 +4040,7 @@
         <div class="stat"><div class="label">Indicative damage</div><div class="v">${r.damage >= 1e6 ? `$${(r.damage / 1e6).toFixed(1)}<small>m</small>` : `$${n(r.damage / 1000)}<small>k</small>`}</div></div>
         <div class="stat"><div class="label">Cut off, still dry</div><div class="v">${n(r.isolatedB)}<small> buildings${r.peopleIsolated != null ? ` · ≈${n(r.peopleIsolated)} people` : ''}</small></div></div></div>
       <p class="hint"><strong>Damage</strong> applies the EU Joint Research Centre's global depth–damage curve for homes in Oceania to the water above each building's floor, times the value per building you set: an order-of-magnitude guide, not an insurance or recovery estimate.</p>
-      <p class="hint"><strong>Daytime:</strong> ${n(r.workWet)} flooded buildings are mapped as workplaces, shops, schools or public buildings${r.workTagged ? '' : ' (few buildings here are mapped by type)'}; the people figure counts residents, so daytime numbers in business areas will differ. <strong>Cut off</strong> means the building's nearest road is dry but no dry road leads out of the model area (orange on the map); flooded roads are red.</p>
+      <p class="hint"><strong>Daytime:</strong> ${n(r.workWet)} flooded buildings are mapped as workplaces, shops, schools or public buildings${r.workTagged ? '' : ' (few buildings here are mapped by type)'}${r.workers != null ? `; about <strong>${n(r.workers)}</strong> of the ${n(r.workersAll)} people who work in the model area work in flooded buildings (ABS 2021 Census place of work by SA2, spread over each area's mapped workplaces)` : ''}. The people figure above counts residents. <strong>Cut off</strong> means the building's nearest road is dry but no dry road leads out of the model area (orange on the map); flooded roads are red.</p>
       <p class="hint">Flooded means at least 15 cm of water at the building or site; ${n(r.bDeep)} buildings have more than 50 cm${r.homesTagged ? `; ${n(r.hWet)} of the flooded buildings are mapped as homes` : ''}. Roads are cut where water is over 30 cm deep.</p>
       ${r.worstRoads.length ? `<p><strong>Roads cut:</strong> ${r.worstRoads.map(([nm, km]) => `${escapeHtml(nm)} (${km < 1 ? `${Math.round(km * 1000)} m` : `${km.toFixed(1)} km`})`).join(', ')}</p>` : ''}
       ${r.sitesHit.length ? `<p><strong>Key sites:</strong> ${r.sitesHit.slice(0, 12).map((s) => `${escapeHtml(s.name)} <small>(${s.kind.toLowerCase()}, ${s.depth.toFixed(1)} m)</small>`).join('; ')}${r.sitesHit.length > 12 ? ` and ${r.sitesHit.length - 12} more` : ''}</p>` : ''}
@@ -4398,6 +4450,16 @@
     }
     const ev = evs.find((e) => e.id === sel.value);
     $('shapeRow').hidden = !!ev;
+    // recorded floods with a nearby tide gauge use its real sea levels
+    const rec = document.querySelector('#tideCycle option[value="recorded"]'), tc = $('tideCycle');
+    if (rec && tc) {
+      const has = !!(ev && ev.sea);
+      rec.hidden = !has;
+      if (has && tc.dataset.event !== ev.id) tc.value = 'recorded';
+      if (!has && tc.value === 'recorded') tc.value = 'high';
+      tc.dataset.event = ev ? ev.id : '';
+      $('tideAmp').disabled = tc.value === 'recorded';
+    }
     $('shapeNote').innerHTML = ev
       ? `${escapeHtml(ev.gauge.name)} gauge, peak ${ev.peak.level.toFixed(2)} m on its board at ${escapeHtml(fmtWhen(ev, ev.peak.hours))}. The recorded rise and fall is used with its peak lined up to this scenario's peak; to match the real flood's height, use <em>Check against recorded floods</em>, <em>Find the matching level</em> first.`
       : (nat.events && nat.events.length ? (evs.length ? '' : 'No recorded flood readings near this model\'s gauge yet.') : '');
@@ -4415,7 +4477,8 @@
       speedKmh: Math.max(0.5, parseFloat($('waveKmh').value) || 3),
       flatten: parseFloat($('flatten').value) || 0,
       route: $('flatten').value === 'route',
-      tide: hasSea() && $('tideCycle').value ? { amp: Math.max(0, parseFloat($('tideAmp').value) || 0), atPeak: $('tideCycle').value } : null,
+      tide: hasSea() && $('tideCycle').value && $('tideCycle').value !== 'recorded' ? { amp: Math.max(0, parseFloat($('tideAmp').value) || 0), atPeak: $('tideCycle').value } : null,
+      sea: hasSea() && $('tideCycle').value === 'recorded' && ev && ev.sea ? ev.sea.series : null,
       hydro: ev ? ev.series : null,
       others: ev && ev.others ? otherGaugeCells(ev) : null,
       rating: gaugeRating(),
@@ -4423,6 +4486,7 @@
     };
   }
   $('floodShape').addEventListener('change', renderShapeChoices);
+  $('tideCycle').addEventListener('change', () => { $('tideAmp').disabled = $('tideCycle').value === 'recorded'; });
   // the measured level-to-flow rating of the Bureau gauge at the model's
   // gauge (within 2 km), from the build's fit to Water Data Online records
   function gaugeRating() {
@@ -4527,7 +4591,7 @@
     const R = tl.wave.routed;
     status.timeline = { steps: tl.steps, step: tl.step, event: opts.eventId,
       routed: R ? { reaches: R.reaches.length, km: +(R.reaches[R.reaches.length - 1] || { km: 0 }).km.toFixed(1), peakFrac: +R.peakAt(R.flows.length - 1).frac.toFixed(2), lagHours: Math.round(R.peakAt(R.flows.length - 1).hours - R.peakAt(0).hours), tributaries: R.tributaries } : null,
-      tide: tl.wave.tide || 0, rated: !!(R && R.rated), upGauges: tl.wave.up ? tl.wave.up.gauges : 0, firstRoad: ac ? ac.firstClose : null, maxIsolated: ac ? ac.maxIso : null, longestHours: ac ? ac.longest : null, roadsClosed: ac ? ac.roads.length : null };
+      tide: tl.wave.tide || 0, seaRecorded: !!tl.wave.seaRecorded, rated: !!(R && R.rated), upGauges: tl.wave.up ? tl.wave.up.gauges : 0, firstRoad: ac ? ac.firstClose : null, maxIsolated: ac ? ac.maxIso : null, longestHours: ac ? ac.longest : null, roadsClosed: ac ? ac.roads.length : null };
     return status.timeline;
   }
   // Roads and isolation through time, from when each spot is over 0.3 m deep
@@ -4627,7 +4691,8 @@
       parts.push(`Flows from ${escapeHtml(rt.name || 'the gauge')}'s measured rating (Water Data Online daily records${board > rt.hmax ? ', extended above the highest daily level recorded' : ''}): about ${q >= 100 ? Math.round(q / 10) * 10 : Math.round(q)} m³/s at the peak.`);
     }
     if (tl.wave && tl.wave.up) parts.push(`Along the river the flood follows the recorded readings at ${tl.wave.up.gauges} more gauge${tl.wave.up.gauges === 1 ? '' : 's'}${tl.wave.up.below ? `, ${tl.wave.up.below} below this one` : ''}: ${escapeHtml(tl.wave.up.names.join(', '))}, blending between gauges along the way.`);
-    if (tl.wave && tl.wave.tide) parts.push(`Tide: ${tl.opts.tide.atPeak === 'low' ? 'low' : 'high'} water at the peak, sea between ${(tl.s.bayLevel - 2 * tl.wave.tide).toFixed(2)} m and ${tl.s.bayLevel.toFixed(2)} m.`);
+    if (tl.wave && tl.wave.seaRecorded && tl.event && tl.event.sea) parts.push(`Sea: the recorded level at the ${escapeHtml(tl.event.sea.station)} tide gauge (${Math.round(tl.event.sea.km)} km away; University of Hawaii Sea Level Center), tides and surge included, between ${tl.wave.seaRecorded.lo.toFixed(2)} and ${tl.wave.seaRecorded.hi.toFixed(2)} m above mean sea level.`);
+    else if (tl.wave && tl.wave.tide) parts.push(`Tide: ${tl.opts.tide.atPeak === 'low' ? 'low' : 'high'} water at the peak, sea between ${(tl.s.bayLevel - 2 * tl.wave.tide).toFixed(2)} m and ${tl.s.bayLevel.toFixed(2)} m.`);
     return parts.length ? `<p class="hint">${parts.join(' ')}</p>` : '';
   }
   function renderTimeline() {

@@ -385,3 +385,15 @@ test('routing with a measured rating uses its exponent and still matches the gau
   const expect = w.w0[g] + ((w.w1[g] - w.w0[g]) * (gauge - w.lo)) / (w.hi - w.lo);
   assert.ok(Math.abs(here - expect) < 0.05, 'and on the rise');
 });
+
+test('recorded sea levels drive the sea during a recorded flood', () => {
+  const g = a.defaultGauge;
+  const s = scenario(a.dem[g] + 3, { bayLevel: 0.2 });
+  const hydro = [[0, 1], [10, 5], [30, 1]];
+  const sea = [[0, 0.1], [6, 1.4], [12, -0.6], [18, 1.6], [30, 0]];
+  const w = F.waveSetup(a, s, { hydro, speedKmh: 3, sea });
+  assert.ok(Math.abs(w.bayAt(18) - 1.6) < 1e-9 && Math.abs(w.bayAt(9) - 0.4) < 1e-9, 'follows and interpolates the readings');
+  assert.deepEqual(w.seaRecorded, { lo: -0.6, hi: 1.6 });
+  const tl = F.floodTimeline(a, s, { hydro, speedKmh: 3, sea });
+  assert.ok(tl.steps > 10);
+});
