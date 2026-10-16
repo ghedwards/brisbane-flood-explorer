@@ -60,7 +60,7 @@ class Sea(unittest.TestCase):
                 out.append((t, 3.0 + math.cos(2 * math.pi * t.timestamp() / 3600 / 12.42)))
                 t += dt.timedelta(minutes=10)
             return out
-        ev = {"id": "m", "lat": -21.14, "lon": 149.18, "start": "2008-02-14T00:00:00+10:00", "series": [[0, 1], [48, 2]]}
+        ev = {"id": "m", "lat": -21.14, "lon": 149.18, "start": "2008-02-14T00:00:00+10:00", "series": [[0, 1], [48, 2]]}   # Mackay: Townsville's UHSLC gauge is 330 km away
         sea, why = fs.sea_for(ev, fetch=fake, msq=msq)
         self.assertIsNone(why)
         self.assertIn("Mackay", sea["station"])

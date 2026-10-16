@@ -164,7 +164,7 @@ def msq_year(site, year):
         return _msq_years[key]
     import time
     if _msq_budget["until"] is None:
-        _msq_budget["until"] = time.time() + 900
+        _msq_budget["until"] = time.time() + 480
     if time.time() > _msq_budget["until"]:
         raise RuntimeError("time budget for Queensland files used up")
     _msq_years[key] = rows = _msq_year(site, year)
@@ -183,7 +183,7 @@ def _msq_year(site, year):
         raise RuntimeError(f"no {year} file among {len(resources)} ({names})")
     for r in pick[:2]:
         req = urllib.request.Request(r["url"], headers=UA)
-        with urllib.request.urlopen(req, timeout=300) as resp:
+        with urllib.request.urlopen(req, timeout=120) as resp:
             body = resp.read()
         if body[:2] == b"PK":
             import zipfile
@@ -233,10 +233,14 @@ def sea_for(ev, fetch=erddap, msq=msq_year):
     st, d = nearest(ev["lat"], ev["lon"])
     start = dt.datetime.fromisoformat(ev["start"])
     end = start + dt.timedelta(hours=max(r[0] for r in ev["series"]) + 24)
-    # a Queensland gauge nearer than any UHSLC gauge comes first
-    q, dq, why_q = msq_for(ev, start, end, msq) if ev["lon"] > 137.9 and ev["lat"] > -29.2 else (None, math.inf, None)
+    # a Queensland gauge only where no UHSLC gauge is near (their archived
+    # files are large, slow downloads)
+    qld = ev["lon"] > 137.9 and ev["lat"] > -29.2
+    near_msq = min((km(ev["lat"], ev["lon"], s_[1], s_[2]) for s_ in MSQ_SITES), default=math.inf)
+    want_q = qld and (not st or near_msq < d - 40)
+    q, dq, why_q = msq_for(ev, start, end, msq) if want_q else (None, math.inf, None)
     if why_q:
-        print(f"note: {ev['id']}: {why_q}")
+        print(f"note: {ev['id']}: {why_q}", flush=True)
     if q and (not st or dq <= d):
         return q, None
     if not st:
@@ -281,6 +285,7 @@ def main(events_path, out_path):
         if got:
             sea[ev["id"]] = got
             done.append(f"{ev['id']} ({got['station']}, {len(got['series'])} h)")
+            print(f"got: {done[-1]}", flush=True)
         elif why and "no tide gauge" not in why:
             notes.append(f"{ev['id']}: {why}")
         Path(out_path).write_text(json.dumps(sea, separators=(",", ":")))   # keep what's done so far
