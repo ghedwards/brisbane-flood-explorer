@@ -196,6 +196,29 @@ def readings_for(features, parameter, unit, errors):
     return out
 
 
+def compact(features):
+    """Point features as columns: {keys, dict, rows: [[lon, lat, v...]]}.
+    Columns with few distinct values (state, basin, agency, kind) are stored
+    as indexes into dict[key], which roughly halves the gauge file."""
+    keys = sorted({k for f in features for k in (f.get("properties") or {})})
+    vals = {k: [(f.get("properties") or {}).get(k) for f in features] for k in keys}
+    dicts = {}
+    for k in keys:
+        uniq = list(dict.fromkeys(v for v in vals[k] if v is not None))
+        if 0 < len(uniq) <= max(50, len(features) // 8) and all(isinstance(v, str) for v in uniq):
+            dicts[k] = uniq
+    index = {k: {v: i for i, v in enumerate(d)} for k, d in dicts.items()}
+    rows = []
+    for i, f in enumerate(features):
+        x, y = (f.get("geometry") or {}).get("coordinates", [None, None])[:2]
+        row = [x, y]
+        for k in keys:
+            v = vals[k][i]
+            row.append(index[k].get(v, -1) if k in dicts and v is not None else (-1 if k in dicts else v))
+        rows.append(row)
+    return {"keys": keys, "dict": dicts, "rows": rows}
+
+
 def main(out_dir: str) -> None:
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
@@ -214,6 +237,7 @@ def main(out_dir: str) -> None:
             g["coordinates"] = [round(float(v), 5) for v in g["coordinates"][:2]]
     now = dt.datetime.now(dt.timezone.utc).replace(microsecond=0).isoformat()
     (out / "gauges.geojson").write_text(json.dumps({"type": "FeatureCollection", "features": gauges}, separators=(",", ":")))
+    (out / "gauges.min.json").write_text(json.dumps(compact(gauges), separators=(",", ":"), ensure_ascii=False))
     (out / "storages.geojson").write_text(json.dumps({"type": "FeatureCollection", "features": storages}, separators=(",", ":")))
     (out / "readings.json").write_text(json.dumps(readings, separators=(",", ":")))
     kinds = {}

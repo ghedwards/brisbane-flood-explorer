@@ -156,3 +156,19 @@ class MissingFileTests(unittest.TestCase):
             wh.main(d)
             out = json.loads((Path(d) / "waterhistory.json").read_text())
         self.assertEqual(out["9"]["missing"], "no time series file")
+
+
+class Compact(unittest.TestCase):
+    def test_compact_gauges_keep_every_value(self):
+        import fetch_national as fn
+        feats = [{"type": "Feature", "geometry": {"type": "Point", "coordinates": [150 + i * 0.01, -27.0]},
+                  "properties": {"id": str(i), "name": f"G{i}", "state": "QLD" if i % 2 else "NSW", "kind": "river", "bom": None}}
+                 for i in range(60)]
+        c = fn.compact(feats)
+        self.assertIn("state", c["dict"])
+        self.assertNotIn("name", c["dict"], "unique names stay inline")
+        k = {key: i + 2 for i, key in enumerate(c["keys"])}
+        row = c["rows"][3]
+        self.assertEqual(c["dict"]["state"][row[k["state"]]], "QLD")
+        self.assertEqual(row[k["name"]], "G3")
+        self.assertEqual(row[:2], [150.03, -27.0])

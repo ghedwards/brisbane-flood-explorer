@@ -16,7 +16,7 @@ URL = sys.argv[1] if len(sys.argv) > 1 else "http://localhost:8000/"
 
 
 KEY = []          # key results, shown together in one annotation at the end
-KEY_WORDS = ("Storm pipes", "Rating at", "First load", "Keyboard", "Tides at", "Sea reached", "Recorded flood over time", "Flood over time", "Levees", "Storm tide", "Presets checked", "Recorded floods", "Best match", "Impact", "Storm", "Joined", "Share link", "Satellite check",
+KEY_WORDS = ("Council layers", "Sea levels", "Storm pipes", "Rating at", "First load", "Keyboard", "Tides at", "Sea reached", "Recorded flood over time", "Flood over time", "Levees", "Storm tide", "Presets checked", "Recorded floods", "Best match", "Impact", "Storm", "Joined", "Share link", "Satellite check",
              "Presets anchored", "Presets on LiDAR", "Phone Layers", "Council layer", "Downloads", "Rain radar",
              "Address search", "Flood warnings", "Echuca", "Extended model", "Area study")
 
@@ -351,6 +351,22 @@ def main() -> int:
                 safe = "".join(ch if ch.isalnum() else "-" for ch in name.lower())[:40]
                 page.screenshot(path=f"smoke-layer-{safe}.png")
                 page.evaluate("([n]) => window.__floodSetOverlay(n, false)", [name])
+            # other councils' flood layers, each at its own test spot
+            drawn = []
+            for c in page.evaluate("window.__floodCouncilLayers ? window.__floodCouncilLayers() : []"):
+                if not c.get("test"):
+                    continue
+                lat, lon = c["test"]
+                page.evaluate("([la, lo, z]) => window.__floodTestZoom && window.__floodTestZoom(la, lo, z)", [lat, lon, max(14, (c.get("minZoom") or 12) + 2)])
+                page.wait_for_timeout(1500)
+                page.evaluate("([n]) => window.__floodSetOverlay(n, true)", [c["name"]])
+                page.wait_for_timeout(7000)
+                st = page.evaluate("n => window.__floodStatus.overlays[n]", c["name"]) or {}
+                drawn.append(f"{c['name']}: {st.get('features', 0)}/{st.get('errors', 0)}")
+                if not st.get("features"):
+                    note("warning", f"Council layer {c['name']} drew nothing at its test spot ({st.get('errors', 0)} errors)")
+                page.evaluate("([n]) => window.__floodSetOverlay(n, false)", [c["name"]])
+            note("notice", "Council layers (drawn/errors): " + " | ".join(drawn))
             page.click("#events .chip:nth-child(3)")  # back to 2011
             page.wait_for_timeout(800)
         else:

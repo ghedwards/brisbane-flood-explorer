@@ -907,9 +907,49 @@
       legend: 'Queensland recorded flood extents (1974 Brisbane, 2010–13 Bundaberg, 2011 towns, 2017 Fitzroy and Logan, 2019 west)', swatch: '#d9480f' },
   ];
 
-  // Council overland-flow mapping published as open map services (shown
-  // when zoomed in). Brisbane's are in the council layers above.
+  // Hazard categories, light to dark (a single-hue sequence, so it reads
+  // without colour vision too): the higher the hazard, the darker
+  const HAZARD_RAMP = ['#c6dbef', '#9ecae1', '#6baed6', '#3182bd', '#08519c', '#08306b'];
+  const hazardColor = (text) => {
+    const t = String(text || '');
+    const h = /\bH\s*([1-6])\b/i.exec(t);
+    if (h) return HAZARD_RAMP[+h[1] - 1];
+    if (/very high|extreme/i.test(t)) return HAZARD_RAMP[5];
+    if (/high/i.test(t)) return HAZARD_RAMP[4];
+    if (/medium|moderate/i.test(t)) return HAZARD_RAMP[3];
+    if (/low/i.test(t)) return HAZARD_RAMP[2];
+    return HAZARD_RAMP[0];   // extents, planning areas
+  };
+  // Council flood mapping published as open map services (shown when
+  // zoomed in). Brisbane's are in the council layers above.
   const COUNCIL_OVERLAYS = [
+    { name: 'Gold Coast flood risk, 2026 (council)', type: 'feature', minZoom: 12,
+      url: 'https://services-ap1.arcgis.com/lnVW0dLI3fvST2hd/arcgis/rest/services/Flood_Risk_Overlay_2026/FeatureServer/0',
+      colorBy: (p) => hazardColor(p.RISK),
+      attribution: 'Flood risk overlay &copy; City of Gold Coast (City Plan)',
+      legend: 'Gold Coast flood risk overlay (very high to low risk, and the maximum regional flood extent)', swatch: '#3182bd', test: [-28.01, 153.37] },
+    { name: 'Moreton Bay flood hazard (council)', type: 'feature', minZoom: 12,
+      url: 'https://services-ap1.arcgis.com/152ojN3Ts9H3cdtl/arcgis/rest/services/OM_Flood_Hazard_WebMercator_OpenData/FeatureServer/0',
+      colorBy: (p) => hazardColor(p.OVL2_DESC),
+      attribution: 'Flood hazard &copy; City of Moreton Bay (planning scheme overlay)',
+      legend: 'Moreton Bay flood hazard overlay (high and medium risk areas, flood planning area)', swatch: '#3182bd', test: [-27.085, 152.95] },
+    { name: 'Moreton Bay storm tide (council)', type: 'feature', minZoom: 12,
+      url: 'https://services-ap1.arcgis.com/152ojN3Ts9H3cdtl/arcgis/rest/services/OM_Coastal_Hazard_Storm_Tide_WebMercator_OpenData/FeatureServer/0',
+      attribution: 'Storm tide hazard &copy; City of Moreton Bay (planning scheme overlay)',
+      legend: 'Moreton Bay coastal hazard: storm tide inundation (planning scheme)', swatch: '#00838f', test: [-27.185, 153.07] },
+    { name: 'Rockhampton flood hazard, H1–H6 (council)', type: 'feature', minZoom: 12,
+      url: 'https://services-ap1.arcgis.com/hx2J5p82likyGt5G/arcgis/rest/services/Fitzroy_River_Flood_Hazard_Minus_NRFMA/FeatureServer/0',
+      colorBy: (p) => hazardColor([p.DESCRIPTION, p.LAYER, p.UserText_1, p.UserText_2].join(' ')),
+      attribution: 'Flood hazard &copy; Rockhampton Regional Council (planning scheme; AECOM 2019 Fitzroy model)',
+      legend: 'Rockhampton flood hazard from depth × velocity: H1 (generally safe) to H6 (unsafe for all buildings)', swatch: '#3182bd', test: [-23.37, 150.52] },
+    { name: 'Logan flooding, 2015 (council)', type: 'tiles', minZoom: 11,
+      url: 'https://services7.arcgis.com/si70weKpzPSa0BGV/arcgis/rest/services/LCC_Flooding_TLPI_2015/MapServer',
+      attribution: 'Flooding (temporary local planning instrument, 2015) &copy; Logan City Council',
+      legend: 'Logan flood mapping from the 2015 temporary local planning instrument', swatch: '#3b6fb6', test: [-27.70, 153.14] },
+    { name: 'Livingstone flood hazard (council)', type: 'tiles', minZoom: 11,
+      url: 'https://tiles.arcgis.com/tiles/0feS4n90HMqhF4HA/arcgis/rest/services/OM17_Flood_Hazard_Area/MapServer',
+      attribution: 'Flood hazard area overlay &copy; Livingstone Shire Council (planning scheme 2018)',
+      legend: 'Livingstone (Yeppoon, Emu Park) flood hazard area overlay (planning scheme)', swatch: '#3b6fb6', test: [-23.13, 150.74] },
     { name: 'Moreton Bay overland flow paths (council)', type: 'feature', minZoom: 12,
       url: 'https://services-ap1.arcgis.com/152ojN3Ts9H3cdtl/ArcGIS/rest/services/OM_Overland_Flow_Path_WebMercator_OpenData/FeatureServer/0',
       attribution: 'Overland flow paths &copy; City of Moreton Bay (planning scheme overlay)',
@@ -928,7 +968,7 @@
     if (o.type === 'feature') {
       layer = esri.featureLayer({
         url: o.url, minZoom: o.minZoom, simplifyFactor: 0.5, precision: 6, attribution: o.attribution,
-        style: () => ({ color: o.swatch, weight: 1, fillColor: o.swatch, fillOpacity: 0.35 }),
+        style: (f) => { const c = o.colorBy ? o.colorBy((f && f.properties) || {}) : o.swatch; return { color: c, weight: 1, fillColor: c, fillOpacity: 0.4 }; },
       });
       layer.on('load', () => { let n = 0; layer.eachFeature(() => { n++; }); st.features = n; });
       // esri-leaflet can try to add or remove features after the layer has
@@ -937,6 +977,11 @@
         const orig = layer[fn];
         layer[fn] = function guarded(...args) { return this._map ? orig.apply(this, args) : undefined; };
       });
+    } else if (o.type === 'tiles') {
+      // a cached (tile-only) map service
+      layer = esri.tiledMapLayer({ url: o.url, opacity: 0.65, attribution: o.attribution, minZoom: o.minZoom, maxZoom: 20, zIndex: 4 });
+      layer.on('tileload', () => { st.features++; });
+      layer.on('tileerror', () => { st.errors++; });
     } else {
       layer = esri.dynamicMapLayer({ url: o.url, opacity: 0.6, attribution: o.attribution, f: 'image', format: 'png32', transparent: true, minZoom: o.minZoom, zIndex: 4 });
       layer.on('load', () => { st.features++; });
@@ -2319,6 +2364,32 @@
   status.local = {};
   const nat = { data: null, readings: null, layers: {}, picked: null };
 
+  // compact point features ({keys, dict, rows}) back to GeoJSON features
+  function decodeCompact(c) {
+    if (!c || !c.rows || !c.keys) throw new Error('not a compact file');
+    const keys = c.keys, dict = c.dict || {};
+    return {
+      features: c.rows.map((r) => {
+        const p = {};
+        for (let j = 0; j < keys.length; j++) { const v = r[j + 2], d = dict[keys[j]]; p[keys[j]] = d ? (v >= 0 ? d[v] : null) : v; }
+        return { type: 'Feature', geometry: { type: 'Point', coordinates: [r[0], r[1]] }, properties: p };
+      }),
+    };
+  }
+  // Recorded floods and gauge ratings: only needed for the flood over time,
+  // so they load when a model is first opened, not with the map
+  let historyP = null;
+  function ensureHistory() {
+    if (!historyP) {
+      const j = (f) => fetch(f, { cache: 'no-cache' }).then((r) => (r.ok ? r.json() : {})).catch(() => ({}));
+      historyP = Promise.all([j('data/events.json'), j('data/ratings.json')]).then(([ev, rt]) => {
+        nat.events = (ev.events || []).filter((e) => e.series);
+        nat.ratings = rt.ratings || {};
+        renderShapeChoices();
+      });
+    }
+    return historyP;
+  }
   async function loadNationalData() {
     if (nat.data) return nat.data;
     const get = async (f) => {
@@ -2327,16 +2398,14 @@
       return r.json();
     };
     try {
+      // gauges come as compact columns (about half the size), or as GeoJSON
+      const gaugeFile = get('gauges.min.json').then(decodeCompact).catch(() => get('gauges.geojson'));
       const [gauges, storages, readings, meta] = await Promise.all([
-        get('gauges.geojson'), get('storages.geojson'), get('readings.json'), get('meta.json')]);
+        gaugeFile, get('storages.geojson'), get('readings.json'), get('meta.json')]);
       nat.data = { gauges: gauges.features || [], storages: storages.features || [], meta };
       nat.readings = readings;
       const opt = async (f) => { try { const r = await fetch(`data/national/${f}`, { cache: 'no-cache' }); return r.ok ? r.json() : null; } catch (e) { return null; } };
       [nat.floodclass, nat.warnings] = await Promise.all([opt('floodclass.json'), opt('warnings.json')]);
-      // recorded floods and gauge ratings: only needed for the flood over
-      // time, so they load in the background
-      fetch('data/events.json', { cache: 'no-cache' }).then((r) => (r.ok ? r.json() : {})).then((d) => { nat.events = (d.events || []).filter((e) => e.series); renderShapeChoices(); }).catch(() => { nat.events = []; });
-      fetch('data/ratings.json', { cache: 'no-cache' }).then((r) => (r.ok ? r.json() : {})).then((d) => { nat.ratings = d.ratings || {}; }).catch(() => { nat.ratings = {}; });
       nat.floodclass = nat.floodclass || {};
       renderWarnings();
     } catch (e) {
@@ -4434,6 +4503,7 @@
   const hoursLabel = (h) => (h < 0 ? `${h} h` : `+${h} h`);
   // recorded floods at a gauge near this model's gauge
   function eventsHere() {
+    if (!nat.events) ensureHistory();
     if (!nat.events || !state.a || state.gauge < 0 || !state.geo) return [];
     const [la, lo] = cellLatLng(state.gauge);
     return nat.events.filter((e) => e.gauge && kmBetween([e.gauge.lat, e.gauge.lon], [la, lo]) < 12);
@@ -4501,7 +4571,8 @@
     }
     return best;
   }
-  window.__floodRatingHere = () => {
+  window.__floodRatingHere = async () => {
+    await ensureHistory();
     const r = gaugeRating(), evs = eventsHere();
     return { rating: r && { name: r.name, b: r.b, depth: +r.depth.toFixed(2), km: +r.km.toFixed(2) }, ratings: nat.ratings ? Object.keys(nat.ratings).length : null,
       events: evs.map((e) => ({ id: e.id, others: (e.others || []).length, inModel: otherGaugeCells(e).length })) };
@@ -4564,6 +4635,7 @@
   async function runTimeline(eventId) {
     const area = state.areaKey && areaReg.get(state.areaKey), a = state.a;
     if (!area || !a || state.gauge < 0) return null;
+    await ensureHistory();
     if (eventId !== undefined) { renderShapeChoices(); $('floodShape').value = eventId || ''; renderShapeChoices(); }
     const box = $('timelineBox');
     box.innerHTML = '<p class="hint">Working out the flood hour by hour…</p>';
@@ -4770,7 +4842,7 @@
   }
   $('runTimeline').addEventListener('click', () => runTimeline());
   window.__floodRunTimeline = runTimeline;
-  window.__floodEventsHere = () => eventsHere().map((e) => e.id);
+  window.__floodEventsHere = async () => { await ensureHistory(); return eventsHere().map((e) => e.id); };
   window.__floodTimeStep = (k) => { showTimeStep(k); return status.impact; };
 
   /* ---------- on-demand flood modelling */
