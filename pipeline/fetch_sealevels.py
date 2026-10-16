@@ -127,7 +127,9 @@ def parse_levels(text):
     out = []
     pats = [(re.compile(r"(\d{4})-(\d{2})-(\d{2})[T ](\d{1,2}):(\d{2})"), "ymd"),
             (re.compile(r"(\d{1,2})/(\d{1,2})/(\d{4})\s+(\d{1,2}):(\d{2})"), "dmy"),
-            (re.compile(r"\b(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})\b"), "ymd")]
+            # MSQ archives: DDMMYYYYHHMM, then the level (e.g. 010120170000  0.902)
+            (re.compile(r"^\s*(\d{2})(\d{2})((?:19|20)\d{2})(\d{2})(\d{2})\b"), "dmy"),
+            (re.compile(r"\b((?:19|20)\d{2})(\d{2})(\d{2})(\d{2})(\d{2})\b"), "ymd")]
     for line in text.splitlines():
         for pat, order in pats:
             m = pat.search(line)
@@ -185,6 +187,7 @@ def _msq_year(site, year):
         req = urllib.request.Request(r["url"], headers=UA)
         with urllib.request.urlopen(req, timeout=120) as resp:
             body = resp.read()
+            ctype = resp.headers.get("Content-Type", "")
         if body[:2] == b"PK":
             import zipfile
             z = zipfile.ZipFile(io.BytesIO(body))
@@ -194,7 +197,7 @@ def _msq_year(site, year):
         if len(rows) > 1000:
             return rows
         first = " | ".join(ln for ln in text.splitlines()[:6] if ln.strip())[:300]
-        raise RuntimeError(f"{len(rows)} readings parsed from {r.get('name', '')} (starts: {first})")
+        raise RuntimeError(f"{len(rows)} readings parsed from {r.get('name', '')} ({len(body)} bytes, {ctype}, {r.get('url', '')[-60:]}; starts: {first})")
     return []
 
 

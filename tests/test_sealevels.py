@@ -52,6 +52,12 @@ class Sea(unittest.TestCase):
         self.assertEqual(rows[0][0], dt.datetime(2011, 1, 12, 0, 0, tzinfo=UTC), "AEST to UTC")
         self.assertEqual([v for _, v in rows], [2.35, 2.41, 2.5])
 
+    def test_reads_msq_archive_lines(self):
+        rows = fs.parse_levels("010120170000  0.902\n010120170010  0.854\n311220172350  1.234\n")
+        self.assertEqual(len(rows), 3)
+        self.assertEqual(rows[0][0], dt.datetime(2016, 12, 31, 14, 0, tzinfo=UTC), "1 Jan 2017 00:00 AEST")
+        self.assertEqual(rows[2][1], 1.234)
+
     def test_a_nearer_queensland_gauge_comes_first(self):
         def msq(site, year):
             self.assertEqual(site, "Mackay")
