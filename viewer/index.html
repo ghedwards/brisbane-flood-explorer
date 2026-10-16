@@ -136,6 +136,12 @@
           <option value="0">not counted</option><option value="20">small or old (20 mm/h)</option><option value="40" selected>typical (40 mm/h)</option><option value="60">large or new (60 mm/h)</option>
         </select></label>
       </div>
+      <div class="storm-row">
+        <label>Climate <select id="warming" aria-label="Climate for the storm's rainfall">
+          <option value="0" selected>today's</option><option value="1">1 °C warmer</option><option value="1.5">1.5 °C warmer</option>
+          <option value="2">2 °C warmer</option><option value="3">3 °C warmer</option>
+        </select></label>
+      </div>
       <p class="hint" id="stormSummary" aria-live="polite"></p>
       <p class="hint" id="ifdNote"></p>
     </fieldset>
@@ -181,6 +187,13 @@
       <div id="levelPoints"></div>
       <div class="link-row"><button type="button" class="btn small" id="addLevelPoint" aria-pressed="false">Add a level point</button></div>
       <p class="hint" id="levelPointsHint">Pin the water level at more places along the river, such as another gauge or a flood mark; the surface runs straight between them.</p>
+    </fieldset>
+
+    <fieldset id="compareSet">
+      <legend class="label">Compare scenarios</legend>
+      <div class="link-row"><button type="button" class="btn small" id="pinScenario">Pin this scenario</button>
+        <button type="button" class="btn small" id="clearPinned" hidden>Clear</button></div>
+      <div id="compareBox" aria-live="polite"><p class="hint">Pin a scenario, then change the level, storm, levees or anything else: the map can show what floods only now (orange), what no longer floods (purple), and the impact counts show the difference.</p></div>
     </fieldset>
 
     <fieldset id="timeSet">
@@ -349,10 +362,11 @@
   <div class="sheet-head"><h2 id="h-about">About this map</h2><button type="button" class="close" data-close aria-label="Close">×</button></div>
   <div class="sheet-body">
     <div class="notice" id="notice"></div>
-    <p class="about-text">Set a river level at the gauge and a bay level, and the map shows land below that water surface that connects to the river. It is a screening tool, not a flood study: it ignores rainfall on the floodplain, stormwater, levees, bridges and how water moves over time.
+    <p class="about-text">Set a river level at the gauge and a bay level, and the map shows land below that water surface that connects to the river. It can add storms, levees, tides and the flood's timing, but all simply: it is a screening tool, not a flood study, and leaves out bridges, culverts and detailed flow.
       For real flood risk use your council's flood maps (for example <a href="https://fam.brisbane.qld.gov.au/" target="_blank" rel="noopener">Brisbane's Flood Awareness Maps</a>)
       and <a href="https://www.bom.gov.au/qld/warnings/" target="_blank" rel="noopener">Bureau of Meteorology warnings</a>.</p>
     <div class="sources" id="dataInfo"></div>
+    <details class="sources" id="dataStatusBox"><summary>Data status</summary><div id="dataStatus"><p class="hint">Loading…</p></div></details>
     <div class="downloads" id="downloads"></div>
     <fieldset>
       <legend class="label">Your own terrain</legend>
@@ -368,6 +382,12 @@
 
 <div class="legend-card float" id="legendCard">
   <div class="summary" id="summaryLine"></div>
+  <label class="show-mode">Show <select id="colorMode" aria-label="What the flood colours show">
+    <option value="depth" selected>water depth</option>
+    <option value="hazard">hazard (H1–H6)</option>
+    <option value="compare" disabled>change from pinned scenario</option>
+  </select></label>
+  <div class="legend" id="modeLegend" hidden aria-live="polite"></div>
   <div class="legend" id="depthLegend" aria-label="Water depth legend">
     <span><i style="background:#c9e7f7"></i>&lt;0.5 m</span>
     <span><i style="background:#79bfe8"></i>0.5–1</span>

@@ -394,3 +394,12 @@ details > div { display: grid; gap: 14px; }
 
 /* shown while the device has no connection */
 .offline-pill { background: #f2a900; color: #1a1300; border-color: #f2a900; }
+
+.show-mode { display: flex; align-items: center; gap: 6px; font-size: 12px; margin: 4px 0; }
+.show-mode select { font-size: 12px; }
+.cmp { border-collapse: collapse; font-size: 12px; margin: 4px 0; }
+.cmp th, .cmp td { padding: 2px 8px 2px 0; text-align: right; }
+.cmp td:first-child, .cmp th:first-child { text-align: left; }
+.data-status { list-style: none; padding: 0; margin: 4px 0; display: grid; gap: 6px; }
+.data-status .st-badge { font-size: 11px; padding: 0 6px; border-radius: 8px; border: 1px solid var(--line); }
+.data-status .st-problem .st-badge, .data-status .st-missing .st-badge { background: #f2a900; color: #1a1300; border-color: #f2a900; }

@@ -47,7 +47,7 @@ jobs:
         run: pip install -r pipeline/requirements.txt
 
       - name: Test the data fetchers
-        run: python -m unittest tests/test_floodhub.py tests/test_national.py tests/test_council.py tests/test_floodinfo.py tests/test_events.py tests/test_osm.py tests/test_tides.py tests/test_ratings.py tests/test_sealevels.py tests/test_workers.py
+        run: python -m unittest tests/test_floodhub.py tests/test_national.py tests/test_council.py tests/test_floodinfo.py tests/test_events.py tests/test_osm.py tests/test_tides.py tests/test_ratings.py tests/test_sealevels.py tests/test_workers.py tests/test_status.py
 
       # Terrain only needs rebuilding when the area or the pipeline changes.
       - name: Restore built terrain
@@ -318,6 +318,9 @@ jobs:
         env:
           FLOOD_FORECASTING_API_KEY: ${{ secrets.FLOOD_FORECASTING_API_KEY }}
         run: python pipeline/fetch_floodhub.py config/brisbane.json site/data | tee floodhub.log
+
+      - name: Data status for the app
+        run: python pipeline/build_status.py site national.log floodinfo.log events.log ratings.log tides.log workers.log osm.log levees.log floodhub.log
 
       - name: Build summary
         run: |

@@ -1135,6 +1135,20 @@
   /* ------------------------------------------------------------ flash flood */
 
   /**
+   * Rainfall uplift for a warmer climate, following the draft Australian
+   * Rainfall and Runoff climate guidance (2024): about 15% more rain per °C
+   * of warming for storms of an hour or less and 8% per °C for a day or
+   * longer, in between by the logarithm of the duration; compounded per
+   * degree. Returns the factor to multiply rainfall by.
+   */
+  function stormUplift(hours, warmingC) {
+    if (!(warmingC > 0)) return 1;
+    const h = Math.max(1, Math.min(24, hours || 1));
+    const rate = 0.15 + (0.08 - 0.15) * (Math.log(h) / Math.log(24));
+    return Math.pow(1 + rate, warmingC);
+  }
+
+  /**
    * Flash flooding from a storm on the model area (screening level).
    *   rainMm, hours: storm depth and duration
    *   initialLoss (mm), contLoss (mm/h): soil and surface losses
@@ -1288,6 +1302,88 @@
         pipedMm: pipe ? Math.min(excessMm, o.pipeMmH * hours) : 0, urbanKm2: urbanCells * km2,
       },
     };
+  }
+
+  /**
+   * Flood hazard classes H1 to H6 (Australian Disaster Resilience
+   * Guideline 7-3): limits on depth D, velocity V and their product DV.
+   *   H1 D<=0.3, V<=2, DV<=0.3   generally safe
+   *   H2 D<=0.5, V<=2, DV<=0.6   unsafe for small vehicles
+   *   H3 D<=1.2, V<=2, DV<=0.6   unsafe for vehicles, children and the elderly
+   *   H4 D<=2.0, V<=2, DV<=1.0   unsafe for vehicles and people
+   *   H5 D<=4.0, V<=4, DV<=4.0   unsafe for people and vehicles; buildings need engineering design
+   *   H6 beyond                  unsafe for all; all building types vulnerable
+   */
+  const HAZARD_LIMITS = [[0.3, 2, 0.3], [0.5, 2, 0.6], [1.2, 2, 0.6], [2.0, 2, 1.0], [4.0, 4, 4.0]];
+  function hazardClass(D, V) {
+    for (let k = 0; k < HAZARD_LIMITS.length; k++) {
+      const [d, v, dv] = HAZARD_LIMITS[k];
+      if (D <= d && V <= v && D * V <= dv) return k + 1;
+    }
+    return 6;
+  }
+  /**
+   * Hazard for a run: a screening estimate of flow speed from Manning's
+   * equation (V = d^(2/3) S^(1/2) / n) with the water-surface slope of the
+   * river beside each cell (over about 500 m) for river flooding, the ground
+   * slope for overland flow, still water in ponds and the sea; channel
+   * n = 0.035, floodplain n = 0.06; speeds capped at 6 m/s in channels and
+   * 4 m/s on floodplains. Returns { cls (0 dry, 1-6), vel, km2: [H1..H6] }.
+   */
+  function hazard(a, run) {
+    const { N, rec, chain, stream, recvStream, dem, ocean, cell } = a;
+    const cls = new Uint8Array(N), vel = new Float32Array(N);
+    const level = run.level;
+    // water-surface slope along each stream cell, over about 500 m downstream
+    const slope = new Float32Array(N);
+    const reach = Math.max(2, Math.round(500 / cell));
+    for (let c = 0; c < N; c++) {
+      if (!stream[c] || !run.wet[c]) continue;
+      let d = c, k = 0;
+      while (k < reach && rec[d] >= 0) { d = rec[d]; k++; }
+      const L = chain[c] - chain[d];
+      const lc = Number.isFinite(level[c]) ? level[c] : dem[c] + run.depth[c];
+      const ld = Number.isFinite(level[d]) && run.wet[d] ? level[d] : lc;
+      slope[c] = L > 0 ? Math.max(0, (lc - ld) / L) : 0;
+    }
+    const km2 = [0, 0, 0, 0, 0, 0], cellKm2 = (cell * cell) / 1e6;
+    for (let c = 0; c < N; c++) {
+      if (!run.wet[c] || (ocean && ocean[c])) continue;
+      const D = run.depth[c];
+      if (!(D > 0)) continue;
+      const kind = run.kind ? run.kind[c] : 0;
+      let S = 0, n = 0.06, cap = 4;
+      if (kind === 3) S = 0;                                   // ponding: still water
+      else if (kind === 2 && rec[c] >= 0) S = Math.max(0, (dem[c] - dem[rec[c]]) / Math.max(cell, chain[c] - chain[rec[c]]));
+      else if (stream[c]) { S = slope[c]; n = 0.035; cap = 6; }
+      else if (recvStream[c] >= 0) S = slope[recvStream[c]];
+      const V = Math.min(cap, (Math.pow(D, 2 / 3) * Math.sqrt(Math.min(S, 0.2))) / n);
+      vel[c] = V;
+      cls[c] = hazardClass(D, V);
+      km2[cls[c] - 1] += cellKm2;
+    }
+    return { cls, vel, km2 };
+  }
+
+  /**
+   * Compare two runs cell by cell: 1 wet in both, 2 wet only in the current
+   * run, 3 wet only in the pinned one; plus the depth change where wet in
+   * both. Returns { diff, dDepth, km2: { both, onlyNow, onlyPinned }, deeperKm2, shallowerKm2 }.
+   */
+  function compareRuns(a, now, pinned) {
+    const N = a.N, diff = new Uint8Array(N), dDepth = new Float32Array(N), cellKm2 = (a.cell * a.cell) / 1e6;
+    const km2 = { both: 0, onlyNow: 0, onlyPinned: 0 };
+    let deeper = 0, shallower = 0;
+    for (let c = 0; c < N; c++) {
+      if (a.ocean && a.ocean[c]) continue;
+      const w1 = now.wet[c], w0 = pinned.wet[c];
+      if (w1 && w0) {
+        diff[c] = 1; km2.both += cellKm2;
+        dDepth[c] = now.depth[c] - pinned.depth[c];
+        if (dDepth[c] > 0.05) deeper += cellKm2; else if (dDepth[c] < -0.05) shallower += cellKm2;
+      } else if (w1) { diff[c] = 2; km2.onlyNow += cellKm2; } else if (w0) { diff[c] = 3; km2.onlyPinned += cellKm2; }
+    }
+    return { diff, dDepth, km2, deeperKm2: deeper, shallowerKm2: shallower };
   }
 
   /** Combine two runs, keeping the deeper water in each cell. */
@@ -1475,6 +1571,7 @@
   return {
     syntheticTerrain, analyse, mainStem, snapToStream, encodeWhiteboxD8,
     streamSurface, inundate, stats, flashFlood, mergeRuns, burnDefences, lineCells, waveSetup, waveSurface, floodTimeline,
+    hazard, hazardClass, compareRuns, stormUplift,
     parseAsciiGrid, downsample, cleanNodata, parseSimpleTiff,
     // exposed for tests
     _internal: { MinHeap, chamferDistance, mulberry32 },

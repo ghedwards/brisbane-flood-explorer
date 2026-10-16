@@ -397,3 +397,48 @@ test('recorded sea levels drive the sea during a recorded flood', () => {
   const tl = F.floodTimeline(a, s, { hydro, speedKmh: 3, sea });
   assert.ok(tl.steps > 10);
 });
+
+test('hazard classes follow the national depth-velocity limits', () => {
+  assert.equal(F.hazardClass(0.2, 0.5), 1);
+  assert.equal(F.hazardClass(0.4, 1.0), 2);
+  assert.equal(F.hazardClass(0.4, 1.8), 4, 'DV 0.72 exceeds the H2 and H3 limit of 0.6');
+  assert.equal(F.hazardClass(1.0, 0.5), 3);
+  assert.equal(F.hazardClass(1.5, 0.5), 4);
+  assert.equal(F.hazardClass(3.0, 1.0), 5);
+  assert.equal(F.hazardClass(1.0, 4.5), 6, 'too fast for H5');
+  assert.equal(F.hazardClass(5.0, 0.1), 6, 'too deep for H5');
+});
+
+test('hazard for a river flood: deeper and faster water ranks higher, areas add up', () => {
+  const g = a.defaultGauge;
+  const run = F.inundate(a, scenario(a.dem[g] + 4));
+  const h = F.hazard(a, run);
+  let wet = 0, sum = 0;
+  for (let c = 0; c < a.N; c++) if (run.wet[c] && !a.ocean[c] && run.depth[c] > 0) { wet++; assert.ok(h.cls[c] >= 1 && h.cls[c] <= 6); }
+  sum = h.km2.reduce((x, y) => x + y, 0);
+  assert.ok(Math.abs(sum - (wet * a.cell * a.cell) / 1e6) < 1e-6);
+  // the channel is deeper and faster than the edge of the flood
+  let ch = 0, chN = 0, fp = 0, fpN = 0;
+  for (let c = 0; c < a.N; c++) {
+    if (!run.wet[c] || a.ocean[c]) continue;
+    if (a.stream[c]) { ch += h.cls[c]; chN++; } else if (run.depth[c] < 0.3) { fp += h.cls[c]; fpN++; }
+  }
+  assert.ok(ch / chN > fp / fpN, 'channel cells are more hazardous on average than shallow edges');
+});
+
+test('comparing scenarios finds the extra flooding', () => {
+  const g = a.defaultGauge;
+  const small = F.inundate(a, scenario(a.dem[g] + 2)), big = F.inundate(a, scenario(a.dem[g] + 4));
+  const cmp = F.compareRuns(a, big, small);
+  assert.ok(cmp.km2.onlyNow > 0, 'the bigger flood reaches more land');
+  assert.equal(cmp.km2.onlyPinned, 0, 'and nothing floods only in the smaller one');
+  assert.ok(cmp.deeperKm2 > 0);
+});
+
+test('storm rainfall uplift for a warmer climate', () => {
+  assert.equal(F.stormUplift(1, 0), 1);
+  assert.ok(Math.abs(F.stormUplift(1, 1) - 1.15) < 1e-9, '15% per degree for an hour');
+  assert.ok(Math.abs(F.stormUplift(24, 1) - 1.08) < 1e-9, '8% per degree for a day');
+  const six = F.stormUplift(6, 2);
+  assert.ok(six > Math.pow(1.08, 2) && six < Math.pow(1.15, 2));
+});

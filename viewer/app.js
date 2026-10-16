@@ -35,7 +35,7 @@
   const ctl = {
     gaugeLevel: $('gaugeLevel'), bayLevel: $('bayLevel'), slr: $('slr'),
     extra: $('extra'), grad: $('grad'), streamArea: $('streamArea'),
-    floodType: $('floodType'), rainMm: $('rainMm'), stormHours: $('stormHours'), ground: $('ground'), pipes: $('pipes'),
+    floodType: $('floodType'), rainMm: $('rainMm'), stormHours: $('stormHours'), ground: $('ground'), pipes: $('pipes'), warming: $('warming'),
   };
   // soil and surface losses for each ground type: initial loss (mm) and
   // continuing loss (mm/h), in the range Australian Rainfall and Runoff
@@ -45,7 +45,10 @@
   const STORMS = [['Heavy shower', 30, 1], ['Severe storm', 80, 1], ['Long downpour', 150, 3], ['Extreme rain', 300, 24]];
   function storm() {
     const [il, cl] = GROUND[ctl.ground.value] || GROUND.typical;
-    const o = { rainMm: parseFloat(ctl.rainMm.value), hours: parseFloat(ctl.stormHours.value), initialLoss: il, contLoss: cl };
+    const hours = parseFloat(ctl.stormHours.value), warm = parseFloat(ctl.warming.value) || 0;
+    // a warmer climate: more rain from the same storm (ARR draft guidance)
+    const uplift = F.stormUplift(hours, warm);
+    const o = { rainMm: parseFloat(ctl.rainMm.value) * uplift, hours, initialLoss: il, contLoss: cl, uplift, warming: warm };
     const pipeMmH = parseFloat(ctl.pipes.value) || 0;
     if (pipeMmH > 0) {
       const urban = urbanMask();
@@ -741,14 +744,23 @@
       ? new ImageData(new Uint8ClampedArray(state.terrain), a.W, a.H)
       : new ImageData(a.W, a.H);
     const d = img.data;
+    const mode = colorMode(), hz = mode === 'hazard' ? hazardNow() : null, cmp = mode === 'compare' ? compareNow() : null;
     for (let i = 0; i < a.N; i++) {
       if (!a.valid[i]) continue;
       const o = i * 4;
       let col = null, alpha = 0.88;
       if (withTerrain && (a.ocean[i] || (base && base.wet[i] && run.wet[i] && !isFlood(i)))) col = WATER;
-      if (run.wet[i] && isFlood(i)) {
-        const dep = run.depth[i];
-        for (const [lim, c] of DEPTH_STOPS) if (dep < lim) { col = c; break; }
+      if (cmp) {
+        const k = cmp.diff[i];
+        if (k === 2) col = COMPARE_COLORS.onlyNow;
+        else if (k === 3) col = COMPARE_COLORS.onlyPinned;
+        else if (k === 1 && isFlood(i)) col = COMPARE_COLORS.both;
+      } else if (run.wet[i] && isFlood(i)) {
+        if (hz && hz.cls[i]) col = HAZARD_COLORS[hz.cls[i] - 1];
+        else {
+          const dep = run.depth[i];
+          for (const [lim, c] of DEPTH_STOPS) if (dep < lim) { col = c; break; }
+        }
       }
       if (withTerrain && !col && a.stream[i] && a.acc[i] * (a.cell * a.cell) / 1e6 > state.streamAreaKm2 * 3) { col = WATER; alpha = 0.9; }
       if (!col) continue;
@@ -763,8 +775,107 @@
     return img;
   }
 
+  // What the flood colours show: depth, hazard class, or the change from a
+  // pinned scenario. Hazard colours run light to dark (viridis), the
+  // comparison uses orange and purple, so both read without colour vision.
+  const HAZARD_COLORS = [[253, 231, 37], [122, 209, 81], [34, 168, 132], [42, 120, 142], [65, 68, 135], [68, 1, 84]];
+  const HAZARD_TEXT = ['generally safe', 'unsafe for small vehicles', 'unsafe for vehicles, children and the elderly', 'unsafe for vehicles and people', 'unsafe for people and vehicles; buildings need special design', 'unsafe for all; all buildings vulnerable'];
+  const COMPARE_COLORS = { onlyNow: [230, 97, 1], onlyPinned: [94, 60, 153], both: [158, 202, 225] };
+  const colorMode = () => { const v = $('colorMode') ? $('colorMode').value : 'depth'; return v === 'compare' && !(state.pinned && state.pinned.key === state.areaKey) ? 'depth' : v; };
+  function hazardNow() {
+    if (!state.a || !state.run) return null;
+    if (!state.hazard || state.hazard.run !== state.run) state.hazard = Object.assign(F.hazard(state.a, state.run), { run: state.run });
+    return state.hazard;
+  }
+  function compareNow() {
+    const p = state.pinned;
+    if (!p || p.key !== state.areaKey || !state.run) return null;
+    if (!state.compare || state.compare.run !== state.run) state.compare = Object.assign(F.compareRuns(state.a, state.run, p.run), { run: state.run });
+    return state.compare;
+  }
+  function renderModeLegend() {
+    const box = $('modeLegend');
+    if (!box) return;
+    const mode = colorMode();
+    const opt = $('colorMode') && $('colorMode').querySelector('option[value="compare"]');
+    if (opt) opt.disabled = !(state.pinned && state.pinned.key === state.areaKey);
+    $('depthLegend').hidden = mode !== 'depth' || $('legendToggle').getAttribute('aria-expanded') !== 'true';
+    const sw = (c) => `<i style="background:rgb(${c.join(',')})"></i>`;
+    if (mode === 'hazard') {
+      const h = hazardNow();
+      box.innerHTML = HAZARD_COLORS.map((c, k) => `<span title="${HAZARD_TEXT[k]}">${sw(c)}H${k + 1}${h ? ` ${fmt(h.km2[k], 1)}` : ''}</span>`).join('')
+        + '<span class="hint">km² · depth × estimated speed (AIDR 7-3)</span>';
+      status.hazard = h ? h.km2.map((v) => +v.toFixed(2)) : null;
+    } else if (mode === 'compare') {
+      const c = compareNow();
+      box.innerHTML = `<span>${sw(COMPARE_COLORS.onlyNow)}only now${c ? ` ${fmt(c.km2.onlyNow, 1)} km²` : ''}</span><span>${sw(COMPARE_COLORS.onlyPinned)}only pinned${c ? ` ${fmt(c.km2.onlyPinned, 1)} km²` : ''}</span><span>${sw(COMPARE_COLORS.both)}both</span>`;
+    } else box.innerHTML = '';
+    box.hidden = mode === 'depth';
+  }
+
+  // Pin the current scenario to compare later ones against it
+  function scenarioLabel() {
+    const mode = ctl.floodType.value, parts = [];
+    if (mode !== 'flash') parts.push(`gauge ${fmt(parseFloat(ctl.gaugeLevel.value), 2)} m`);
+    if (mode !== 'river') parts.push(`${ctl.rainMm.value} mm in ${ctl.stormHours.selectedOptions[0].textContent}`);
+    const area = state.areaKey && areaReg.get(state.areaKey), d = area && area.defences;
+    if (d && d.levees.some((l) => l.failed || (l.breaches && l.breaches.length))) parts.push('levees failing');
+    if (parseFloat(ctl.warming.value) > 0 && mode !== 'river') parts.push(`${ctl.warming.value} °C warmer`);
+    return parts.join(', ');
+  }
+  function pinScenario() {
+    if (!state.run || !state.areaKey) return null;
+    state.pinned = {
+      key: state.areaKey, label: scenarioLabel(),
+      run: { wet: Uint8Array.from(state.run.wet), depth: Float32Array.from(state.run.depth) },
+      impact: status.impact && !status.impact.loading && !status.impact.error ? Object.assign({}, status.impact) : null,
+    };
+    state.compare = null;
+    $('clearPinned').hidden = false;
+    $('colorMode').querySelector('option[value="compare"]').disabled = false;
+    $('colorMode').value = 'compare';
+    drawMap(); renderCompare();
+    return state.pinned.label;
+  }
+  function clearPinned() {
+    state.pinned = null; state.compare = null;
+    $('clearPinned').hidden = true;
+    if ($('colorMode').value === 'compare') $('colorMode').value = 'depth';
+    drawMap(); renderCompare();
+  }
+  function renderCompare() {
+    const box = $('compareBox');
+    if (!box) return;
+    const p = state.pinned;
+    if (!p || p.key !== state.areaKey) {
+      box.innerHTML = '<p class="hint">Pin a scenario, then change the level, storm, levees or anything else: the map can show what floods only now (orange), what no longer floods (purple), and the impact counts show the difference.</p>';
+      $('clearPinned').hidden = !p;
+      status.compare = null;
+      return;
+    }
+    const c = compareNow();
+    if (!c) return;
+    const n = (v) => Math.round(v).toLocaleString('en-AU');
+    const sign = (v) => (v > 0 ? `+${n(v)}` : v < 0 ? `−${n(-v)}` : '0');
+    const im = status.impact && !status.impact.loading && !status.impact.error ? status.impact : null, pi = p.impact;
+    const rows = im && pi ? [['Buildings flooded', im.bWet, pi.bWet], ['Water over floor', im.overFloor, pi.overFloor], ['People affected', im.people, pi.people], ['Cut off', im.isolated, pi.isolated], ['Roads cut (km)', im.cutKm, pi.cutKm]]
+      .filter(([, a, b]) => a != null && b != null) : [];
+    box.innerHTML = `<p><strong>Pinned:</strong> ${escapeHtml(p.label)}. <strong>Now:</strong> ${escapeHtml(scenarioLabel())}.</p>
+      <p>${fmt(c.km2.onlyNow, 2)} km² floods only now, ${fmt(c.km2.onlyPinned, 2)} km² only in the pinned scenario; where both flood, ${fmt(c.deeperKm2, 2)} km² is deeper now and ${fmt(c.shallowerKm2, 2)} km² shallower.</p>`
+      + (rows.length ? `<table class="cmp"><tr><th></th><th>Pinned</th><th>Now</th><th>Change</th></tr>${rows.map(([k, a, b]) => `<tr><td>${k}</td><td>${n(b)}</td><td>${n(a)}</td><td>${sign(a - b)}</td></tr>`).join('')}</table>`
+        : '<p class="hint">Count what\'s affected (before and after pinning) to compare buildings, people and roads too.</p>');
+    status.compare = { onlyNow: +c.km2.onlyNow.toFixed(3), onlyPinned: +c.km2.onlyPinned.toFixed(3), rows: rows.length };
+  }
+  $('pinScenario').addEventListener('click', () => pinScenario());
+  $('clearPinned').addEventListener('click', () => clearPinned());
+  $('colorMode').addEventListener('change', () => { drawMap(); status.colorMode = colorMode(); });
+  window.__floodPin = () => pinScenario();
+  window.__floodColorMode = (m) => { $('colorMode').value = m; drawMap(); return { mode: colorMode(), hazard: status.hazard, compare: status.compare }; };
+
   function drawMap() {
-    if (state.pendingGeo) return;            // the street map is still opening
+    if (state.pendingGeo) return;
+    renderModeLegend();
+    renderCompare();            // the street map is still opening
     if (state.geo && state.lmap && state.overlay) drawGeoMap();
     else if (!state.geo) drawStaticMap();
   }
@@ -1471,7 +1582,7 @@
   const areaReg = new Map();
   let localCount = 0;
   let geoToken = 0;   // bumped whenever the active area changes
-  const CTL_KEYS = ['gaugeLevel', 'bayLevel', 'slr', 'extra', 'grad', 'streamArea', 'floodType', 'rainMm', 'stormHours', 'ground', 'pipes'];
+  const CTL_KEYS = ['gaugeLevel', 'bayLevel', 'slr', 'extra', 'grad', 'streamArea', 'floodType', 'rainMm', 'stormHours', 'ground', 'pipes', 'warming'];
 
   function areaFields() {
     return {
@@ -3129,6 +3240,7 @@
         : 'All of this rain soaks in: no runoff.')
       : '') + (f && f.pipedMm > 0 ? ` Pipes take up to ${Math.round(f.pipedMm)} mm of that runoff from built-up land (${fmt(f.urbanKm2, 1)} km², where OpenStreetMap shows buildings) and carry it to the creeks.`
         : parseFloat(ctl.pipes.value) > 0 ? (state.areaKey && (areaReg.get(state.areaKey) || {}).impactLoading ? ' Finding built-up land for the pipes…' : ' No built-up land found for the pipes here.') : '')
+      + (parseFloat(ctl.warming.value) > 0 ? ` In a climate ${ctl.warming.value} °C warmer the same storm brings about ${Math.round((F.stormUplift(parseFloat(ctl.stormHours.value), parseFloat(ctl.warming.value)) - 1) * 100)}% more rain (${Math.round(parseFloat(ctl.rainMm.value) * F.stormUplift(parseFloat(ctl.stormHours.value), parseFloat(ctl.warming.value)))} mm; draft Australian Rainfall and Runoff guidance: about 15% per °C for an hour's storm, 8% for a day's).` : '')
       + ' Screening only: pipe capacity is a single typical rate, and culverts, blockages and timing are not modelled.';
     const g = state.geo;
     $('ifdNote').innerHTML = `The buttons are example storms, not official values for this place. For the official design rainfall here (such as the 1% annual chance storm), look up ${g ? `${((g.north + g.south) / 2).toFixed(4)}, ${((g.east + g.west) / 2).toFixed(4)}` : 'its coordinates'} in the <a href="https://www.bom.gov.au/water/designRainfalls/revised-ifd/?year=2016" target="_blank" rel="noopener">Bureau's design rainfall tool</a> and set the rain and duration to match.`;
@@ -4174,6 +4286,7 @@
       cutKm: Math.round(r.cutKm * 10) / 10, sites: r.sites, sitesHit: r.sitesHit.length,
       source: d.copy ? `copy:${d.copy.id}` : 'live',
     };
+    if (state.pinned) setTimeout(renderCompare, 0);
     const n = (x) => Math.round(x).toLocaleString('en-AU');
     box.innerHTML = `<div class="stats">
         <div class="stat"><div class="label">Buildings flooded</div><div class="v">${n(r.bWet)}<small> of ${n(r.buildings)}</small></div></div>
@@ -5388,6 +5501,23 @@
     setScenarioCollapsed(!$('panel-scenario').classList.contains('collapsed'));
   });
 
+  // What each data source returned in the latest build (data/status.json)
+  async function renderDataStatus() {
+    const box = $('dataStatus');
+    if (!box) return null;
+    let st = null;
+    try { const r = await fetch('data/status.json', { cache: 'no-cache' }); st = r.ok ? await r.json() : null; } catch (err) { st = null; }
+    if (!st || !st.sources) { box.innerHTML = '<p class="hint">No status from the build yet.</p>'; return null; }
+    const label = { ok: 'OK', cached: 'From an earlier build', problem: 'Problem', missing: 'Not available' };
+    const when = (iso) => (iso ? new Date(iso).toLocaleString('en-AU', { day: 'numeric', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit' }) : '');
+    box.innerHTML = `<p class="hint">Built ${escapeHtml(when(st.built))}.</p><ul class="data-status">${st.sources.map((s) => `<li class="st-${escapeHtml(s.state)}">
+      <strong>${escapeHtml(s.name)}</strong> <span class="st-badge">${escapeHtml(label[s.state] || s.state)}</span><br>
+      <span class="hint">${escapeHtml(s.summary)}${s.fetched ? ` · data from ${escapeHtml(when(s.fetched))}` : ''} · for ${escapeHtml(s.feeds)}</span></li>`).join('')}</ul>`;
+    status.dataStatus = st.sources.map((s) => `${s.name}: ${s.state}`);
+    return status.dataStatus;
+  }
+  $('dataStatusBox').addEventListener('toggle', () => { if ($('dataStatusBox').open) renderDataStatus(); });
+  window.__floodDataStatus = renderDataStatus;
   function openPanel(id) {
     const target = $(id);
     if (!target) return;
