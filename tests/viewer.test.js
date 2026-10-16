@@ -76,7 +76,7 @@ function modelFixture() {
     $: () => ({ hidden: true }),
     streamCellAt: (lat, lon) => Math.floor((1 - lat) * state.grid.H) * state.grid.W + Math.floor(lon * state.grid.W),
     areaByNumber: (n) => Array.from(areaReg.values()).find((a) => a.n === n), numberUsed: () => false,
-    saveStudies: noop, setBusy: noop, syncOutputs: noop, runScenario: noop,
+    saveStudies: noop, setBusy: noop, syncOutputs: noop, runScenario: noop, ensureRiverGauges: async () => {},
     saveActive: noop, activateArea: noop, renderPlaces: noop, saveSessionSoon: noop, say: noop,
     modelHere: async (lat, lon, opts) => {
       context.lastModel = opts;

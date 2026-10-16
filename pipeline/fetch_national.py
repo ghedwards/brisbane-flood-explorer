@@ -238,6 +238,12 @@ def main(out_dir: str) -> None:
     now = dt.datetime.now(dt.timezone.utc).replace(microsecond=0).isoformat()
     (out / "gauges.geojson").write_text(json.dumps({"type": "FeatureCollection", "features": gauges}, separators=(",", ":")))
     (out / "gauges.min.json").write_text(json.dumps(compact(gauges), separators=(",", ":"), ensure_ascii=False))
+    # the flood network (forecast, information and tide gauges) loads with
+    # the map; the other river gauges follow once it is drawn
+    core = [f for f in gauges if (f.get("properties") or {}).get("kind") != "river"]
+    rest = [f for f in gauges if (f.get("properties") or {}).get("kind") == "river"]
+    (out / "gauges-core.min.json").write_text(json.dumps(compact(core), separators=(",", ":"), ensure_ascii=False))
+    (out / "gauges-river.min.json").write_text(json.dumps(compact(rest), separators=(",", ":"), ensure_ascii=False))
     (out / "storages.geojson").write_text(json.dumps({"type": "FeatureCollection", "features": storages}, separators=(",", ":")))
     (out / "readings.json").write_text(json.dumps(readings, separators=(",", ":")))
     kinds = {}

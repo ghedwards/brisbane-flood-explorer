@@ -11,6 +11,12 @@ that gauge's mean sea level for the year (mean sea level is close to AHD).
 The app then uses the real sea level, tides and surge included, as the sea
 during the recorded flood instead of an idealised tide.
 
+Queensland's own tide gauges (Maritime Safety Queensland, archived
+10-minute readings on the state's open data portal, CC BY 4.0) are used
+where one is nearer than a UHSLC gauge; their heights are above the port's
+lowest astronomical tide, so they too are taken relative to the year's
+mean.
+
 Adds to each event: sea: {station, km, source, series: [[hours from the
 flood's start, metres above mean sea level], ...]}.
 """
@@ -19,6 +25,7 @@ import datetime as dt
 import io
 import json
 import math
+import re
 import sys
 import urllib.parse
 import urllib.request
@@ -42,6 +49,18 @@ SOURCES = [
     ("https://erddap.emodnet-physics.eu/erddap", "UHSLC_global_hourly_fast"),
 ]
 MAX_KM = 150
+# Maritime Safety Queensland tide gauges with archived readings (approximate
+# gauge positions); the open data portal's datasets are matched by name
+MSQ_SITES = [
+    ("Southport", -27.96, 153.42), ("Brisbane Bar", -27.37, 153.17), ("Mooloolaba", -26.68, 153.13),
+    ("Urangan", -25.30, 152.91), ("Bundaberg", -24.76, 152.40), ("Gladstone", -23.83, 151.25),
+    ("Port Alma", -23.58, 150.86), ("Rosslyn Bay", -23.16, 150.79), ("Mackay", -21.10, 149.23),
+    ("Shute Harbour", -20.29, 148.79), ("Bowen", -20.02, 148.25), ("Townsville", -19.25, 146.83),
+    ("Cardwell", -18.27, 146.03), ("Clump Point", -17.85, 146.12), ("Mourilyan Harbour", -17.60, 146.12),
+    ("Cairns", -16.92, 145.78), ("Cooktown", -15.46, 145.25), ("Weipa", -12.67, 141.86), ("Karumba", -17.49, 140.83),
+]
+QLD_CKAN = "https://www.data.qld.gov.au/api/3/action/package_search"
+AEST = dt.timezone(dt.timedelta(hours=10))
 
 
 def km(lat1, lon1, lat2, lon2):
@@ -76,14 +95,121 @@ def erddap(server, ds, sid, t0, t1):
     return out
 
 
-def sea_for(ev, fetch=erddap):
+_msq_cache = None
+
+
+def msq_catalogue():
+    """{site name: [resources]} for the archived MSQ tide gauge datasets."""
+    global _msq_cache
+    if _msq_cache is None:
+        q = urllib.parse.urlencode({"q": "tide gauge archived interval recordings", "rows": 100})
+        req = urllib.request.Request(f"{QLD_CKAN}?{q}", headers=UA)
+        with urllib.request.urlopen(req, timeout=120) as r:
+            res = json.loads(r.read()).get("result", {}).get("results", [])
+        _msq_cache = {}
+        for pkg in res:
+            title = pkg.get("title") or ""
+            if "archived" not in title.lower():
+                continue
+            site = re.split(r"\s+tide gauge", title, flags=re.I)[0].strip()
+            _msq_cache[site.lower()] = pkg.get("resources") or []
+    return _msq_cache
+
+
+def parse_levels(text):
+    """[(datetime UTC, metres)] from an MSQ readings file, whatever its
+    layout: each line with a date-time and a level (times are AEST)."""
+    out = []
+    pats = [(re.compile(r"(\d{4})-(\d{2})-(\d{2})[T ](\d{1,2}):(\d{2})"), "ymd"),
+            (re.compile(r"(\d{1,2})/(\d{1,2})/(\d{4})\s+(\d{1,2}):(\d{2})"), "dmy"),
+            (re.compile(r"\b(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})\b"), "ymd")]
+    for line in text.splitlines():
+        for pat, order in pats:
+            m = pat.search(line)
+            if not m:
+                continue
+            g = [int(x) for x in m.groups()]
+            y, mo, d = (g[0], g[1], g[2]) if order == "ymd" else (g[2], g[1], g[0])
+            try:
+                t = dt.datetime(y, mo, d, g[3] % 24, g[4], tzinfo=AEST).astimezone(dt.timezone.utc)
+            except ValueError:
+                break
+            rest = line[m.end():]
+            for tok in re.split(r"[,\s;]+", rest):
+                try:
+                    v = float(tok)
+                except ValueError:
+                    continue
+                if -3 < v < 12 and v != -99:
+                    out.append((t, v))
+                break
+            break
+    return out
+
+
+def msq_year(site, year):
+    """Readings for one MSQ site and year, or [] if not published."""
+    resources = msq_catalogue().get(site.lower(), [])
+    pick = [r for r in resources if str(year) in f"{r.get('name', '')} {r.get('url', '')}"
+            and (r.get("format") or "").lower() in ("csv", "txt", "zip", "")]
+    for r in pick[:2]:
+        req = urllib.request.Request(r["url"], headers=UA)
+        with urllib.request.urlopen(req, timeout=300) as resp:
+            body = resp.read()
+        if body[:2] == b"PK":
+            import zipfile
+            z = zipfile.ZipFile(io.BytesIO(body))
+            body = b"\n".join(z.read(n) for n in z.namelist() if not n.endswith("/"))
+        rows = parse_levels(body.decode("utf-8", "replace"))
+        if len(rows) > 1000:
+            return rows
+    return []
+
+
+def from_readings(year_rows, start, end):
+    """Hourly series relative to the year's mean over the flood's dates."""
+    if len(year_rows) < 24 * 60:
+        return None
+    mean = sum(v for _, v in year_rows) / len(year_rows)
+    bins = {}
+    for t, v in year_rows:
+        if start - dt.timedelta(hours=1) <= t <= end:
+            bins.setdefault(math.floor((t - start).total_seconds() / 3600), []).append(v - mean)
+    series = [[h, round(sum(vs) / len(vs), 3)] for h, vs in sorted(bins.items())]
+    return series if len(series) >= 12 else None
+
+
+def msq_for(ev, start, end, msq=msq_year):
+    site = min(MSQ_SITES, key=lambda s: km(ev["lat"], ev["lon"], s[1], s[2]))
+    d = km(ev["lat"], ev["lon"], site[1], site[2])
+    if d > MAX_KM:
+        return None, d, None
+    try:
+        rows = msq(site[0], start.year)
+        if end.year != start.year:
+            rows = rows + msq(site[0], end.year)
+    except Exception as e:  # noqa: BLE001
+        return None, d, f"MSQ {site[0]}: {str(e)[:60]}"
+    series = from_readings(rows, start, end)
+    if not series:
+        return None, d, f"MSQ {site[0]}: no readings for those dates"
+    return {"station": f"{site[0]} (Maritime Safety Queensland)", "km": round(d, 1),
+            "source": "Maritime Safety Queensland archived tide gauge readings", "series": series}, d, None
+
+
+def sea_for(ev, fetch=erddap, msq=msq_year):
     st, d = nearest(ev["lat"], ev["lon"])
-    if not st:
-        return None, f"no tide gauge within {MAX_KM} km ({d:.0f} km)"
     start = dt.datetime.fromisoformat(ev["start"])
     end = start + dt.timedelta(hours=max(r[0] for r in ev["series"]) + 24)
+    # a Queensland gauge nearer than any UHSLC gauge comes first
+    q, dq, why_q = msq_for(ev, start, end, msq) if ev["lon"] > 137.9 and ev["lat"] > -29.2 else (None, math.inf, None)
+    if q and (not st or dq <= d):
+        return q, None
+    if not st:
+        return (q, None) if q else (None, f"no tide gauge within {MAX_KM} km ({d:.0f} km)" + (f"; {why_q}" if why_q else ""))
+    end = start + dt.timedelta(hours=max(r[0] for r in ev["series"]) + 24)
     year0 = dt.datetime(start.year, 1, 1, tzinfo=dt.timezone.utc)
-    why = []
+    why = [why_q] if why_q else []
     for server, ds in SOURCES:
         try:
             year = fetch(server, ds, st[1], year0, year0.replace(year=start.year + 1))
@@ -103,6 +229,8 @@ def sea_for(ev, fetch=erddap):
                     "series": [[h, v] for h, v in series]}, None
         except Exception as e:  # noqa: BLE001 - try the next server
             why.append(f"{server.split('/')[2]}/{ds}: {str(e)[:60]}")
+    if q:
+        return q, None
     return None, "; ".join(why)[:300]
 
 

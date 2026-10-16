@@ -87,7 +87,10 @@ jobs:
       - name: Assemble site
         run: |
           mkdir -p site/data
-          cp viewer/index.html viewer/styles.css viewer/app.js viewer/flood-core.js viewer/flood-worker.js site/
+          cp viewer/index.html viewer/styles.css viewer/app.js viewer/flood-core.js viewer/flood-worker.js viewer/sw.js viewer/manifest.webmanifest site/
+          mkdir -p site/icons && cp viewer/icons/*.png site/icons/
+          # each deploy gets its own app cache, so phones pick up the new version
+          sed -i "s/__BUILD__/${GITHUB_SHA::8}-${GITHUB_RUN_NUMBER}/" site/sw.js
           # smaller downloads: minify the scripts and styles (kept as they
           # are if minifying fails or the result doesn't run)
           if npx --yes esbuild@0.24.0 viewer/app.js viewer/flood-core.js viewer/flood-worker.js viewer/styles.css --minify --target=es2020 --outdir=work/min >/dev/null \

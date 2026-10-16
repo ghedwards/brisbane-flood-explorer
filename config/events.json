@@ -1,22 +1,27 @@
 {
   "note": "Recorded floods whose hour-by-hour gauge readings the build fetches from Water Data Online. Each is matched to the Bureau gauge nearest lat/lon (within 8 km) whose name or basin contains 'match'. Dates are local and generous either side of the peak.",
   "events": [
-    {"id": "lismore-2022", "name": "Lismore, February–March 2022", "lat": -28.8090, "lon": 153.2765, "match": "lismore|wilson", "start": "2022-02-25", "end": "2022-03-07"},
+    {"id": "lismore-2022", "name": "Lismore, February–March 2022", "lat": -28.809, "lon": 153.2765, "match": "lismore|wilson", "start": "2022-02-25", "end": "2022-03-07"},
     {"id": "rockhampton-2017", "name": "Rockhampton, April 2017 (ex-Cyclone Debbie)", "lat": -23.3765, "lon": 150.5125, "match": "rockhampton|fitzroy", "start": "2017-03-30", "end": "2017-04-16"},
     {"id": "brisbane-2011", "name": "Brisbane, January 2011", "lat": -27.4741, "lon": 153.0305, "match": "brisbane", "start": "2011-01-09", "end": "2011-01-18"},
     {"id": "brisbane-2022", "name": "Brisbane, February 2022", "lat": -27.4741, "lon": 153.0305, "match": "brisbane", "start": "2022-02-24", "end": "2022-03-05"},
     {"id": "ipswich-2011", "name": "Ipswich, January 2011", "lat": -27.6135, "lon": 152.7625, "match": "ipswich|bremer", "start": "2011-01-09", "end": "2011-01-18"},
-    {"id": "gympie-2022", "name": "Gympie, February 2022", "lat": -26.1835, "lon": 152.6620, "match": "gympie|mary", "start": "2022-02-23", "end": "2022-03-04"},
-    {"id": "bundaberg-2013", "name": "Bundaberg, January 2013", "lat": -24.8650, "lon": 152.3480, "match": "bundaberg|burnett", "start": "2013-01-25", "end": "2013-02-04"},
-    {"id": "townsville-2019", "name": "Townsville, February 2019", "lat": -19.2880, "lon": 146.7900, "match": "ross|aplin|townsville", "start": "2019-01-29", "end": "2019-02-12"},
-    {"id": "maitland-2022", "name": "Maitland, July 2022", "lat": -32.7280, "lon": 151.5560, "match": "maitland|belmore|hunter", "start": "2022-07-01", "end": "2022-07-13"},
+    {"id": "gympie-2022", "name": "Gympie, February 2022", "lat": -26.1835, "lon": 152.662, "match": "gympie|mary", "start": "2022-02-23", "end": "2022-03-04"},
+    {"id": "bundaberg-2013", "name": "Bundaberg, January 2013", "lat": -24.865, "lon": 152.348, "match": "bundaberg|burnett", "start": "2013-01-25", "end": "2013-02-04"},
+    {"id": "townsville-2019", "name": "Townsville, February 2019", "lat": -19.288, "lon": 146.79, "match": "ross|aplin|townsville", "start": "2019-01-29", "end": "2019-02-12"},
+    {"id": "maitland-2022", "name": "Maitland, July 2022", "lat": -32.728, "lon": 151.556, "match": "maitland|belmore|hunter", "start": "2022-07-01", "end": "2022-07-13"},
     {"id": "windsor-2021", "name": "Windsor, March 2021", "lat": -33.6045, "lon": 150.8225, "match": "windsor|hawkesbury", "start": "2021-03-18", "end": "2021-03-31"},
     {"id": "windsor-2022", "name": "Windsor, March 2022", "lat": -33.6045, "lon": 150.8225, "match": "windsor|hawkesbury", "start": "2022-02-27", "end": "2022-03-16"},
-    {"id": "kempsey-2021", "name": "Kempsey, March 2021", "lat": -31.0800, "lon": 152.8380, "match": "kempsey|macleay", "start": "2021-03-18", "end": "2021-03-30"},
-    {"id": "forbes-2022", "name": "Forbes, November 2022", "lat": -33.3850, "lon": 148.0100, "match": "forbes|lachlan", "start": "2022-11-08", "end": "2022-12-02"},
-    {"id": "wagga-2012", "name": "Wagga Wagga, March 2012", "lat": -35.1030, "lon": 147.3680, "match": "wagga|murrumbidgee", "start": "2012-02-28", "end": "2012-03-14"},
-    {"id": "rochester-2022", "name": "Rochester, October 2022", "lat": -36.3630, "lon": 144.7050, "match": "rochester|campaspe", "start": "2022-10-10", "end": "2022-10-26"},
-    {"id": "shepparton-2022", "name": "Shepparton, October 2022", "lat": -36.3720, "lon": 145.4070, "match": "shepparton|goulburn", "start": "2022-10-10", "end": "2022-10-30"},
-    {"id": "echuca-2022", "name": "Echuca, October–November 2022", "lat": -36.1240, "lon": 144.7520, "match": "echuca|murray", "start": "2022-10-12", "end": "2022-11-12"}
+    {"id": "kempsey-2021", "name": "Kempsey, March 2021", "lat": -31.08, "lon": 152.838, "match": "kempsey|macleay", "start": "2021-03-18", "end": "2021-03-30"},
+    {"id": "forbes-2022", "name": "Forbes, November 2022", "lat": -33.385, "lon": 148.01, "match": "forbes|lachlan", "start": "2022-11-08", "end": "2022-12-02"},
+    {"id": "wagga-2012", "name": "Wagga Wagga, March 2012", "lat": -35.103, "lon": 147.368, "match": "wagga|murrumbidgee", "start": "2012-02-28", "end": "2012-03-14"},
+    {"id": "rochester-2022", "name": "Rochester, October 2022", "lat": -36.363, "lon": 144.705, "match": "rochester|campaspe", "start": "2022-10-10", "end": "2022-10-26"},
+    {"id": "shepparton-2022", "name": "Shepparton, October 2022", "lat": -36.372, "lon": 145.407, "match": "shepparton|goulburn", "start": "2022-10-10", "end": "2022-10-30"},
+    {"id": "echuca-2022", "name": "Echuca, October–November 2022", "lat": -36.124, "lon": 144.752, "match": "echuca|murray", "start": "2022-10-12", "end": "2022-11-12"},
+    {"id": "cairns-2023", "name": "Cairns, Barron River, December 2023 (ex-Cyclone Jasper)", "lat": -16.873, "lon": 145.702, "match": "barron|cairns", "start": "2023-12-13", "end": "2023-12-24"},
+    {"id": "logan-2017", "name": "Logan River, April 2017 (ex-Cyclone Debbie)", "lat": -27.696, "lon": 153.144, "match": "logan|albert", "start": "2017-03-29", "end": "2017-04-08"},
+    {"id": "goldcoast-2017", "name": "Gold Coast, Coomera and Nerang rivers, March–April 2017 (ex-Cyclone Debbie)", "lat": -27.99, "lon": 153.35, "match": "nerang|coomera", "start": "2017-03-29", "end": "2017-04-06"},
+    {"id": "mackay-2008", "name": "Mackay, February 2008", "lat": -21.141, "lon": 149.182, "match": "pioneer|mackay", "start": "2008-02-13", "end": "2008-02-22"},
+    {"id": "maroochy-2022", "name": "Maroochy River, February 2022", "lat": -26.64, "lon": 153.04, "match": "maroochy|petrie|eudlo|yandina", "start": "2022-02-23", "end": "2022-03-05"}
   ]
 }

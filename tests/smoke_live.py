@@ -16,7 +16,7 @@ URL = sys.argv[1] if len(sys.argv) > 1 else "http://localhost:8000/"
 
 
 KEY = []          # key results, shown together in one annotation at the end
-KEY_WORDS = ("Council layers", "Sea levels", "Storm pipes", "Rating at", "First load", "Keyboard", "Tides at", "Sea reached", "Recorded flood over time", "Flood over time", "Levees", "Storm tide", "Presets checked", "Recorded floods", "Best match", "Impact", "Storm", "Joined", "Share link", "Satellite check",
+KEY_WORDS = ("Offline reload", "Council layers", "Sea levels", "Storm pipes", "Rating at", "First load", "Keyboard", "Tides at", "Sea reached", "Recorded flood over time", "Flood over time", "Levees", "Storm tide", "Presets checked", "Recorded floods", "Best match", "Impact", "Storm", "Joined", "Share link", "Satellite check",
              "Presets anchored", "Presets on LiDAR", "Phone Layers", "Council layer", "Downloads", "Rain radar",
              "Address search", "Flood warnings", "Echuca", "Extended model", "Area study")
 
@@ -748,6 +748,27 @@ def main() -> int:
             failures.append(f"{len(bad)} preset(s) failed: " + "; ".join(f"{r['id']}: {r['error']}" for r in bad))
 
         page.screenshot(path="smoke.png", full_page=False)
+
+        # ---- offline: with the network cut, the site still opens from the
+        # service worker's cache and rebuilds the saved places from cached terrain
+        off = {}
+        try:
+            off["sw"] = page.evaluate("navigator.serviceWorker ? Promise.race([navigator.serviceWorker.ready.then((r) => !!r.active), new Promise((ok) => setTimeout(() => ok(false), 15000))]) : false")
+            page.context.set_offline(True)
+            page.reload(wait_until="load", timeout=60_000)
+            page.wait_for_function("window.__floodStatus && window.__floodStatus.national && window.__floodStatus.national.loaded", timeout=60_000)
+            page.wait_for_timeout(20_000)   # time to rebuild saved places
+            st = status()
+            off.update(gauges=(st.get("national") or {}).get("gauges"), pill=page.is_visible("#offlinePill"),
+                       online=(st.get("offline") or {}).get("online"), restore=st.get("restore"), mode=st.get("mode"))
+            page.screenshot(path="smoke-offline.png")
+        except Exception as e:  # noqa: BLE001
+            off["error"] = str(e)[:300]
+        finally:
+            page.context.set_offline(False)
+        note("notice" if off.get("gauges") else "warning", f"Offline reload: {json.dumps(off)}")
+        if off.get("sw") and not off.get("gauges"):
+            failures.append(f"site did not open offline: {off}")
         browser.close()
 
     errors = [e for e in errors if "favicon" not in e]

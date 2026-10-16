@@ -37,13 +37,34 @@ class Sea(unittest.TestCase):
 
     def test_series_is_relative_to_the_years_mean(self):
         ev = {"id": "b", "lat": -27.47, "lon": 153.03, "start": "2022-02-24T00:00:00+10:00", "series": [[0, 1], [100, 2]]}
-        sea, why = fs.sea_for(ev, fetch=fake)
+        sea, why = fs.sea_for(ev, fetch=fake, msq=lambda site, year: [])
         self.assertIsNone(why)
         vals = [v for _, v in sea["series"]]
         self.assertAlmostEqual(max(vals), 1.0, delta=0.05)
         self.assertAlmostEqual(min(vals), -1.0, delta=0.05)
         self.assertEqual(sea["series"][0][0], -1)
         self.assertEqual(sea["station"], "Brisbane")
+
+    def test_reads_msq_files_in_either_date_layout(self):
+        text = "Date,Time,Level\n12/01/2011 10:00,2.35\n12/01/2011 10:10,2.41,ok\n2011-01-12 10:20 2.50\nheader junk\n"
+        rows = fs.parse_levels(text)
+        self.assertEqual(len(rows), 3)
+        self.assertEqual(rows[0][0], dt.datetime(2011, 1, 12, 0, 0, tzinfo=UTC), "AEST to UTC")
+        self.assertEqual([v for _, v in rows], [2.35, 2.41, 2.5])
+
+    def test_a_nearer_queensland_gauge_comes_first(self):
+        def msq(site, year):
+            self.assertEqual(site, "Mackay")
+            t, out = dt.datetime(year, 1, 1, tzinfo=UTC), []
+            while t.year == year:
+                out.append((t, 3.0 + math.cos(2 * math.pi * t.timestamp() / 3600 / 12.42)))
+                t += dt.timedelta(minutes=10)
+            return out
+        ev = {"id": "m", "lat": -21.14, "lon": 149.18, "start": "2008-02-14T00:00:00+10:00", "series": [[0, 1], [48, 2]]}
+        sea, why = fs.sea_for(ev, fetch=fake, msq=msq)
+        self.assertIsNone(why)
+        self.assertIn("Mackay", sea["station"])
+        self.assertAlmostEqual(max(v for _, v in sea["series"]), 1.0, delta=0.05)
 
     def test_main_updates_the_file(self):
         with tempfile.TemporaryDirectory() as d:

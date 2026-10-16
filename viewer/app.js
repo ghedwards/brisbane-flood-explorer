@@ -300,6 +300,7 @@
       const name = p.name.replace(/ \((NSW|Qld|Vic|Tas|SA|NT|WA)\)$/, '');
       // anchor river presets to the real Bureau gauge on that river, so the
       // model starts on the channel and gets the gauge's report and levels
+      await ensureRiverGauges();
       const g = p.kind === 'river' ? presetGauge(p) : null;
       status.presetAnchor = { id: p.id, gauge: g ? g.f.properties.name : null, km: g ? Math.round(g.km * 10) / 10 : null };
       let rep = null;
@@ -1150,6 +1151,25 @@
   }
   const BLANK = 'data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==';
   const status = (window.__floodStatus = { mode: 'static', overlayUpdates: 0, tilesLoaded: 0, tileErrors: 0, floodPixels: 0, overlays: {} });
+
+  // Offline use: a service worker keeps the app, the national data, map
+  // tiles and model terrain that have been used, so the site still opens
+  // and saved places still rebuild when the signal drops.
+  status.offline = { supported: 'serviceWorker' in navigator, registered: false, online: navigator.onLine };
+  if ('serviceWorker' in navigator && location.protocol === 'https:') {
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register('sw.js').then(() => { status.offline.registered = true; }).catch((err) => { status.offline.error = String(err); });
+    });
+  }
+  function showConnection() {
+    const on = navigator.onLine;
+    status.offline.online = on;
+    const pill = document.getElementById('offlinePill');
+    if (pill) pill.hidden = on;
+  }
+  window.addEventListener('online', () => { showConnection(); if (typeof say === 'function') say('Back online.'); });
+  window.addEventListener('offline', () => { showConnection(); if (typeof say === 'function') say('Offline: showing saved data. New places need a connection.'); });
+  showConnection();
   status.worker = () => (worker ? 'worker' : worker === false ? 'page' : 'unused');
 
   let leafletPromise = null;
@@ -2395,6 +2415,23 @@
     }
     return historyP;
   }
+  // The other river gauges (about 2,400): loaded after the map is drawn, or
+  // straight away when something needs them (presets, models, reports)
+  let riverP = null;
+  function ensureRiverGauges() {
+    if (!riverP) {
+      riverP = fetch('data/national/gauges-river.min.json', { cache: 'no-cache' })
+        .then((r) => (r.ok ? r.json() : null)).then((c) => {
+          if (!c || !nat.data) return;
+          const feats = decodeCompact(c).features;
+          nat.data.gauges.push(...feats);
+          if (status.national) status.national.gauges = nat.data.gauges.length;
+          const layer = nat.layers['Other river gauges (BoM)'];
+          if (layer) layer.addData({ type: 'FeatureCollection', features: feats });
+        }).catch(() => {});
+    }
+    return riverP;
+  }
   async function loadNationalData() {
     if (nat.data) return nat.data;
     const get = async (f) => {
@@ -2403,12 +2440,17 @@
       return r.json();
     };
     try {
-      // gauges come as compact columns (about half the size), or as GeoJSON
-      const gaugeFile = get('gauges.min.json').then(decodeCompact).catch(() => get('gauges.geojson'));
+      // gauges come as compact columns (about half the size): the flood
+      // network first, the other river gauges once the map is drawn
+      let split = true;
+      const gaugeFile = get('gauges-core.min.json').then(decodeCompact)
+        .catch(() => { split = false; return get('gauges.min.json').then(decodeCompact); })
+        .catch(() => { split = false; return get('gauges.geojson'); });
       const [gauges, storages, readings, meta] = await Promise.all([
         gaugeFile, get('storages.geojson'), get('readings.json'), get('meta.json')]);
       nat.data = { gauges: gauges.features || [], storages: storages.features || [], meta };
       nat.readings = readings;
+      if (split) setTimeout(() => ensureRiverGauges(), 1500); else riverP = Promise.resolve();
       const opt = async (f) => { try { const r = await fetch(`data/national/${f}`, { cache: 'no-cache' }); return r.ok ? r.json() : null; } catch (e) { return null; } };
       [nat.floodclass, nat.warnings] = await Promise.all([opt('floodclass.json'), opt('warnings.json')]);
       nat.floodclass = nat.floodclass || {};
@@ -2452,7 +2494,7 @@
     };
     for (const [name, kinds] of Object.entries(groups)) {
       const feats = nat.data.gauges.filter((f) => kinds.includes(f.properties.kind));
-      if (!feats.length) continue;
+      if (!feats.length && kinds[0] !== 'river') continue;   // river gauges may still be on their way
       const st = GAUGE_STYLE[kinds[0]];
       nat.layers[name] = L.geoJSON({ type: 'FeatureCollection', features: feats }, {
         attribution: BOM_ATTR,
@@ -3467,6 +3509,7 @@
   async function restoreSession(st, why) {
     if (!st || st.v !== 1 || !state.lmap) return false;
     restoring = true;
+    if (nat.data) await ensureRiverGauges();
     status.restore = { running: true, why };
     try {
       if (!nat.data) await loadNationalData();
@@ -5004,6 +5047,7 @@
   async function modelHere(lat, lon, opts) {
     const o = Object.assign({ kind: 'river', name: 'This area' }, opts || {});
     const t0 = performance.now();
+    if (nat.data) await ensureRiverGauges();
     setBusy(true, 'Downloading elevation for this area…');
     status.local = { started: true };
     try {

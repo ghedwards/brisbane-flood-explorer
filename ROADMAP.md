@@ -30,11 +30,12 @@ would add, how it could be built from open data, and what to watch for.
   above the gauge without a recorded gauge are only shifted in time, and
   floodplain storage and dam releases aren't modelled. Ratings come from
   daily means, so they are extrapolated above the highest daily level.
-- **Tides from predictions.** Recorded floods near a UHSLC tide gauge use
-  its recorded sea level; scenarios use a 12.4-hour sine at spring-tide
-  height. Tide predictions would allow "this week's highest tide", and
-  more tide gauges (Maritime Safety Queensland, Manly Hydraulics
-  Laboratory) would cover recorded floods further from the UHSLC gauges.
+- **Tides from predictions.** Recorded floods use recorded sea levels from
+  Maritime Safety Queensland's or UHSLC's tide gauges within 150 km;
+  scenarios use a 12.4-hour sine at spring-tide height. NSW's ocean tide
+  records (Manly Hydraulics Laboratory) aren't open downloads, so NSW
+  floods use Fort Denison. Tide predictions would allow "this week's
+  highest tide".
 - **Design rainfall from the Bureau.** Storm mode currently offers example
   storms and links to the Bureau's design rainfall (IFD) tool. Fetching the
   IFD table for the model's location would give real "1% annual chance"
@@ -96,9 +97,10 @@ and when roads close and how long places stay cut off (flood over time).
 
 ## Reliability and usability
 
-- **Offline use.** Make the site an installable web app that keeps working
-  after loading when mobile signal drops during a flood (cache the app,
-  the national data and the active model).
+- **Offline, further.** The site installs and works offline from what has
+  been used. It could also save a chosen area in advance (pre-fetch its
+  tiles and terrain) before heading somewhere without signal, and show
+  how much is stored.
 - **Real-phone testing**, especially iOS Safari, for panels, scrolling,
   the area-study box and touch gestures.
 - **Accessibility, further.** Done: keyboard use of the map (Enter acts at
@@ -106,10 +108,9 @@ and when roads close and how long places stay cut off (flood over time).
   colours that differ by lightness. Still to do: a screen-reader summary of
   the flood map itself (beyond the counts), and an audit with a real
   screen reader.
-- **Faster first load, further.** Scripts are minified, the gauge file is
-  compact, and flood history loads with the first model. The gauge file is
-  still the largest download; splitting it by state or map view would cut
-  it further.
+- **Faster first load, further.** Scripts are minified, the flood-network
+  gauges load first (the other 2,400 river gauges follow once the map is
+  drawn), and flood history loads with the first model.
 
 ## Build and testing
 
