@@ -970,7 +970,8 @@
         url: o.url, minZoom: o.minZoom, simplifyFactor: 0.5, precision: 6, attribution: o.attribution,
         style: (f) => { const c = o.colorBy ? o.colorBy((f && f.properties) || {}) : o.swatch; return { color: c, weight: 1, fillColor: c, fillOpacity: 0.4 }; },
       });
-      layer.on('load', () => { let n = 0; layer.eachFeature(() => { n++; }); st.features = n; });
+      layer.on('load', () => { let n = 0; layer.eachFeature(() => { n++; }); st.features = Math.max(st.features, n); });
+      layer.on('createfeature', () => { st.drawn = (st.drawn || 0) + 1; if (st.drawn > st.features) st.features = st.drawn; });
       // esri-leaflet can try to add or remove features after the layer has
       // left the map (requests still in flight): ignore those
       ['addLayers', 'removeLayers'].forEach((fn) => {

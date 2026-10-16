@@ -30,11 +30,11 @@ would add, how it could be built from open data, and what to watch for.
   above the gauge without a recorded gauge are only shifted in time, and
   floodplain storage and dam releases aren't modelled. Ratings come from
   daily means, so they are extrapolated above the highest daily level.
-- **Tides from predictions.** Tide heights cover the whole coast (the
-  national EOT20 tide statistics outside Queensland), but tide cycles are a
-  12.4-hour sine at spring-tide height. Tide predictions for the event's
-  dates would allow "this week's highest tide" and real tide timing for
-  recorded floods.
+- **Tides from predictions.** Recorded floods near a UHSLC tide gauge use
+  its recorded sea level; scenarios use a 12.4-hour sine at spring-tide
+  height. Tide predictions would allow "this week's highest tide", and
+  more tide gauges (Maritime Safety Queensland, Manly Hydraulics
+  Laboratory) would cover recorded floods further from the UHSLC gauges.
 - **Design rainfall from the Bureau.** Storm mode currently offers example
   storms and links to the Bureau's design rainfall (IFD) tool. Fetching the
   IFD table for the model's location would give real "1% annual chance"
@@ -72,25 +72,25 @@ Done: buildings, people, roads, key sites, water above floor (with a floor
 height setting), daytime workplaces, places cut off from a dry road out,
 and when roads close and how long places stay cut off (flood over time).
 
-- **Daytime population counts.** The ABS publishes workplace destination
-  zones as an open service but not the worker counts for them; daytime
-  exposure currently counts flooded workplaces, shops, schools and public
-  buildings from OpenStreetMap. Loading the ABS place-of-work counts (a
-  download) into the build would give numbers of workers.
-- **Measured floor heights.** Councils hold surveyed floor levels for some
-  floodplains; where any are published openly they would replace the
-  single typical floor height.
-- **Australian damage curves.** Damage currently uses the EU JRC global
-  curve for Oceania homes; the NSW residential flood damage curves (by
-  house type) or Geoscience Australia's vulnerability models would be
-  more local, if published as numbers.
+- **Daytime counts, further.** Workers come from the ABS place-of-work
+  counts by SA2; destination zones (much smaller) would be sharper, but
+  their counts are only in TableBuilder, not an open download.
+- **Measured floor heights.** NSW councils publish floor level surveys for
+  some flood studies on the NSW flood data portal (SEED), which refuses
+  GitHub's servers; collecting them needs the home-computer route. Others
+  aren't published openly.
+- **Australian damage curves.** Damage uses the EU JRC global curve for
+  Oceania homes. The NSW residential damage curves (2007 guideline) and
+  Geoscience Australia's vulnerability functions are used in flood
+  studies but not published as open numbers; worth adopting if they are.
 
 ## Data coverage
 
-- **More council overland-flow and flood maps.** Currently Brisbane,
-  City of Moreton Bay and Sunshine Coast. Many councils only publish
-  downloads; check periodically for new open map services (Gold Coast,
-  Logan, Ipswich, Sydney councils, Townsville, Cairns).
+- **More council flood maps.** Now Brisbane, Gold Coast, Moreton Bay,
+  Sunshine Coast, Logan, Rockhampton and Livingstone. Redland's city plan
+  service needs a login; Ipswich, Townsville and Cairns publish maps only
+  as PDFs or in their own map viewers. Check periodically for new open
+  services, and for NSW and Victorian councils.
 - **Rain radar detail.** RainViewer's free tier stops at zoom 7; a
   higher-resolution open radar source would help storm mode.
 
@@ -106,9 +106,10 @@ and when roads close and how long places stay cut off (flood over time).
   colours that differ by lightness. Still to do: a screen-reader summary of
   the flood map itself (beyond the counts), and an audit with a real
   screen reader.
-- **Faster first load, further.** Scripts are minified and background data
-  loads after the map; the national gauge file is the largest download and
-  could be split by state or loaded by map view.
+- **Faster first load, further.** Scripts are minified, the gauge file is
+  compact, and flood history loads with the first model. The gauge file is
+  still the largest download; splitting it by state or map view would cut
+  it further.
 
 ## Build and testing
 

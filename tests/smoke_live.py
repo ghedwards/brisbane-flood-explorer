@@ -360,7 +360,10 @@ def main() -> int:
                 page.evaluate("([la, lo, z]) => window.__floodTestZoom && window.__floodTestZoom(la, lo, z)", [lat, lon, max(14, (c.get("minZoom") or 12) + 2)])
                 page.wait_for_timeout(1500)
                 page.evaluate("([n]) => window.__floodSetOverlay(n, true)", [c["name"]])
-                page.wait_for_timeout(7000)
+                try:   # big council polygons can take a while to arrive
+                    page.wait_for_function("n => (window.__floodStatus.overlays[n] || {}).features > 0", arg=c["name"], timeout=25_000)
+                except Exception:
+                    pass
                 st = page.evaluate("n => window.__floodStatus.overlays[n]", c["name"]) or {}
                 drawn.append(f"{c['name']}: {st.get('features', 0)}/{st.get('errors', 0)}")
                 if not st.get("features"):
