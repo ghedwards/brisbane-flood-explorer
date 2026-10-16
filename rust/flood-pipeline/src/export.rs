@@ -15,7 +15,14 @@ use crate::util::*;
 use serde_json::{json, Value};
 use std::path::Path;
 
-fn runner_version() -> String {
+/// What ran the hydrology: `flood hydrology` records it in hydrology.json;
+/// otherwise the separate geolibre runner.
+fn runner_version(work: &Path) -> String {
+    if let Ok(h) = read_json(work.join("hydrology.json")) {
+        if let Some(t) = get_str(&h, "tools") {
+            return format!("{}, run in flood", t);
+        }
+    }
     match std::process::Command::new("geolibre").arg("version").output() {
         Ok(o) => {
             let s = String::from_utf8_lossy(&o.stdout).trim().to_string();
@@ -81,7 +88,7 @@ pub fn run(config_path: &str, work_dir: &str, data_dir: &str) -> R<String> {
         "brisbaneGauge" => truthy(cfg.get("brisbane_gauge_events")),
         "streamAreaKm2" => cfg.get("stream_area_km2").cloned().unwrap_or(Value::Null),
         "source" => format!("Terrain: Copernicus GLO-30 surface model (ESA, Airbus), resampled to {} m. Heights are relative to the EGM2008 geoid, which differs from AHD by a few tenths of a metre here.", g_fmt(cell)),
-        "processedWith" => format!("{} (the RustGIS hydrology tools)", runner_version()),
+        "processedWith" => format!("{} (the RustGIS hydrology tools)", runner_version(work)),
         "generated" => today(),
         "rasters" => rasters,
     };

@@ -18,3 +18,7 @@ tiff = "0.9"
 png = "0.17"
 miniz_oxide = "0.8"
 regex = "1"
+# The RustGIS / GeoLibre hydrology tools (whitebox_next_gen), pinned to the
+# commit inside GeoLibre 1.6.0. Not on crates.io (publish = false).
+wbcore = { git = "https://github.com/opengeos/whitebox-wasm", rev = "6b2a6eb99743b5f1602c7b7a1ff724fea6ee1b23" }
+wbtools_oss = { git = "https://github.com/opengeos/whitebox-wasm", rev = "6b2a6eb99743b5f1602c7b7a1ff724fea6ee1b23" }
