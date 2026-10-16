@@ -24,8 +24,8 @@ SOURCES = [
     ("Gauge ratings", "Ratings:", "ratings.json", "routing, peak flows"),
     ("Tide heights", "Tides:", "tides.json", "storm tide, tide cycles"),
     ("Workers by place of work", "Workers:", "workers.json", "daytime impact"),
-    ("OpenStreetMap copies", "OpenStreetMap copies:", None, "impact counts for the presets"),
-    ("Levee lines", "Levees:", None, "levees and flood gates"),
+    ("OpenStreetMap copies", "OpenStreetMap copies:", "osm/index.json", "impact counts for the presets"),
+    ("Levee lines", "Levees:", "levees.geojson", "levees and flood gates"),
     ("Google Flood Hub", "Flood Hub:", "floodhub.json", "forecasts (needs an API key)"),
 ]
 
@@ -57,7 +57,8 @@ def main(site, logs):
         exists = bool(published and published.exists()) if file else None
         if line:
             summary = line[len(prefix):].strip()
-            bad = bool(re.search(r"unavailable|\b0 (lines|of)\b|failed|error", summary, re.I)) and not re.search(r"\b[1-9]\d* of\b", summary)
+            text = re.sub(r"\b0 errors?\b", "", summary, flags=re.I)
+            bad = bool(re.search(r"unavailable|\b0 (lines|of)\b|failed|error", text, re.I)) and not re.search(r"\b[1-9]\d* of\b", text)
             state = "problem" if bad else "ok"
         elif exists:
             summary, state = "kept from an earlier build", "cached"

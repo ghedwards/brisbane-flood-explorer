@@ -20,7 +20,7 @@ class Status(unittest.TestCase):
             (site / "data" / "national" / "meta.json").write_text(json.dumps({"fetched": "2026-10-16T00:00:00+00:00"}))
             (site / "data" / "tides.json").write_text(json.dumps({"fetched": "2026-10-01T00:00:00+00:00", "points": []}))
             log = Path(d, "a.log")
-            log.write_text("National: 3839 gauges, 303 storages\nLevees: 0 lines (nsw: unavailable)\nRecorded floods: 15 of 22 with hourly readings\n")
+            log.write_text("National: 3839 gauges, 303 storages, 0 errors\nLevees: 0 lines (nsw: unavailable)\nRecorded floods: 15 of 22 with hourly readings\n")
             bs.main(site, [log, Path(d, "missing.log")])
             out = {s["name"]: s for s in json.loads((site / "data" / "status.json").read_text())["sources"]}
         self.assertEqual(out["Bureau gauges, dams and readings"]["state"], "ok")

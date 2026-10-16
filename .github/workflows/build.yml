@@ -247,7 +247,7 @@ jobs:
           grep '^warning:' osm.log 2>/dev/null | head -3 | sed 's/^warning:/::warning::OpenStreetMap copy /' || true
           echo "::notice::$(grep -E '^Recorded floods' events.log 2>/dev/null || echo 'Recorded floods: from cache')"
           echo "::notice::$(grep -E '^Sea levels' sea.log 2>/dev/null || ([ -f cache/sea.json ] && echo 'Sea levels: from cache') || echo 'Sea levels: none')"
-          grep -E '^(note|warning): ' sea.log 2>/dev/null | head -6 | sed -E 's/^(note|warning): /::notice::Sea level /' || true
+          grep -E '^(note|warning): ' sea.log 2>/dev/null | head -6 | cut -c1-700 | sed -E 's/^(note|warning): /::notice::Sea level /' || true
           grep -E '^Other gauges' events.log 2>/dev/null | cut -c1-900 | sed 's/^/::notice::/' || true
           grep '^warning:' events.log 2>/dev/null | head -4 | sed 's/^warning:/::warning::Recorded flood /' || true
           echo "::notice::$(grep -E '^Levees' levees.log 2>/dev/null || echo 'Levees: from cache')"

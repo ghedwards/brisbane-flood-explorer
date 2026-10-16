@@ -193,7 +193,7 @@ def _msq_year(site, year):
         rows = parse_levels(text)
         if len(rows) > 1000:
             return rows
-        first = " | ".join(text.splitlines()[:3])[:160]
+        first = " | ".join(ln for ln in text.splitlines()[:6] if ln.strip())[:300]
         raise RuntimeError(f"{len(rows)} readings parsed from {r.get('name', '')} (starts: {first})")
     return []
 
@@ -221,7 +221,7 @@ def msq_for(ev, start, end, msq=msq_year):
         if end.year != start.year:
             rows = rows + msq(site[0], end.year)
     except Exception as e:  # noqa: BLE001
-        return None, d, f"MSQ {site[0]}: {str(e)[:60]}"
+        return None, d, f"MSQ {site[0]}: {str(e)[:400]}"
     series = from_readings(rows, start, end)
     if not series:
         return None, d, f"MSQ {site[0]}: no readings for those dates"
