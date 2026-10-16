@@ -161,7 +161,7 @@ python3 -m http.server -d viewer 8000
 ## Tests
 
 ```sh
-node --test tests/core.test.js
+node --test tests/*.test.js
 python -m unittest tests/test_floodhub.py tests/test_national.py tests/test_council.py tests/test_floodinfo.py \
   tests/test_events.py tests/test_osm.py tests/test_tides.py tests/test_ratings.py tests/test_sealevels.py tests/test_workers.py   # data fetchers, services mocked
 ```

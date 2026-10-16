@@ -35,7 +35,7 @@ jobs:
           node-version: 22
 
       - name: Test the flood model
-        run: node --test tests/core.test.js
+        run: node --test tests/*.test.js
 
       - uses: actions/setup-python@v7
         with:

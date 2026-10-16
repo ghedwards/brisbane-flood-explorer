@@ -654,18 +654,22 @@
     const saved = {};
     CTL_KEYS.forEach((k) => { saved[k] = ctl[k].value; });
     const keep = { n: area.n, key: area.key, name: area.name };
+    const points = modelPoints(state.grid, state.geo, state.gauge, state.controls);
+    const streamAreaKm2 = state.streamAreaKm2;
     const oldDefences = area.defences;
     const ok = await modelHere(glat, glon, {
       kind: m.kind, name: area.name, reportId: m.reportId, presetId: m.presetId, pinN: m.pinN,
-      halfKm: half, cellM: cell, center, keepN: area.n, streamAreaKm2: m.streamAreaKm2, replaceKey: keep.key,
+      halfKm: half, cellM: cell, center, keepN: area.n, streamAreaKm2, replaceKey: keep.key,
     });
     if (!ok) return false;
     CTL_KEYS.forEach((k) => { if (k !== 'streamArea') ctl[k].value = saved[k]; });
+    for (let t = 0; t < 80 && !(state.areaKey && areaReg.get(state.areaKey)?.n === keep.n); t++) await new Promise((r) => setTimeout(r, 100));
+    if (areaReg.get(state.areaKey)?.n !== keep.n) return false;
     if (oldDefences && (oldDefences.levees.length || oldDefences.gates.length)) {
-      for (let t = 0; t < 80 && !(state.areaKey && areaReg.get(state.areaKey)); t++) await new Promise((r) => setTimeout(r, 100));
       const na = state.areaKey && areaReg.get(state.areaKey);
       if (na) { na.defences = oldDefences; await applyDefences(); }
     }
+    restoreModelPoints(points);
     state.base = null;
     syncOutputs();
     runScenario();
@@ -3402,6 +3406,21 @@
     const x = (i % W) + 0.5, y = Math.floor(i / W) + 0.5;
     return [r5(g.north - (y / H) * (g.north - g.south)), r5(g.west + (x / W) * (g.east - g.west))];
   }
+  function modelPoints(grid, geo, gauge, controls) {
+    if (!grid || !geo) return { gp: null, cp: [] };
+    const ll = (c) => cellToLatLon(c, grid.W, grid.H, geo);
+    return {
+      gp: gauge >= 0 ? ll(gauge) : null,
+      cp: (controls || []).map((c) => [...ll(c.cell), c.level, c.label || '']),
+    };
+  }
+  function restoreModelPoints(points) {
+    if (points.gp) {
+      const gauge = streamCellAt(points.gp[0], points.gp[1]);
+      if (gauge >= 0) state.gauge = gauge;
+    }
+    state.controls = (points.cp || []).map(([la, lo, level, label]) => ({ cell: streamCellAt(la, lo), level, label })).filter((c) => c.cell >= 0);
+  }
   function sessionState() {
     const m = state.lmap;
     const out = { v: 1 };
@@ -3416,10 +3435,11 @@
       const ctlv = live ? Object.fromEntries(CTL_KEYS.map((k) => [k, ctl[k].value])) : a.ctl;
       const ctrls = (live ? state.controls : a.controls) || [];
       const grid = live ? state.grid : a.grid, geo = live ? state.geo : a.geo;
+      const points = modelPoints(grid, geo, live ? state.gauge : a.gauge, ctrls);
       out.areas.push({
         n: a.n, name: a.name, kind: meta.kind, g: meta.gaugeLatLon.map(r5), c: (meta.centerLatLon || meta.gaugeLatLon).map(r5), h: meta.halfKm || 10,
         rid: meta.reportId || null, pin: meta.pinN != null ? meta.pinN : null, pre: meta.presetId || null, ctl: ctlv,
-        cp: grid && geo ? ctrls.map((c) => [...cellToLatLon(c.cell, grid.W, grid.H, geo), c.level, c.label || '']) : [],
+        gp: points.gp, cp: points.cp, sa: live ? state.streamAreaKm2 : a.streamAreaKm2,
         def: a.defences && (a.defences.levees.length || a.defences.gates.length) ? a.defences : null,
       });
     }
@@ -3468,20 +3488,24 @@
         setBusy(true, `Rebuilding flood model ${k + 1} of ${areas.length}…`);
         const size = MODEL_SIZES.find(([h]) => h === a.h) || MODEL_SIZES[0];
         const rep = a.rid && reports.find((r) => r.id === a.rid);
+        // Older links stored only the slider; restore its catchment threshold
+        // before analysing terrain or snapping the saved level points.
+        const sa = a.sa ?? (a.ctl && a.ctl.streamArea != null ? streamFromSlider(Number(a.ctl.streamArea)) : undefined);
         const ok = await modelHere(a.g[0], a.g[1], {
           kind: a.kind, name: a.name, reportId: rep ? rep.id : null, pinN: a.pin, presetId: a.pre,
           halfKm: size[0], cellM: size[1], center: a.c, keepN: a.n, quiet: true,
+          streamAreaKm2: Number.isFinite(sa) && sa > 0 ? sa : undefined,
         });
         if (!ok) continue;
         // wait until the model is registered on the map, so its settings are
         // saved with it rather than lost when it is next selected
         for (let t = 0; t < 80 && !(state.areaKey && areaByNumber(a.n) && areaByNumber(a.n).key === state.areaKey); t++) await new Promise((r) => setTimeout(r, 100));
         if (a.ctl) CTL_KEYS.forEach((key) => { if (key !== 'streamArea' && a.ctl[key] != null) ctl[key].value = a.ctl[key]; });
-        state.controls = (a.cp || []).map(([la, lo, level, label]) => ({ cell: streamCellAt(la, lo), level, label })).filter((c) => c.cell >= 0);
+        if (a.def) { const na = areaByNumber(a.n); if (na) { na.defences = a.def; await applyDefences(); } }
+        restoreModelPoints(a);
         state.base = null;
         syncOutputs();
         runScenario();
-        if (a.def) { const na = areaByNumber(a.n); if (na) { na.defences = a.def; await applyDefences(); } }
         saveActive();
       }
       if (st.active != null) {
@@ -3903,7 +3927,7 @@
     try {
       const feats = await esriFeatures(ABS_SA1, g, { fields: '*', simplify: 20 * degPerM, page: 1000 });
       const key = feats.length && Object.keys(feats[0].attributes || {}).find((k) => /^tot_p_p$/i.test(k));
-      if (key) sa1 = { feats, pop: feats.map((f) => Number(f.attributes[key]) || 0) };
+      if (key) sa1 = { feats, pop: feats.map((f) => Number(f.attributes[key]) || 0), km2: feats.map((f) => ringsKm2(f.geometry && f.geometry.rings)) };
     } catch (err) { sa1 = null; }
     // workers: each SA2's workers by place of work (optional)
     let sa2 = null;
@@ -4005,16 +4029,23 @@
         for (let c = 0; c < a.N; c++) { const v = (px[4 * c] << 16) | (px[4 * c + 1] << 8) | px[4 * c + 2]; if (px[4 * c + 3] > 250 && v > 0 && v <= d.sa1.feats.length) idg[c] = v - 1; }
         d.sa1Grid = idg; d.sa1Key = state.areaKey + a.W;
       }
-      const nS = d.sa1.pop.length, tot = new Float64Array(nS), hit = new Float64Array(nS), land = new Float64Array(nS), wetL = new Float64Array(nS);
+      const nS = d.sa1.pop.length, tot = new Float64Array(nS), hit = new Float64Array(nS), land = new Float64Array(nS), wetL = new Float64Array(nS), inside = new Float64Array(nS);
       for (let i = 0; i < nB; i++) { const s = bCell[i] >= 0 ? d.sa1Grid[bCell[i]] : -1; if (s >= 0) { tot[s]++; if (bFlood[i]) hit[s]++; } }
+      for (let c = 0; c < a.N; c++) { const s = d.sa1Grid[c]; if (s >= 0) inside[s] += (a.cell * a.cell) / 1e6; }
       for (let c = 0; c < a.N; c++) { const s = d.sa1Grid[c]; if (s >= 0 && !(a.ocean && a.ocean[c])) { land[s]++; if (depthAt(c) >= 0.15) wetL[s]++; } }
+      // Buildings are fetched only inside the model. Allocate only the
+      // covered share of each SA1's population, as for SA2 workers below.
+      const pop = d.sa1.pop.map((p, s) => {
+        const km2 = d.sa1.km2 ? d.sa1.km2[s] : ringsKm2(d.sa1.feats[s].geometry?.rings);
+        return p * (km2 > 0 ? Math.min(1, inside[s] / km2) : 0);
+      });
       people = 0;
-      for (let s = 0; s < nS; s++) people += d.sa1.pop[s] * (tot[s] > 0 ? hit[s] / tot[s] : (land[s] ? wetL[s] / land[s] : 0));
+      for (let s = 0; s < nS; s++) people += pop[s] * (tot[s] > 0 ? hit[s] / tot[s] : (land[s] ? wetL[s] / land[s] : 0));
       if (isolatedPeopleW) {
         const iso = new Float64Array(nS);
         for (let i = 0; i < nB; i++) { const s0 = bCell[i] >= 0 ? d.sa1Grid[bCell[i]] : -1; if (s0 >= 0 && isolatedPeopleW[i]) iso[s0]++; }
         peopleIsolated = 0;
-        for (let s = 0; s < nS; s++) if (tot[s] > 0) peopleIsolated += d.sa1.pop[s] * (iso[s] / tot[s]);
+        for (let s = 0; s < nS; s++) if (tot[s] > 0) peopleIsolated += pop[s] * (iso[s] / tot[s]);
       }
     }
     // workers: each SA2's workers (by place of work) spread over its mapped
@@ -4664,38 +4695,30 @@
     const R = tl.wave.routed;
     status.timeline = { steps: tl.steps, step: tl.step, event: opts.eventId,
       routed: R ? { reaches: R.reaches.length, km: +(R.reaches[R.reaches.length - 1] || { km: 0 }).km.toFixed(1), peakFrac: +R.peakAt(R.flows.length - 1).frac.toFixed(2), lagHours: Math.round(R.peakAt(R.flows.length - 1).hours - R.peakAt(0).hours), tributaries: R.tributaries } : null,
-      tide: tl.wave.tide || 0, seaRecorded: !!tl.wave.seaRecorded, rated: !!(R && R.rated), upGauges: tl.wave.up ? tl.wave.up.gauges : 0, firstRoad: ac ? ac.firstClose : null, maxIsolated: ac ? ac.maxIso : null, longestHours: ac ? ac.longest : null, roadsClosed: ac ? ac.roads.length : null };
+      tide: tl.wave.tide || 0, seaRecorded: !!tl.wave.seaRecorded, rated: !!(R && R.rated), upGauges: tl.wave.up ? tl.wave.up.gauges : 0, firstRoad: ac ? ac.firstClose : null, maxIsolated: ac ? ac.maxIso : null, longestHours: ac ? ac.longest : null, roadsClosed: ac ? new Set(ac.roads.map((r) => r.name)).size : null };
     return status.timeline;
   }
   // Roads and isolation through time, from when each spot is over 0.3 m deep
   function timelineAccess(tl, d) {
     if (!d || d.error || !d.net || !d.net.lat.length) return null;
     const a = state.a, net = d.net, nN = net.lat.length, K = tl.steps, g = state.geo;
-    const deepAt = (c, k) => c >= 0 && tl.firstDeep[c] >= 0 && tl.firstDeep[c] <= k && k <= tl.lastDeep[c];
-    const wetAt = (c, k) => c >= 0 && tl.firstWet[c] >= 0 && tl.firstWet[c] <= k && k <= tl.lastWet[c];
+    const at = (bits, c, k) => c >= 0 && !!(bits[k * tl.wordsPerStep + (c >>> 5)] & (1 << (c & 31)));
+    const deepAt = (c, k) => at(tl.deepBits, c, k);
+    const wetAt = (c, k) => at(tl.wetBits, c, k);
     const nodeCell = new Int32Array(nN);
     for (let n = 0; n < nN; n++) nodeCell[n] = cellOf(net.lat[n], net.lon[n]);
-    // each road edge: when it is under water (the union of its samples)
-    const eFrom = new Int16Array(net.edges.length).fill(-1), eTo = new Int16Array(net.edges.length).fill(-1);
-    net.edges.forEach(([u, v], k) => {
+    // Keep the sampled cells, then test each edge at the current step.
+    // A road can reopen between successive river or tidal peaks.
+    const edgeCells = net.edges.map(([u, v]) => {
+      const cells = new Set();
       for (let t = 0; t <= 4; t++) {
-        const f = t / 4, c = cellOf(net.lat[u] + (net.lat[v] - net.lat[u]) * f, net.lon[u] + (net.lon[v] - net.lon[u]) * f);
-        if (c >= 0 && tl.firstDeep[c] >= 0) {
-          if (eFrom[k] < 0 || tl.firstDeep[c] < eFrom[k]) eFrom[k] = tl.firstDeep[c];
-          if (tl.lastDeep[c] > eTo[k]) eTo[k] = tl.lastDeep[c];
-        }
+        const f = t / 4;
+        const c = cellOf(net.lat[u] + (net.lat[v] - net.lat[u]) * f, net.lon[u] + (net.lon[v] - net.lon[u]) * f);
+        if (c >= 0) cells.add(c);
       }
+      return Array.from(cells);
     });
-    // named roads: first closed and reopened
-    const roads = new Map();
-    net.edges.forEach(([, , ri], k) => {
-      if (eFrom[k] < 0) return;
-      const nm = d.roads[ri].name;
-      if (!nm) return;
-      const r = roads.get(nm) || { name: nm, from: Infinity, to: -1 };
-      r.from = Math.min(r.from, eFrom[k]); r.to = Math.max(r.to, eTo[k]);
-      roads.set(nm, r);
-    });
+    const edgeClosed = new Uint8Array(net.edges.length), roads = new Map();
     // exits: dry road nodes at the edge of the model area
     const mx = ((g.east - g.west) / a.W) * 3, my = ((g.north - g.south) / a.H) * 3;
     const exit = new Uint8Array(nN);
@@ -4720,29 +4743,48 @@
     for (let n = 0; n < nN; n++) if (exit[n]) { dryReach[n] = 1; q0.push(n); }
     for (let h = 0; h < q0.length; h++) for (const [m] of adj[q0[h]]) if (!dryReach[m]) { dryReach[m] = 1; q0.push(m); }
     const isoSteps = new Int16Array(nB), firstIso = new Int16Array(nB).fill(-1);
+    const isoRun = new Int16Array(nB);
+    let longest = 0;
     const isoCount = new Int32Array(K), floodCount = new Int32Array(K), closedCount = new Int32Array(K);
     const reach = new Uint8Array(nN), q = new Int32Array(nN);
     for (let k = 0; k < K; k++) {
       reach.fill(0);
+      const closedNames = new Set();
+      let closed = 0;
+      for (let e = 0; e < net.edges.length; e++) {
+        edgeClosed[e] = edgeCells[e].some((c) => deepAt(c, k)) ? 1 : 0;
+        if (!edgeClosed[e]) continue;
+        closed++;
+        const name = d.roads[net.edges[e][2]].name;
+        if (name) closedNames.add(name);
+      }
+      closedCount[k] = closed;
+      for (const name of closedNames) {
+        const intervals = roads.get(name) || [];
+        const last = intervals[intervals.length - 1];
+        if (last && last.to === k - 1) last.to = k;
+        else intervals.push({ name, from: k, to: k });
+        roads.set(name, intervals);
+      }
       let qt = 0;
       for (let n = 0; n < nN; n++) if (exit[n] && !deepAt(nodeCell[n], k)) { reach[n] = 1; q[qt++] = n; }
       for (let h = 0; h < qt; h++) for (const [m, e] of adj[q[h]]) {
-        if (reach[m] || (eFrom[e] >= 0 && eFrom[e] <= k && k <= eTo[e]) || deepAt(nodeCell[m], k)) continue;
+        if (reach[m] || edgeClosed[e] || deepAt(nodeCell[m], k)) continue;
         reach[m] = 1; q[qt++] = m;
       }
-      let closed = 0;
-      for (let e = 0; e < net.edges.length; e++) if (eFrom[e] >= 0 && eFrom[e] <= k && k <= eTo[e]) closed++;
-      closedCount[k] = closed;
       for (let i = 0; i < nB; i++) {
-        if (wetAt(bCell[i], k)) { floodCount[k]++; continue; }
-        if (bNode[i] >= 0 && !reach[bNode[i]] && dryReach[bNode[i]]) { isoCount[k]++; isoSteps[i]++; if (firstIso[i] < 0) firstIso[i] = k; }
+        if (wetAt(bCell[i], k)) { floodCount[k]++; isoRun[i] = 0; continue; }
+        if (bNode[i] >= 0 && !reach[bNode[i]] && dryReach[bNode[i]]) {
+          isoCount[k]++; isoSteps[i]++; isoRun[i]++;
+          longest = Math.max(longest, isoRun[i]);
+          if (firstIso[i] < 0) firstIso[i] = k;
+        } else isoRun[i] = 0;
       }
     }
     const toH = (k) => Math.round(tl.t0 + k * tl.step);
-    let longest = 0, maxIso = 0, maxIsoAt = 0;
-    for (let i = 0; i < nB; i++) if (isoSteps[i] > longest) longest = isoSteps[i];
+    let maxIso = 0, maxIsoAt = 0;
     for (let k = 0; k < K; k++) if (isoCount[k] > maxIso) { maxIso = isoCount[k]; maxIsoAt = k; }
-    const roadList = Array.from(roads.values()).sort((x, y) => x.from - y.from);
+    const roadList = Array.from(roads.values()).flat().sort((x, y) => x.from - y.from);
     return {
       roads: roadList.map((r) => ({ name: r.name, closes: toH(r.from), reopens: toH(r.to + 1) })),
       firstClose: roadList.length ? toH(roadList[0].from) : null,

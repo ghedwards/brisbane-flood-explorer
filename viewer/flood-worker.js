@@ -7,7 +7,7 @@ self.onmessage = (e) => {
   try {
     if (kind === 'timeline') {
       const tl = self.FloodCore.floodTimeline(e.data.a, e.data.s, opts);
-      const bufs = [tl.firstWet, tl.lastWet, tl.firstDeep, tl.lastDeep, tl.wetCount, tl.gauge].map((x) => x.buffer);
+      const bufs = [tl.firstWet, tl.lastWet, tl.firstDeep, tl.lastDeep, tl.wetCount, tl.gauge, tl.wetBits, tl.deepBits].map((x) => x.buffer);
       self.postMessage({ id, a: tl }, bufs);
       return;
     }

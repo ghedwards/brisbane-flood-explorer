@@ -1034,6 +1034,10 @@
     const firstWet = new Int16Array(N).fill(-1), lastWet = new Int16Array(N).fill(-1);
     const firstDeep = new Int16Array(N).fill(-1), lastDeep = new Int16Array(N).fill(-1);
     const wetCount = new Int32Array(steps), gauge = new Float32Array(steps);
+    // Packed states retain dry gaps between tides or separate flood peaks
+    // without keeping a full depth raster for every time step.
+    const wordsPerStep = Math.ceil(N / 32);
+    const wetBits = new Uint32Array(steps * wordsPerStep), deepBits = new Uint32Array(steps * wordsPerStep);
     const wse = new Float64Array(N).fill(NaN);
     for (let k = 0; k < steps; k++) {
       const t = t0 + k * step;
@@ -1044,13 +1048,16 @@
       for (let c = 0; c < N; c++) {
         if (!run.wet[c] || (a.ocean && a.ocean[c])) continue;
         n++;
+        const word = k * wordsPerStep + (c >>> 5), bit = 1 << (c & 31);
+        wetBits[word] |= bit;
+        if (run.depth[c] >= 0.3) deepBits[word] |= bit;
         if (firstWet[c] < 0) firstWet[c] = k;
         lastWet[c] = k;
         if (run.depth[c] >= 0.3) { if (firstDeep[c] < 0) firstDeep[c] = k; lastDeep[c] = k; }
       }
       wetCount[k] = n;
     }
-    return { t0, step, steps, firstWet, lastWet, firstDeep, lastDeep, wetCount, gauge };
+    return { t0, step, steps, firstWet, lastWet, firstDeep, lastDeep, wetCount, gauge, wordsPerStep, wetBits, deepBits };
   }
 
   /* ------------------------------------------------------------- defences */

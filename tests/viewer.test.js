@@ -1,0 +1,144 @@
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const vm = require('node:vm');
+const F = require('../viewer/flood-core.js');
+
+// Exercise the shipped viewer routines with small DOM/map/service fixtures.
+// Keep their dependencies explicit without loading Leaflet or remote data.
+const source = fs.readFileSync(require.resolve('../viewer/app.js'), 'utf8');
+function viewer(names, globals) {
+  const context = vm.createContext(globals);
+  for (const name of names) {
+    const start = source.search(new RegExp(`  (?:async )?function ${name}\\(`));
+    assert.ok(start >= 0, `${name} exists`);
+    vm.runInContext(source.slice(start, source.indexOf('\n  }', start) + 4), context);
+  }
+  return context;
+}
+const plain = (x) => JSON.parse(JSON.stringify(x));
+const noop = () => {};
+const geo = { west: 0, east: 1, south: 0, north: 1 };
+
+test('timeline states retain dry gaps between two flood peaks', () => {
+  const W = 60, H = 21, dem = new Float32Array(W * H);
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) dem[y * W + x] = 2 + 0.01 * (W - x) + Math.abs(y - 10) * 0.2;
+  const a = F.analyse({ W, H, cell: 10, dem }, { streamAreaKm2: 0.001 });
+  const s = { gauge: 10 * W + 50, gaugeLevel: 4, bayLevel: 0, upstreamGradient: 0 };
+  const opts = { hydro: [[0, 2.2], [2, 4], [4, 2.2], [6, 4], [8, 2.2]], speedKmh: 100 };
+  const tl = F.floodTimeline(a, s, opts), w = F.waveSetup(a, s, opts);
+  let gaps = 0;
+  for (let k = 0; k < tl.steps; k++) {
+    const run = F.inundate(a, { ...s, wse: F.waveSurface(a, w, tl.t0 + k * tl.step), bayLevel: w.bayAt(tl.t0 + k * tl.step) });
+    for (let c = 0; c < a.N; c++) {
+      const wet = !!(run.wet[c] && !a.ocean[c]);
+      const bit = 1 << (c & 31), word = k * tl.wordsPerStep + (c >>> 5);
+      assert.equal(!!(tl.wetBits[word] & bit), wet);
+      assert.equal(!!(tl.deepBits[word] & bit), wet && run.depth[c] >= 0.3);
+      if (!wet && tl.firstWet[c] < k && k < tl.lastWet[c]) gaps++;
+    }
+  }
+  assert.ok(gaps > 0, 'the two peaks have intervening dry cells');
+});
+
+test('roads reopen and buildings are dry between successive peaks', () => {
+  const N = 100, steps = 7, wordsPerStep = Math.ceil(N / 32);
+  const wetBits = new Uint32Array(steps * wordsPerStep), deepBits = new Uint32Array(steps * wordsPerStep);
+  for (const k of [1, 5]) for (const bits of [wetBits, deepBits]) bits[k * wordsPerStep + (55 >>> 5)] |= 1 << (55 & 31);
+  const ctx = viewer(['cellOf', 'timelineAccess'], { state: { a: { W: 10, H: 10 }, geo: { west: 0, east: .01, south: 0, north: .01 } } });
+  const access = ctx.timelineAccess({ steps, t0: 0, step: 1, wordsPerStep, wetBits, deepBits }, {
+    bx: [.0055, .0065], by: [.0045, .0045], roads: [{ name: 'River Road' }],
+    net: { lat: [.0099, .0045], lon: [.0055, .0055], edges: [[0, 1, 0]] },
+  });
+  assert.deepEqual(Array.from(access.floodCount), [0, 1, 0, 0, 0, 1, 0]);
+  assert.deepEqual(Array.from(access.closedCount), [0, 1, 0, 0, 0, 1, 0]);
+  assert.deepEqual(Array.from(access.isoCount), [0, 1, 0, 0, 0, 1, 0]);
+  assert.equal(access.longest, 1, 'dry gaps break a continuous isolation period');
+  assert.deepEqual(plain(access.roads), [
+    { name: 'River Road', closes: 1, reopens: 2 },
+    { name: 'River Road', closes: 5, reopens: 6 },
+  ]);
+});
+
+function modelFixture() {
+  const area = { key: 'old', n: 1, name: 'Town', gauge: 5, streamAreaKm2: 2.5,
+    areaMeta: { local: true, gaugeLatLon: [.9, .1], centerLatLon: [.5, .5], halfKm: 10, kind: 'river' } };
+  const state = { areaKey: 'old', areaMeta: area.areaMeta, gauge: 5, streamAreaKm2: 2.5,
+    controls: [{ cell: 10, level: 4, label: 'Bridge' }], grid: { W: 4, H: 4 }, geo,
+    lmap: { setView: noop } };
+  const ctl = { streamArea: { value: '20' }, gaugeLevel: { value: '5' } };
+  const areaReg = new Map([['old', area]]);
+  const context = {
+    state, ctl, areaReg, CTL_KEYS: Object.keys(ctl), reports: [], pins: [], studies: [], selectedNum: 1,
+    MODEL_SIZES: [[10, 30], [20, 40]], status: {}, nat: { data: { gauges: [], storages: [] } },
+    r5: (x) => Math.round(x * 1e5) / 1e5,
+    streamFromSlider: (v) => .02 * Math.pow(10, v * .03),
+    $: () => ({ hidden: true }),
+    streamCellAt: (lat, lon) => Math.floor((1 - lat) * state.grid.H) * state.grid.W + Math.floor(lon * state.grid.W),
+    areaByNumber: (n) => Array.from(areaReg.values()).find((a) => a.n === n), numberUsed: () => false,
+    saveStudies: noop, setBusy: noop, syncOutputs: noop, runScenario: noop,
+    saveActive: noop, activateArea: noop, renderPlaces: noop, saveSessionSoon: noop, say: noop,
+    modelHere: async (lat, lon, opts) => {
+      context.lastModel = opts;
+      state.grid = { W: 8, H: 8 }; state.gauge = 0; state.controls = [];
+      state.streamAreaKm2 = opts.streamAreaKm2;
+      state.areaKey = 'new';
+      areaReg.set('new', { key: 'new', n: 1 });
+      return true;
+    },
+  };
+  return viewer(['cellToLatLon', 'modelPoints', 'restoreModelPoints', 'sessionState', 'restoreSession', 'extendModel'], context);
+}
+
+test('session records the current gauge for active and inactive models', () => {
+  const ctx = modelFixture();
+  let saved = plain(ctx.sessionState()).areas[0];
+  assert.deepEqual(saved.gp, [.625, .375]);
+  assert.deepEqual(saved.g, [.9, .1], 'original model anchor is retained separately');
+  assert.equal(saved.sa, 2.5);
+  ctx.state.gauge = 15;
+  assert.deepEqual(plain(ctx.sessionState()).areas[0].gp, [.125, .875]);
+  const a = ctx.areaReg.get('old');
+  Object.assign(a, { grid: ctx.state.grid, geo, controls: ctx.state.controls, ctl: { streamArea: '20' } });
+  ctx.state.areaKey = null;
+  saved = plain(ctx.sessionState()).areas[0];
+  assert.deepEqual(saved.gp, [.625, .375]);
+  assert.equal(saved.sa, 2.5);
+});
+
+test('extending a model remaps its gauge and level points and keeps the live stream threshold', async () => {
+  const ctx = modelFixture();
+  assert.equal(await ctx.extendModel(), true);
+  assert.equal(ctx.lastModel.streamAreaKm2, 2.5);
+  assert.equal(ctx.state.gauge, 27);
+  assert.deepEqual(plain(ctx.state.controls), [{ cell: 45, level: 4, label: 'Bridge' }]);
+});
+
+test('restoring current and older links analyses with the saved stream threshold', async () => {
+  for (const current of [true, false]) {
+    const ctx = modelFixture();
+    ctx.areaReg.clear();
+    const a = { n: 1, name: 'Town', g: [.9, .1], c: [.5, .5], h: 10,
+      gp: [.625, .375], cp: [[.375, .625, 4, 'Bridge']], ctl: { streamArea: '20', gaugeLevel: '5' } };
+    if (current) a.sa = 2.5;
+    assert.equal(await ctx.restoreSession({ v: 1, areas: [a] }, 'test'), true, JSON.stringify(ctx.status));
+    assert.equal(ctx.lastModel.streamAreaKm2, current ? 2.5 : ctx.streamFromSlider(20));
+    assert.equal(ctx.state.gauge, 27);
+    assert.deepEqual(plain(ctx.state.controls), [{ cell: 45, level: 4, label: 'Bridge' }]);
+  }
+});
+
+test('population estimates use only the covered share of a census area', () => {
+  const ctx = viewer(['cellOf', 'ringsKm2', 'computeImpact'], {
+    state: { areaKey: 'a', a: { W: 2, H: 2, N: 4, cell: 1000, ocean: new Uint8Array(4) }, geo,
+      run: { wet: new Uint8Array(4).fill(1), depth: new Float32Array(4).fill(1) } },
+    $: (id) => ({ value: id === 'floorHeight' ? '.3' : '0' }), damageShare: () => 0,
+  });
+  const data = { bx: [.25], by: [.75], isHome: [1], isWork: [0], roads: [], sites: [], net: { lat: [] },
+    sa1: { pop: [1000], km2: [40], feats: [{}] }, sa1Grid: new Int32Array(4).fill(0), sa1Key: 'a2' };
+  assert.equal(ctx.computeImpact(data).people, 100, '4 of 40 km² must not claim all 1,000 residents');
+  data.sa1.km2[0] = 4;
+  assert.equal(ctx.computeImpact(data).people, 1000, 'full coverage retains the original population');
+  data.bx = []; data.by = []; data.isHome = []; data.isWork = []; data.sa1.km2[0] = 40;
+  assert.equal(ctx.computeImpact(data).people, 100, 'the land-area fallback is also coverage adjusted');
+});
