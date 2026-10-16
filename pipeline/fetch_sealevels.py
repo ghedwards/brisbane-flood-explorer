@@ -149,9 +149,15 @@ def parse_levels(text):
 
 def msq_year(site, year):
     """Readings for one MSQ site and year, or [] if not published."""
-    resources = msq_catalogue().get(site.lower(), [])
+    cat = msq_catalogue()
+    resources = cat.get(site.lower(), [])
+    if not resources:
+        raise RuntimeError(f"no dataset named for {site} among {len(cat)} ({', '.join(list(cat)[:6])})")
     pick = [r for r in resources if str(year) in f"{r.get('name', '')} {r.get('url', '')}"
             and (r.get("format") or "").lower() in ("csv", "txt", "zip", "")]
+    if not pick:
+        names = "; ".join(f"{r.get('name', '')} [{r.get('format', '')}]" for r in resources[:4])
+        raise RuntimeError(f"no {year} file among {len(resources)} ({names})")
     for r in pick[:2]:
         req = urllib.request.Request(r["url"], headers=UA)
         with urllib.request.urlopen(req, timeout=300) as resp:
@@ -160,9 +166,12 @@ def msq_year(site, year):
             import zipfile
             z = zipfile.ZipFile(io.BytesIO(body))
             body = b"\n".join(z.read(n) for n in z.namelist() if not n.endswith("/"))
-        rows = parse_levels(body.decode("utf-8", "replace"))
+        text = body.decode("utf-8", "replace")
+        rows = parse_levels(text)
         if len(rows) > 1000:
             return rows
+        first = " | ".join(text.splitlines()[:3])[:160]
+        raise RuntimeError(f"{len(rows)} readings parsed from {r.get('name', '')} (starts: {first})")
     return []
 
 
