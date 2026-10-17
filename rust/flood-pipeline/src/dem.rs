@@ -140,6 +140,8 @@ pub fn run(config_path: &str, out_dir: &str) -> R<String> {
     let dst = Proj::from_name(&crs).ok_or_else(|| format!("unsupported CRS {}", crs))?;
     let epsg: u32 = crs.trim().to_uppercase().trim_start_matches("EPSG:").parse().map_err(err)?;
     let cell = cfg.get("cell_m").and_then(|v| v.as_f64()).ok_or("no cell_m")?;
+    // Optional vertical datum shift (e.g. EGM2008 -> AHD). Defaults to 0.
+    let offset = cfg.get("geoid_offset_m").and_then(|v| v.as_f64()).unwrap_or(0.0);
     // the box's edges, densified, in the target CRS
     let (mut minx, mut miny, mut maxx, mut maxy) = (f64::INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY);
     for k in 0..=22 {
@@ -165,7 +167,7 @@ pub fn run(config_path: &str, out_dir: &str) -> R<String> {
             let (x, y) = (minx + (c as f64 + 0.5) * cell, maxy - (r as f64 + 0.5) * cell);
             let (lon, lat) = dst.to_lonlat(x, y);
             if let Some(v) = src.sample(lon, lat, sx, sy) {
-                dem[r * width + c] = v as f32;
+                dem[r * width + c] = (v + offset) as f32;
             }
         }
     }

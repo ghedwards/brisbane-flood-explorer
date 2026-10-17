@@ -19,5 +19,6 @@
   },
   "brisbane_gauge_events": true,
   "dem_source": "copernicus-glo30",
-  "floodhub_region": "AU"
+  "floodhub_region": "AU",
+  "geoid_offset_m": 0.0
 }
