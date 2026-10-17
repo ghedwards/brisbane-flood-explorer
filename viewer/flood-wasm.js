@@ -365,7 +365,11 @@
       target.engine = 'rust';
       return target;
     }).catch((e) => {
-      if (typeof console !== 'undefined') console.warn('Flood model in JavaScript (WebAssembly unavailable):', e);
+      target.engine = 'error';
+      if (typeof console !== 'undefined') console.error('WebAssembly flood model failed to load:', e);
+      if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
+        try { window.dispatchEvent(new CustomEvent('flood:wasm-error', { detail: { error: String(e) } })); } catch (err) { if (console) console.warn(err); }
+      }
       return target;
     });
   }

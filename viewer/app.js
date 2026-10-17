@@ -5853,7 +5853,7 @@ import './inertial-grid.js';
     if (!st || !st.sources) { box.innerHTML = '<p class="hint">No status from the build yet.</p>'; return null; }
     const label = { ok: 'OK', cached: 'From an earlier build', problem: 'Problem', missing: 'Not available' };
     const when = (iso) => (iso ? new Date(iso).toLocaleString('en-AU', { day: 'numeric', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit' }) : '');
-    const engine = F.engine === 'rust' ? 'Rust, compiled to WebAssembly' : 'JavaScript';
+    const engine = F.engine === 'rust' ? 'Rust, compiled to WebAssembly' : (F.engine === 'error' ? 'WebAssembly failed to load (JavaScript fallback)' : 'JavaScript');
     box.innerHTML = `<p class="hint">Built ${escapeHtml(when(st.built))}. Flood model running in ${engine}.</p><ul class="data-status">${st.sources.map((s) => `<li class="st-${escapeHtml(s.state)}">
       <strong>${escapeHtml(s.name)}</strong> <span class="st-badge">${escapeHtml(label[s.state] || s.state)}</span><br>
       <span class="hint">${escapeHtml(s.summary)}${s.fetched ? ` · data from ${escapeHtml(when(s.fetched))}` : ''} · for ${escapeHtml(s.feeds)}</span></li>`).join('')}</ul>`;
