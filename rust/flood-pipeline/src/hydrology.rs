@@ -7,7 +7,7 @@
 //!
 //! The tools are whitebox_next_gen's (the `wbtools_oss` crate from
 //! opengeos/whitebox-wasm), the same code RustGIS and GeoLibre run, pinned
-//! to the commit inside the GeoLibre release the pipeline used before. From
+//! to a reviewed upstream revision, with patched archive dependencies. From
 //! <work_dir>/dem.tif `hydrology` writes:
 //!   dem_breached.tif  depressions breached (least-cost), the rest filled
 //!   dem_cond.tif      flats resolved
@@ -28,8 +28,7 @@ use wbcore::{AllowAllCapabilities, ProgressSink, ToolArgs, ToolContext};
 use wbtools_oss::{register_default_tools, ToolRegistry};
 
 /// The whitebox-wasm commit the tools come from (see Cargo.toml).
-pub const TOOLS_REV: &str = "6b2a6eb";
-pub const TOOLS: &str = "whitebox_next_gen tools (opengeos/whitebox-wasm 6b2a6eb, as in GeoLibre 1.6.0)";
+pub const TOOLS: &str = "whitebox_next_gen tools (opengeos/whitebox-wasm f0076c2; wbraster archive security patch)";
 
 /// Prints tool messages; progress every 25 %.
 struct Progress {

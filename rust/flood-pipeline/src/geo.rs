@@ -330,6 +330,7 @@ pub fn read_geotiff(bytes: &[u8]) -> R<Raster> {
     let epsg = key(3072).filter(|&c| c != 0 && c != 32767).or_else(|| key(2048).filter(|&c| c != 0 && c != 32767)).map(|c| c as u32);
     let point = key(1025) == Some(2);
     let data: Vec<f64> = match d.read_image().map_err(err)? {
+        DecodingResult::F16(v) => v.into_iter().map(|x| x.to_f64()).collect(),
         DecodingResult::F32(v) => v.into_iter().map(|x| x as f64).collect(),
         DecodingResult::F64(v) => v,
         DecodingResult::U8(v) => v.into_iter().map(|x| x as f64).collect(),
@@ -356,11 +357,11 @@ pub fn read_geotiff(bytes: &[u8]) -> R<Raster> {
 
 /// Write a float32 GeoTIFF (deflate) in a projected CRS given by EPSG code.
 pub fn write_geotiff_f32(path: &std::path::Path, w: usize, h: usize, data: &[f32], x0: f64, y0: f64, cell: f64, epsg: u32, nodata: f64) -> R<()> {
-    use tiff::encoder::{colortype, compression::Deflate, TiffEncoder};
+    use tiff::encoder::{colortype, Compression, TiffEncoder};
     use tiff::tags::Tag;
     let f = std::fs::File::create(path).map_err(err)?;
-    let mut enc = TiffEncoder::new(std::io::BufWriter::new(f)).map_err(err)?;
-    let mut img = enc.new_image_with_compression::<colortype::Gray32Float, _>(w as u32, h as u32, Deflate::default()).map_err(err)?;
+    let mut enc = TiffEncoder::new(std::io::BufWriter::new(f)).map_err(err)?.with_compression(Compression::Deflate(Default::default()));
+    let mut img = enc.new_image::<colortype::Gray32Float>(w as u32, h as u32).map_err(err)?;
     let geographic = Proj::from_epsg(epsg) == Some(Proj::Geographic);
     let keys: Vec<u16> = if geographic {
         vec![1, 1, 0, 3, 1024, 0, 1, 2, 1025, 0, 1, 1, 2048, 0, 1, epsg as u16]
@@ -509,7 +510,7 @@ pub fn write_png_indexed(path: &std::path::Path, w: usize, h: usize, pixels: &[u
     let mut e = png::Encoder::new(std::io::BufWriter::new(f), w as u32, h as u32);
     e.set_color(png::ColorType::Indexed);
     e.set_depth(png::BitDepth::Eight);
-    e.set_compression(png::Compression::Best);
+    e.set_compression(png::Compression::High);
     e.set_palette(palette.iter().flatten().copied().collect::<Vec<u8>>());
     if !alpha.is_empty() {
         e.set_trns(alpha.to_vec());
@@ -524,7 +525,7 @@ pub fn decode_png_rgba(b: &[u8]) -> R<(usize, usize, Vec<u8>)> {
     let mut dec = png::Decoder::new(std::io::Cursor::new(b));
     dec.set_transformations(png::Transformations::EXPAND | png::Transformations::STRIP_16);
     let mut r = dec.read_info().map_err(err)?;
-    let mut buf = vec![0; r.output_buffer_size()];
+    let mut buf = vec![0; r.output_buffer_size().ok_or("PNG output is too large")?];
     let info = r.next_frame(&mut buf).map_err(err)?;
     let (w, h) = (info.width as usize, info.height as usize);
     let px = &buf[..info.buffer_size()];

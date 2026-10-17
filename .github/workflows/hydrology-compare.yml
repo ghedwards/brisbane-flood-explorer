@@ -25,11 +25,11 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             rust/target
-          key: rust-hydro-${{ hashFiles('rust/**/*.rs', 'rust/**/Cargo.toml', 'rust/Cargo.lock') }}
+          key: rust-hydro-${{ hashFiles('rust-toolchain.toml', 'rust/**/*.rs', 'rust/**/Cargo.toml', 'rust/Cargo.lock') }}
           restore-keys: rust-hydro-
       - uses: actions/setup-node@v7
         with:
-          node-version: 22
+          node-version: 24
       - name: Test the viewer and JavaScript model
         run: node --test tests/*.test.js
       - name: Build and test flood

@@ -4,6 +4,7 @@
 use crate::util::*;
 use std::io::{Read, Write};
 use std::time::Duration;
+use ureq::ResponseExt;
 
 /// A failed request: an HTTP status (with the body's start), or a
 /// connection problem.
@@ -35,15 +36,17 @@ impl Resp {
 }
 
 fn agent(timeout_s: u64) -> ureq::Agent {
-    ureq::AgentBuilder::new()
-        .timeout_connect(Duration::from_secs(timeout_s.min(60)))
-        // like Python's urlopen timeout: per read and write, not in total,
-        // so large or slowly streamed downloads can finish
-        .timeout_read(Duration::from_secs(timeout_s))
-        .timeout_write(Duration::from_secs(timeout_s))
-        .redirects(8)
-        .try_proxy_from_env(true)
+    ureq::Agent::config_builder()
+        .timeout_connect(Some(Duration::from_secs(timeout_s.min(60))))
+        // ureq 3 budgets each transfer phase rather than each socket read.
+        .timeout_send_request(Some(Duration::from_secs(timeout_s)))
+        .timeout_send_body(Some(Duration::from_secs(timeout_s)))
+        .timeout_recv_response(Some(Duration::from_secs(timeout_s)))
+        .timeout_recv_body(Some(Duration::from_secs(timeout_s)))
+        .max_redirects(8)
+        .http_status_as_error(false)
         .build()
+        .into()
 }
 
 /// One request: method, URL, headers, optional body.
@@ -51,34 +54,28 @@ pub fn request(method: &str, url: &str, headers: &[(&str, &str)], body: Option<&
     if url.starts_with("ftp://") {
         return ftp_get(url, timeout_s).map_err(NetErr::Transport);
     }
-    let mut req = agent(timeout_s).request(method, url);
+    let mut req = ureq::http::Request::builder().method(method).uri(url);
     let mut has_ua = false;
     for (k, v) in headers {
         has_ua |= k.eq_ignore_ascii_case("user-agent");
-        req = req.set(k, v);
+        req = req.header(*k, *v);
     }
     if !has_ua {
-        req = req.set("User-Agent", UA);
+        req = req.header("User-Agent", UA);
     }
-    let res = match body {
-        Some(b) => req.send_bytes(b),
-        None => req.call(),
-    };
-    match res {
-        Ok(r) => {
-            let url = r.get_url().to_string();
-            let content_type = r.header("Content-Type").unwrap_or("").to_string();
-            let mut body = Vec::new();
-            r.into_reader().read_to_end(&mut body).map_err(|e| NetErr::Transport(e.to_string()))?;
-            Ok(Resp { body, url, content_type })
-        }
-        Err(ureq::Error::Status(code, r)) => {
-            let mut b = Vec::new();
-            let _ = r.into_reader().take(4000).read_to_end(&mut b);
-            Err(NetErr::Status(code, String::from_utf8_lossy(&b).into_owned()))
-        }
-        Err(ureq::Error::Transport(t)) => Err(NetErr::Transport(t.to_string())),
+    let req = req.body(body.unwrap_or_default()).map_err(|e| NetErr::Transport(e.to_string()))?;
+    let mut r = agent(timeout_s).run(req).map_err(|e| NetErr::Transport(e.to_string()))?;
+    let code = r.status().as_u16();
+    if code >= 400 {
+        let mut b = Vec::new();
+        let _ = r.body_mut().as_reader().take(4000).read_to_end(&mut b);
+        return Err(NetErr::Status(code, String::from_utf8_lossy(&b).into_owned()));
     }
+    let url = r.get_uri().to_string();
+    let content_type = r.headers().get("Content-Type").and_then(|v| v.to_str().ok()).unwrap_or("").to_string();
+    let mut body = Vec::new();
+    r.body_mut().as_reader().read_to_end(&mut body).map_err(|e| NetErr::Transport(e.to_string()))?;
+    Ok(Resp { body, url, content_type })
 }
 
 pub fn get(url: &str, headers: &[(&str, &str)], timeout_s: u64) -> Result<Resp, NetErr> {
@@ -238,6 +235,62 @@ pub fn ftp_get(url: &str, timeout_s: u64) -> R<Resp> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn mock_http(responses: Vec<String>) -> (String, std::thread::JoinHandle<Vec<String>>) {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let handle = std::thread::spawn(move || {
+            responses.into_iter().map(|response| {
+                let (mut socket, _) = listener.accept().unwrap();
+                socket.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+                let mut bytes = Vec::new();
+                let mut byte = [0];
+                while !bytes.ends_with(b"\r\n\r\n") {
+                    socket.read_exact(&mut byte).unwrap();
+                    bytes.push(byte[0]);
+                }
+                let headers = String::from_utf8(bytes.clone()).unwrap();
+                let length = headers.lines().find_map(|line| {
+                    let (name, value) = line.split_once(':')?;
+                    name.eq_ignore_ascii_case("content-length").then(|| value.trim().parse::<usize>().unwrap())
+                }).unwrap_or(0);
+                let mut body = vec![0; length];
+                socket.read_exact(&mut body).unwrap();
+                bytes.extend(body);
+                socket.write_all(response.as_bytes()).unwrap();
+                String::from_utf8(bytes).unwrap()
+            }).collect()
+        });
+        (url, handle)
+    }
+
+    #[test]
+    fn http_redirect_preserves_final_url_and_headers() {
+        let (url, server) = mock_http(vec![
+            "HTTP/1.1 302 Found\r\nLocation: /final\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".into(),
+            "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 5\r\nConnection: close\r\n\r\nhello".into(),
+        ]);
+        let r = get(&format!("{url}/start"), &[("User-Agent", "flood-test")], 5).unwrap();
+        assert_eq!(r.url, format!("{url}/final"));
+        assert_eq!(r.content_type, "text/plain");
+        assert_eq!(r.body, b"hello");
+        let requests = server.join().unwrap();
+        assert!(requests[1].starts_with("GET /final HTTP/1.1"));
+        assert!(requests[1].to_lowercase().contains("user-agent: flood-test"));
+    }
+
+    #[test]
+    fn http_post_body_and_error_excerpt() {
+        let body = "x".repeat(5000);
+        let (url, server) = mock_http(vec![format!("HTTP/1.1 503 Unavailable\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", body.len(), body)]);
+        match request("POST", &url, &[("Content-Type", "application/json")], Some(b"{}"), 5) {
+            Err(NetErr::Status(503, text)) => assert_eq!(text, "x".repeat(4000)),
+            _ => panic!("expected an HTTP status error with a bounded body excerpt"),
+        }
+        let requests = server.join().unwrap();
+        assert!(requests[0].starts_with("POST / HTTP/1.1"));
+        assert!(requests[0].ends_with("\r\n\r\n{}"));
+    }
 
     #[test]
     fn encoding_matches_python() {

@@ -5,10 +5,6 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Flood Explorer</title>
 <meta name="description" content="Explore river and coastal flood scenarios anywhere in Australia: live gauges, dams and forecasts, and on-the-spot flood models from national elevation data and the RustGIS / GeoLibre hydrology tools.">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,400..800&family=IBM+Plex+Mono:wght@400;500&display=swap">
-<link rel="stylesheet" href="styles.css">
 <link rel="manifest" href="manifest.webmanifest">
 <meta name="theme-color" content="#0d5f8c">
 <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
@@ -426,8 +422,6 @@
   <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg>
 </button>
 
-<script src="flood-core.js"></script>
-<script src="flood-wasm.js"></script>
-<script src="app.js"></script>
+<script type="module" src="./main.js"></script>
 </body>
 </html>

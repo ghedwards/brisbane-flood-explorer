@@ -17,8 +17,9 @@
  *      water through 4-connected wet cells
  */
 (function (root, factory) {
-  if (typeof module === 'object' && module.exports) module.exports = factory();
-  else root.FloodCore = factory();
+  const api = factory();
+  if (typeof module === 'object' && module.exports) module.exports = api;
+  if (typeof self !== 'undefined') root.FloodCore = api;
 })(typeof self !== 'undefined' ? self : this, function () {
   'use strict';
 

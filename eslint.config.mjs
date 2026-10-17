@@ -12,10 +12,11 @@ export default [
     ],
   },
   js.configs.recommended,
+  { files: ["*.mjs"], languageOptions: { globals: globals.node } },
   {
     files: ["viewer/**/*.js"],
     languageOptions: {
-      sourceType: "script",
+      sourceType: "module",
       globals: {
         ...globals.browser,
         ...globals.worker,

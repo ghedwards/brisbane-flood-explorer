@@ -1,6 +1,8 @@
 /* Flood Explorer background worker: runs the heavy flow analysis off the
  * page's main thread so building or reopening a model doesn't freeze it. */
-importScripts('flood-core.js', 'flood-wasm.js');
+import './runtime-paths.js';
+import './flood-core.js';
+import './flood-wasm.js';
 
 self.onmessage = async (e) => {
   const { id, grid, opts, kind } = e.data;

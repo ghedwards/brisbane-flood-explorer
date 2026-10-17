@@ -25,7 +25,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
         with:
-          node-version: 22
+          node-version: 24
           cache: npm
       - run: npm ci --ignore-scripts
       - run: npm run lint
@@ -44,19 +44,19 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             rust/target
-          key: clippy-${{ runner.os }}-${{ hashFiles('rust/Cargo.lock') }}
+          key: clippy-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml', 'rust/Cargo.lock') }}
       - name: Lint workspace code (correctness findings are errors)
         run: cargo clippy --locked --manifest-path rust/Cargo.toml --workspace --all-targets --no-deps -- -D clippy::correctness
 
   npm-security:
-    name: Node and CDN dependency security
+    name: JavaScript dependency security
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
         with:
-          node-version: 22
+          node-version: 24
           cache: npm
       - run: npm ci --ignore-scripts
       - run: npm run check:security
@@ -79,7 +79,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
         with:
-          node-version: 22
+          node-version: 24
           cache: npm
       - run: npm ci --ignore-scripts
       - name: Report outdated npm packages
@@ -87,10 +87,7 @@ jobs:
       - name: Install pinned Rust update checker
         run: cargo install cargo-outdated --version 0.19.0 --locked
       - name: Report outdated Rust dependencies
-        working-directory: rust
-        run: |
-          cargo outdated --workspace --exit-code 0 | tee ../cargo-outdated.txt
-          { echo '### Cargo outdated'; echo '```text'; cat ../cargo-outdated.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+        run: node scripts/report-cargo-outdated.js
       - uses: actions/upload-artifact@v7
         if: always()
         with:

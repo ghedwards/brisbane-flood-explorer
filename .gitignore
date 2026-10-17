@@ -11,3 +11,6 @@ work-*
 # Dependency reports generated locally or in CI
 npm-outdated.txt
 cargo-outdated.txt
+
+# WebAssembly input compiled for Vite
+viewer/flood.wasm

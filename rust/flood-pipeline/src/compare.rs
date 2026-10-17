@@ -30,6 +30,7 @@ fn identical(a: &DecodingResult, b: &DecodingResult) -> Option<(usize, usize)> {
         (DecodingResult::I16(a), DecodingResult::I16(b)) => count!(a, b, |(x, y)| x == y),
         (DecodingResult::I32(a), DecodingResult::I32(b)) => count!(a, b, |(x, y)| x == y),
         (DecodingResult::I64(a), DecodingResult::I64(b)) => count!(a, b, |(x, y)| x == y),
+        (DecodingResult::F16(a), DecodingResult::F16(b)) => count!(a, b, |(x, y)| x == y || (x.is_nan() && y.is_nan())),
         (DecodingResult::F32(a), DecodingResult::F32(b)) => count!(a, b, |(x, y)| x == y || (x.is_nan() && y.is_nan())),
         (DecodingResult::F64(a), DecodingResult::F64(b)) => count!(a, b, |(x, y)| x == y || (x.is_nan() && y.is_nan())),
         _ => None,

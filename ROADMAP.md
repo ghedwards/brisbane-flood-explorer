@@ -133,11 +133,12 @@ and when roads close and how long places stay cut off (flood over time).
   preset is anchored to; review any presets that aren't anchored or sit
   far from their gauge.
 - **Hydrology inside `flood` (implemented).** Production uses `flood hydrology`
-  with the six RustGIS tools pinned to whitebox-wasm commit 6b2a6eb (GeoLibre
-  1.6.0). All six Brisbane rasters matched the separate runner exactly.
+  with six RustGIS tools pinned to whitebox-wasm commit f0076c2 and an
+  archive dependency patch in `rust/vendor/wbraster`. The original integration
+  matched all six Brisbane rasters from GeoLibre 1.6.0 exactly.
   The comparison workflow retains that runner under `tests/geolibre` and
-  fails on raster or metadata differences. Keep `rust/Cargo.lock` because
-  the tools use a yanked `zip` version. Release builds with LTO take over
+  fails on raster or metadata differences. Keep `rust/Cargo.lock` and the
+  pinned `rust-toolchain.toml` for reproducible builds. Release builds with LTO take over
   ten minutes; a lighter pipeline build profile remains worth investigating.
 - **The model inside RustGIS.** `rust/flood-core` has no dependencies and
   builds to WebAssembly; it could be offered to RustGIS as a tool working

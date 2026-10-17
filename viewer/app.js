@@ -365,7 +365,7 @@
     if (worker === false) return null;
     if (!worker) {
       try {
-        worker = new Worker('flood-worker.js');
+        worker = new Worker(new URL('./flood-worker.js', import.meta.url), { type: 'module' });
         worker.onmessage = (e) => {
           const job = workerJobs.get(e.data.id);
           if (!job) return;
@@ -562,12 +562,9 @@
   function loadGeoTiffLib() {
     if (window.GeoTIFF) return Promise.resolve();
     if (!geotiffPromise) {
-      geotiffPromise = new Promise((resolve, reject) => {
-        const s = document.createElement('script');
-        s.src = 'https://cdn.jsdelivr.net/npm/geotiff@2.1.3/dist-browser/geotiff.js';
-        s.onload = () => resolve();
-        s.onerror = () => { geotiffPromise = null; reject(new Error('Could not load the GeoTIFF reader. Check your connection, or use an ASCII grid (.asc).')); };
-        document.head.appendChild(s);
+      geotiffPromise = import('geotiff').then((lib) => { window.GeoTIFF = lib; }).catch((err) => {
+        geotiffPromise = null;
+        throw new Error('Could not load the GeoTIFF reader. Check your connection, or use an ASCII grid (.asc).', { cause: err });
       });
     }
     return geotiffPromise;
@@ -943,7 +940,6 @@
   // GDA2020 / MGA56, whose grid north is within 0.02° of true north at
   // Brisbane, so a lat/lon-aligned overlay lines up to a few metres.
 
-  const LEAFLET = 'https://unpkg.com/leaflet@1.9.4/dist/';
   const TILES = {
     light: 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',
     dark: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
@@ -1276,9 +1272,9 @@
   // tiles and model terrain that have been used, so the site still opens
   // and saved places still rebuild when the signal drops.
   status.offline = { supported: 'serviceWorker' in navigator, registered: false, online: navigator.onLine };
-  if ('serviceWorker' in navigator && location.protocol === 'https:') {
+  if (import.meta.env.PROD && 'serviceWorker' in navigator && window.isSecureContext) {
     window.addEventListener('load', () => {
-      navigator.serviceWorker.register('sw.js').then(() => { status.offline.registered = true; }).catch((err) => { status.offline.error = String(err); });
+      navigator.serviceWorker.register(new URL('sw.js', document.baseURI).href).then(() => { status.offline.registered = true; }).catch((err) => { status.offline.error = String(err); });
     });
   }
   function showConnection() {
@@ -1296,22 +1292,9 @@
   function loadLeaflet() {
     if (window.L && window.L.map) return Promise.resolve();
     if (!leafletPromise) {
-      leafletPromise = new Promise((resolve, reject) => {
-        const css = document.createElement('link');
-        css.rel = 'stylesheet'; css.href = LEAFLET + 'leaflet.css';
-        document.head.appendChild(css);
-        const js = document.createElement('script');
-        js.src = LEAFLET + 'leaflet.js';
-        js.onload = () => {
-          // esri-leaflet reads the council's ArcGIS feature layers; optional
-          const ej = document.createElement('script');
-          ej.src = 'https://unpkg.com/esri-leaflet@3.0.12/dist/esri-leaflet.js';
-          ej.onload = () => resolve();
-          ej.onerror = () => resolve();
-          document.head.appendChild(ej);
-        };
-        js.onerror = () => { leafletPromise = null; reject(new Error('The street map could not load.')); };
-        document.head.appendChild(js);
+      leafletPromise = import('./map-libs.js').catch((err) => {
+        leafletPromise = null;
+        throw new Error('The street map could not load.', { cause: err });
       });
     }
     return leafletPromise;

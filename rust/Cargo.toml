@@ -1,5 +1,6 @@
 [workspace]
 resolver = "2"
+exclude = ["vendor/wbraster"]
 members = ["flood-core", "flood-wasm", "flood-node", "flood-pipeline"]
 
 [profile.release]
@@ -7,3 +8,7 @@ opt-level = 3
 lto = true
 codegen-units = 1
 panic = "abort"
+
+# Upstream still pins vulnerable archive readers; see vendor/wbraster/PATCHES.md.
+[patch."https://github.com/opengeos/whitebox-wasm"]
+wbraster = { path = "vendor/wbraster" }

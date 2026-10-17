@@ -71,7 +71,7 @@ Downloads the Copernicus GLO-30 tiles covering the area in [`config/brisbane.jso
 
 ### 2. Hydrology with the RustGIS tools (`flood hydrology`)
 
-`flood hydrology` runs the same tools as GeoLibre 1.6.0 in-process, pinned to whitebox-wasm commit `6b2a6eb`. It records the tool versions and arguments in `hydrology.json`. The pipeline runs:
+`flood hydrology` runs the hydrology tools in-process, pinned to whitebox-wasm commit `f0076c2` with a [raster archive security patch](rust/vendor/wbraster/PATCHES.md). It records the tool versions and arguments in `hydrology.json`. The pipeline runs:
 
 | Step | Tool | Output |
 |---|---|---|
@@ -183,12 +183,16 @@ Where crates.io can't be reached, the [`rust-vendor`](../../tree/rust-vendor) br
 
 ## Tests
 
-Browser checks use Node.js 22.13+ and Playwright (the browser version is pinned in `package-lock.json`):
+Rust builds use the toolchain pinned in `rust-toolchain.toml` (Rust 1.99.1, Cargo, Clippy, rustfmt and the WebAssembly target). Rustup installs it automatically for local and CI builds.
+
+Frontend builds and browser checks use Node.js 22.13+ (CI uses Node 24 LTS) and Playwright (the browser version is pinned in `package-lock.json`):
 
 ```sh
 npm ci
 npx playwright install chromium
 npm test
+npm run build
+npm run test:build
 SMOKE_PRESETS=quick npm run test:smoke -- https://ghedwards.github.io/brisbane-flood-explorer/
 npm run test:sources -- https://ghedwards.github.io/brisbane-flood-explorer/
 ```
@@ -196,19 +200,19 @@ npm run test:sources -- https://ghedwards.github.io/brisbane-flood-explorer/
 Lint and dependency checks run on pull requests, pushes to main, and weekly:
 
 ```sh
-npm run lint                  # ESLint and CDN/lockfile version consistency
-npm run check:security        # npm audit, including browser CDN libraries
+npm run lint                  # ESLint for the viewer and tooling
+npm run check:security        # audit all browser and development packages
 npm run check:outdated        # returns 1 when newer npm releases exist
 cargo clippy --locked --manifest-path rust/Cargo.toml --workspace --all-targets --no-deps -- -D clippy::correctness
 cargo install cargo-audit --version 0.22.2 --locked
 cargo audit --file rust/Cargo.lock
 cargo install cargo-outdated --version 0.19.0 --locked
-(cd rust && cargo outdated --workspace)
+node scripts/report-cargo-outdated.js
 ```
 
 ESLint errors, Clippy correctness findings, and known dependency vulnerabilities fail their CI jobs. Other Clippy suggestions remain warnings. Outdated versions are reported in the workflow summary and artifacts; available updates alone do not fail that report. Registry or dependency-resolution errors do fail it. Dependabot opens weekly updates for npm, Cargo and GitHub Actions once this configuration is on the default branch.
 
-The browser still loads Leaflet, Esri Leaflet and GeoTIFF from CDNs. Their exact versions are also in `package.json` and `package-lock.json` for auditing. When upgrading them, update the matching URLs in `viewer/app.js` and `viewer/sw.js`; lint checks that they agree.
+Vite bundles Leaflet, Esri Leaflet, GeoTIFF, fonts, workers and the Rust WebAssembly model from pinned dependencies. `npm run build` compiles the model and writes the deployable site to `site/`; `npm run preview` serves that build. `npm run serve` starts the development server. Both servers proxy `/data` to the published dataset for local testing. Production assets use relative URLs (`base: "./"`) and require no library or font CDN. Vite generates the service worker cache list from emitted assets, including lazy chunks. Live data and map tiles still come from their source services.
 
 The comparison workflow uses `flood compare-hydrology <reference-directory> <candidate-directory>` to check all six hydrology rasters. It compares pixels (including matching NaNs), sample types, dimensions and geospatial metadata, and exits unsuccessfully if a file is missing, unreadable or different.
 
