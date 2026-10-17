@@ -195,6 +195,7 @@ impl Out {
 }
 
 thread_local! {
+    static INERTIAL: RefCell<Option<inertial::Solver>> = const { RefCell::new(None) };
     static ANALYSES: RefCell<Vec<Option<Analysis>>> = const { RefCell::new(Vec::new()) };
     static WAVES: RefCell<Vec<Option<Wave>>> = const { RefCell::new(Vec::new()) };
     static OUT: RefCell<Vec<u8>> = const { RefCell::new(Vec::new()) };
@@ -485,6 +486,37 @@ fn levees_of(b: &Bag) -> Vec<Levee> {
 pub fn dispatch(op: &str, b: &Bag) -> Result<Vec<u8>, String> {
     let mut o = Out::default();
     match op {
+        "inertialStart" => {
+            // One simulation per dedicated worker/module instance.
+            INERTIAL.with(|s| *s.borrow_mut() = None);
+            let grid = grid_of(b)?;
+            let stages = b.f64s("stages").unwrap_or_else(|| vec![f64::NAN; grid.w * grid.h]);
+            let inflow = b.num("inflowCell");
+            let solver = inertial::Solver::new(grid, inertial::Options {
+                seconds: b.num("seconds"), rain_mm_h: b.num("rainMmH"),
+                roughness: b.num("roughness"), initial_depth: b.num("initialDepth"),
+                inflow_cell: if inflow.is_finite() && inflow >= 0.0 {Some(inflow as usize)} else {None},
+                inflow_m3_s: b.num("inflow"), stages,
+            })?;
+            INERTIAL.with(|s| *s.borrow_mut() = Some(solver));
+        }
+        "inertialStep" => {
+            INERTIAL.with(|slot| -> Result<(), String> {
+                let mut slot = slot.borrow_mut();
+                let s = slot.as_mut().ok_or("no active 2D simulation")?;
+                s.advance(8)?;
+                let done = s.time >= s.opts.seconds;
+                o.num("time", s.time).num("done", if done {1.0} else {0.0})
+                    .num("steps", s.steps as f64).num("volume", s.volume())
+                    .num("initialVolume", s.initial_volume).num("sourceVolume", s.source_volume)
+                    .num("boundaryVolume", s.boundary_volume).num("balanceError", s.balance_error());
+                if done {
+                    o.f64s("depth", &s.depth);
+                    *slot = None;
+                }
+                Ok(())
+            })?;
+        }
         "analyse" => {
             let g = grid_of(b)?;
             let a = analyse(&g, flood_core::util::nullish(b.num("streamAreaKm2"), 4.0));

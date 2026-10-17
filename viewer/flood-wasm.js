@@ -325,6 +325,8 @@
     }
 
     const rust = {
+      inertialStart: (grid, opts) => call('inertialStart', { ...grid, ...opts }),
+      inertialStep: () => { const o = call('inertialStep', {}); return { depth: o.depth, ...Object.fromEntries(Object.entries(o).filter(([k]) => k !== 'depth').map(([k, v]) => [k, num(v)])) }; },
       analyse, streamSurface, inundate, flashFlood, stats, hazard, compareRuns,
       waveSetup, waveSurface, floodTimeline, burnDefences, parseSimpleTiff,
     };
@@ -354,6 +356,7 @@
       for (const k of core.rustFunctions) {
         target[k] = function () {
           try { return core[k].apply(null, arguments); } catch (e) {
+            if (!J[k]) throw e; // Rust-only solvers must never silently change physics.
             if (typeof console !== 'undefined') console.warn(`Rust ${k} failed, using JavaScript:`, e);
             return J[k].apply(null, arguments);
           }

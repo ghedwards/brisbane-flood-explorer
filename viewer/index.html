@@ -102,6 +102,30 @@
       <p class="hint" id="eventsNote"></p>
     </fieldset>
 
+    <fieldset id="solverSet">
+      <legend class="label">Flood model</legend>
+      <select id="solver" aria-label="Flood model">
+        <option value="fast">Fast terrain model</option>
+        <option value="inertial">Local-inertial 2D (experimental)</option>
+      </select>
+      <div id="inertialControls" hidden>
+        <p class="hint">Simulates water moving over terrain. Constant inputs for this run; no automatic conversion from gauge height to flow. Switch back to the fast model to use gauge-level, storm and defence controls.</p>
+        <label>Duration (minutes) <input id="inertialMinutes" type="number" min="1" max="1440" value="30" step="1"></label>
+        <label>Effective rainfall (mm/hour) <input id="inertialRain" type="number" min="0" max="1000" value="20" step="1"></label>
+        <label>Inflow at selected gauge (m³/s) <input id="inertialInflow" type="number" min="0" max="100000" value="0" step="1"></label>
+        <label>Initial land depth (m) <input id="inertialInitial" type="number" min="0" max="100" value="0" step="0.01"></label>
+        <label>Roughness (Manning n) <input id="inertialRoughness" type="number" min="0.01" max="1" value="0.04" step="0.01"></label>
+        <label>Sea boundary <select id="inertialBoundary"><option value="closed">Closed edges</option><option value="sea">Hold mapped sea cells at specified level</option></select></label>
+        <label>Sea elevation (m, terrain datum) <input id="inertialStage" type="number" min="-20" max="100" value="0" step="0.1"></label>
+        <label>Resolution <select id="inertialResolution"><option value="96">Coarse (up to 96 × 96)</option><option value="192" selected>Standard (up to 192 × 192)</option><option value="384">Fine (up to 384 × 384)</option></select></label>
+        <p class="hint">Rainfall is runoff after losses. Unmapped boundaries and missing terrain are closed walls. Terrain is averaged into blocks; narrow channels, drawn defences, pipes and bathymetry are not represented. Results are final depths, not peak depths. Runs are not restored after reload or included in share links.</p>
+        <button type="button" class="btn" id="inertialRun">Run 2D model</button>
+        <button type="button" class="btn" id="inertialCancel" disabled>Cancel</button>
+        <progress id="inertialProgress" max="1" value="0" aria-label="2D simulation progress"></progress>
+      </div>
+      <p class="hint" id="inertialStatus" role="status">Fast terrain model.</p>
+    </fieldset>
+
     <fieldset id="floodTypeSet">
       <legend class="label">Flood type</legend>
       <select id="floodType" aria-label="Flood type">

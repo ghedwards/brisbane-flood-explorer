@@ -14,3 +14,5 @@ pub use grid::*;
 pub use hydro::{analyse, encode_whitebox_d8, main_stem, snap_to_stream, Analysis};
 pub use surface::*;
 pub use wave::*;
+
+pub mod inertial;

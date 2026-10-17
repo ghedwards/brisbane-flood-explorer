@@ -1,3 +1,4 @@
+import './inertial-grid.js';
 /* Flood Explorer — viewer
  *
  * Loads a terrain (sample, a pipeline-processed area, or the user's own DEM),
@@ -393,6 +394,7 @@
   }
 
   async function useGrid(grid, id, opts) {
+    resetInertial();
     // keep the area we're leaving on the map as it is
     const meta = state.areaMeta;
     const prev = state.areaKey && areaReg.get(state.areaKey);
@@ -450,6 +452,7 @@
   }
 
   async function reanalyse(resetGauge) {
+    resetInertial();
     const g = state.grid;
     const a = await analyseAsync(g, { streamAreaKm2: state.streamAreaKm2 });
     if (state.grid !== g) return;   // another area was opened meanwhile
@@ -572,8 +575,101 @@
 
   /* -------------------------------------------------------------- model */
 
+  // Each 2D run owns its worker/WASM memory. Termination also cancels startup.
+  let inertialWorker = null, inertialSequence = 0;
+  const fastSets = ['floodTypeSet', 'riverSet', 'stormSet', 'eventsSet', 'defenceSet', 'timeSet', 'levelPointsSet'];
+  function solverControls() {
+    const selected = $('solver').value === 'inertial';
+    $('inertialControls').hidden = !selected;
+    for (const id of fastSets) $(id).disabled = selected;
+    $('colorMode').querySelector('option[value="hazard"]').disabled = !!state.inertial;
+    $('dlReport').disabled = !!state.inertial;
+  }
+  function stopInertial() {
+    inertialSequence++;
+    if (inertialWorker) inertialWorker.terminate();
+    inertialWorker = null;
+    $('inertialRun').disabled = false; $('inertialCancel').disabled = true;
+  }
+  function resetInertial() {
+    stopInertial();
+    state.inertial = null; status.inertial = null;
+    $('solver').value = 'fast'; solverControls();
+    $('inertialStatus').textContent = 'Fast terrain model.';
+  }
+  function startInertial() {
+    if (!state.a) { $('inertialStatus').textContent = 'Load a terrain model first.'; return; }
+    if (!F.inertialStart) { $('inertialStatus').textContent = 'The 2D model needs WebAssembly. It is unavailable in JavaScript-only mode.'; return; }
+    const inputs = [...$('inertialControls').querySelectorAll('input')];
+    if (inputs.some((input) => !input.reportValidity() || input.value.trim() === '')) return;
+    runScenario(); // discard a previous dynamic result and restore the fast preview
+    $('solver').value = 'inertial'; solverControls();
+    const seq = inertialSequence, a = state.a, key = state.areaKey;
+    const number = (id) => Number($(id).value);
+    try {
+      const g = window.FloodInertialGrid.prepare(a, number('inertialResolution'));
+      const stages = new Float64Array(g.W * g.H).fill(NaN);
+      if ($('inertialBoundary').value === 'sea') {
+        if (!g.ocean.some(Boolean)) throw new Error('No mapped sea cells at this resolution; choose closed edges or another area.');
+        for (let i = 0; i < stages.length; i++) if (g.ocean[i]) stages[i] = number('inertialStage');
+      }
+      const opts = { seconds: number('inertialMinutes') * 60, rainMmH: number('inertialRain'),
+        inflow: number('inertialInflow'), inflowCell: window.FloodInertialGrid.cell(g, a, state.gauge),
+        initialDepth: number('inertialInitial'), roughness: number('inertialRoughness'), stages };
+      const w = new Worker(new URL('./inertial-worker.js', import.meta.url), { type: 'module' });
+      inertialWorker = w;
+      $('inertialRun').disabled = true; $('inertialCancel').disabled = false;
+      $('inertialProgress').value = 0;
+      $('inertialStatus').textContent = `Running 2D on ${g.W} × ${g.H} cells (${Math.round(g.cell)} m). Map still shows the fast preview.`;
+      status.inertial = { running: true, cell: g.cell };
+      const fail = (message) => {
+        if (seq !== inertialSequence) return;
+        stopInertial(); status.inertial = { error: message };
+        $('inertialStatus').textContent = `2D stopped: ${message}. Map shows the fast model.`;
+      };
+      w.onerror = (e) => { e.preventDefault(); fail(e.message || 'Worker failed'); };
+      w.onmessage = ({ data }) => {
+        if (seq !== inertialSequence || a !== state.a || key !== state.areaKey) return;
+        if (data.error) { fail(data.error); return; }
+        if (data.progress != null) { $('inertialProgress').value = data.progress; return; }
+        const r = data.result;
+        if (!r) return;
+        stopInertial();
+        const { depth: _depth, ...metrics } = r;
+        const { stages: _stages, ...settings } = opts;
+        state.inertial = { ...metrics, cell: g.cell, W: g.W, H: g.H, settings, boundary: $('inertialBoundary').value };
+        status.inertial = { ...state.inertial, running: false };
+        state.run = window.FloodInertialGrid.expand(a, g, r);
+        state.base = null; state.riverRun = null; state.flash = null; state.timeView = false;
+        clearTimeout(impactT);
+        $('colorMode').value = 'depth'; solverControls();
+        $('inertialProgress').value = 1;
+        $('inertialStatus').textContent = `Local-inertial 2D: final depth at ${fmt(r.time / 60, 1)} min, ${Math.round(g.cell)} m cells. Stored ${fmt(r.volume, 1)} m³; added ${fmt(r.sourceVolume, 1)} m³; boundary exchange ${fmt(r.boundaryVolume, 1)} m³; balance error ${r.balanceError.toExponential(2)} m³. Partial edge blocks and blocks with missing terrain are excluded.`;
+        state.edges = floodEdges(a, state.run);
+        drawMap(); drawStats(scenario()); renderEdgeNote(); drawProfile(scenario());
+        renderImpact(); renderRecorded();
+        $('timeSet').hidden = true;
+      };
+      w.postMessage({ grid: { W: g.W, H: g.H, cell: g.cell, dem: g.dem, valid: g.valid }, opts });
+    } catch (e) { stopInertial(); $('inertialStatus').textContent = `2D stopped: ${e.message}. Map shows the fast model.`; }
+  }
+  $('solver').addEventListener('change', () => {
+    if ($('solver').value === 'fast') runScenario();
+    else { solverControls(); $('inertialStatus').textContent = 'Configure inputs and run 2D. Map currently shows the fast model.'; }
+  });
+  $('inertialRun').addEventListener('click', startInertial);
+  $('inertialCancel').addEventListener('click', () => { runScenario(); $('inertialStatus').textContent = '2D cancelled. Fast terrain model restored.'; });
+  $('inertialControls').addEventListener('input', (e) => {
+    if (e.target.tagName === 'PROGRESS') return;
+    if (inertialWorker || state.inertial) {
+      runScenario(); $('solver').value = 'inertial'; solverControls();
+      $('inertialStatus').textContent = 'Inputs changed. Run 2D again; map shows the fast preview.';
+    }
+  });
+
   let impactT = 0, timelineSeq = 0;
   function runScenario() {
+    resetInertial();
     timelineSeq++; // discard timelines still computing for the previous scenario
     const a = state.a;
     if (!a) return;
@@ -781,8 +877,9 @@
   const HAZARD_COLORS = [[253, 231, 37], [122, 209, 81], [34, 168, 132], [42, 120, 142], [65, 68, 135], [68, 1, 84]];
   const HAZARD_TEXT = ['generally safe', 'unsafe for small vehicles', 'unsafe for vehicles, children and the elderly', 'unsafe for vehicles and people', 'unsafe for people and vehicles; buildings need special design', 'unsafe for all; all buildings vulnerable'];
   const COMPARE_COLORS = { onlyNow: [230, 97, 1], onlyPinned: [94, 60, 153], both: [158, 202, 225] };
-  const colorMode = () => { const v = $('colorMode') ? $('colorMode').value : 'depth'; return v === 'compare' && !(state.pinned && state.pinned.key === state.areaKey) ? 'depth' : v; };
+  const colorMode = () => { const v = $('colorMode') ? $('colorMode').value : 'depth'; if (state.inertial && v === 'hazard') return 'depth'; return v === 'compare' && !(state.pinned && state.pinned.key === state.areaKey) ? 'depth' : v; };
   function hazardNow() {
+    if (state.inertial) return null;
     if (!state.a || !state.run) return null;
     if (!state.hazard || state.hazard.run !== state.run) state.hazard = Object.assign(F.hazard(state.a, state.run), { run: state.run });
     return state.hazard;
@@ -815,6 +912,7 @@
 
   // Pin the current scenario to compare later ones against it
   function scenarioLabel() {
+    if (state.inertial) return `Local-inertial 2D, ${fmt(state.inertial.time / 60, 1)} min, ${Math.round(state.inertial.cell)} m grid`;
     const mode = ctl.floodType.value, parts = [];
     if (mode !== 'flash') parts.push(`gauge ${fmt(parseFloat(ctl.gaugeLevel.value), 2)} m`);
     if (mode !== 'river') parts.push(`${ctl.rainMm.value} mm in ${ctl.stormHours.selectedOptions[0].textContent}`);
@@ -1667,6 +1765,7 @@
   }
 
   function activateArea(key, opts) {
+    resetInertial();
     const area = areaReg.get(key);
     if (!area) return false;
     geoToken++;          // abandon any area still opening
@@ -1722,6 +1821,7 @@
   }
 
   function deactivate() {
+    resetInertial();
     geoToken++;
     state.pendingGeo = false;
     saveActive();
@@ -2074,6 +2174,12 @@
   function isFlood(i) { return !(state.base && state.base.wet[i]) && !state.a.ocean[i]; }
 
   function drawStats(s) {
+    if (state.inertial) {
+      const r = state.inertial, st = F.stats(state.a, state.run, null);
+      $('summaryLine').textContent = `Local-inertial 2D · final depth at ${fmt(r.time / 60, 1)} min · ${Math.round(r.cell)} m grid`;
+      $('stats').innerHTML = [['Wet land', fmt(st.wetLandKm2, 2), 'km²'], ['Deeper than 1 m', fmt(st.deepKm2, 2), 'km²'], ['Deepest water', fmt(st.maxDepth, 2), 'm'], ['Simulated time', fmt(r.time / 60, 1), 'min']].map(([k,v,u]) => `<div class="stat"><div class="label">${k}</div><div class="v">${v}<small>${u}</small></div></div>`).join('');
+      return;
+    }
     const st = F.stats(state.a, state.run, state.base);
     const flashOnly = ctl.floodType.value === 'flash';
     const cells = [
@@ -2701,6 +2807,7 @@
     renderLevelPoints();
     renderStorm();
     renderScenarioTitle();
+    solverControls();
   }
 
   /* ---------- reports */
@@ -3356,7 +3463,7 @@
     $('checkSet').hidden = !local || scenarioEmpty;
     $('impactSet').hidden = !local || scenarioEmpty;
     $('defenceSet').hidden = !local || scenarioEmpty || ctl.floodType.value === 'flash';
-    $('timeSet').hidden = !local || scenarioEmpty || ctl.floodType.value !== 'river' || state.gauge < 0;
+    $('timeSet').hidden = !!state.inertial || !local || scenarioEmpty || ctl.floodType.value !== 'river' || state.gauge < 0;
     if (!$('timeSet').hidden) { renderShapeChoices(); renderTideRow(); }
     $('recordedSet').hidden = !local || scenarioEmpty;
     clearTimeout(impactT);
@@ -3816,7 +3923,7 @@
     if (!a || !run || !g) return false;
     const out = new Float32Array(a.N);
     for (let i = 0; i < a.N; i++) out[i] = run.wet[i] && !(a.ocean && a.ocean[i]) ? Math.round(run.depth[i] * 100) / 100 : -9999;
-    download(new Blob([geoTiffBytes(out, a.W, a.H, g, -9999)], { type: 'image/tiff' }), `flood-depth-${slug(placeLabel())}.tif`);
+    download(new Blob([geoTiffBytes(out, a.W, a.H, g, -9999)], { type: 'image/tiff' }), `flood-depth-${state.inertial ? '2d-final-' : ''}${slug(placeLabel())}.tif`);
     return true;
   }
   function floodGeoJSON() {
@@ -3859,8 +3966,9 @@
       features: [{
         type: 'Feature',
         properties: {
-          name: area ? `${area.n}. ${area.name}` : 'Flood model', gauge_level_m: s0.gaugeLevel, bay_level_m: s0.bayLevel,
-          level_points: (state.controls || []).length, generated: new Date().toISOString(),
+          name: area ? `${area.n}. ${area.name}` : 'Flood model', model: state.inertial ? 'local-inertial-2d-experimental' : 'fast-terrain',
+          simulation: state.inertial || null, gauge_level_m: state.inertial ? null : s0.gaugeLevel, bay_level_m: state.inertial ? null : s0.bayLevel,
+          level_points: state.inertial ? 0 : (state.controls || []).length, generated: new Date().toISOString(),
           source: (state.areaMeta && state.areaMeta.source) || '', note: 'Screening model only; not for evacuation or property decisions.',
         },
         geometry: { type: 'MultiPolygon', coordinates: polys },
@@ -3871,7 +3979,7 @@
   function downloadGeoJSON() {
     const gj = floodGeoJSON();
     if (!gj) return false;
-    download(new Blob([JSON.stringify(gj)], { type: 'application/geo+json' }), `flood-outline-${slug(placeLabel())}.geojson`);
+    download(new Blob([JSON.stringify(gj)], { type: 'application/geo+json' }), `flood-outline-${state.inertial ? '2d-final-' : ''}${slug(placeLabel())}.geojson`);
     return true;
   }
   function printableReport() {
@@ -4276,6 +4384,7 @@
   }
   let impactLayer = null;
   function renderImpact() {
+    if (state.inertial) { $('impactBox').textContent = 'Impact estimates are unavailable for the experimental coarse-grid 2D model.'; status.impact = null; if (impactLayer) impactLayer.clearLayers(); return; }
     const box = $('impactBox');
     const area = state.areaKey && areaReg.get(state.areaKey);
     if (!box || !area) return;
@@ -4411,6 +4520,7 @@
     return status.recorded;
   }
   function renderRecorded() {
+    if (state.inertial) { $('recordedBox').textContent = 'Historical-event validation of the 2D solver is pending.'; return; }
     const box = $('recordedBox'), area = state.areaKey && areaReg.get(state.areaKey);
     if (!box || !area || !area.recorded) { if (box) box.innerHTML = ''; return; }
     if (!area.recorded.length) { box.innerHTML = '<p class="hint">No recorded flood outlines are published for this area in the sources the app knows (Queensland flood lines, Brisbane City Council and Victoria\'s flood history). New South Wales doesn\'t publish its recorded flood outlines as an open map service.</p>'; return; }
@@ -5667,6 +5777,11 @@
     const a = state.a, cc = latLngCell(ll), area = areaReg.get(state.areaKey);
     if (!a || !cc) return null;
     const c = cc.i, run = state.run;
+    if (state.inertial) {
+      box.textContent = `Experimental 2D final depth: ${fmt(run.depth[c], 2)} m on a ${Math.round(state.inertial.cell)} m grid. Property hazard and gauge thresholds are unavailable for this model.`;
+      status.property = { inModel: true, depth: run.depth[c], model: 'local-inertial' };
+      return status.property;
+    }
     box.innerHTML = `<p><strong>${escapeHtml(name)}</strong> · in ${hit.n}. ${escapeHtml(hit.name)}</p><p class="hint">Working it out…</p>`;
     if (area.impact == null) { try { await countImpact(); } catch (err) { /* counted without roads */ } }
     const d = area.impact && !area.impact.error ? area.impact : null;
