@@ -15,7 +15,7 @@
 (function (root, factory) {
   const api = factory();
   if (typeof module === 'object' && module.exports) module.exports = api;
-  else root.FloodWasm = api;
+  if (typeof self !== 'undefined') root.FloodWasm = api;
 })(typeof self !== 'undefined' ? self : this, function () {
   'use strict';
 
@@ -371,6 +371,6 @@
 });
 
 // In the page or worker, swap in the Rust model behind FloodCore.
-if (typeof self !== 'undefined' && self.FloodCore && self.FloodWasm && typeof module === 'undefined') {
-  self.FloodCoreReady = self.FloodWasm.install(self.FloodCore);
+if (typeof self !== 'undefined' && self.FloodCore && self.FloodWasm) {
+  self.FloodCoreReady = self.FloodWasm.install(self.FloodCore, self.FloodWasmURL);
 }

@@ -25,11 +25,11 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             rust/target
-          key: rust-hydro-${{ hashFiles('rust/**/*.rs', 'rust/**/Cargo.toml', 'rust/Cargo.lock') }}
+          key: rust-hydro-${{ hashFiles('rust-toolchain.toml', 'rust/**/*.rs', 'rust/**/Cargo.toml', 'rust/Cargo.lock') }}
           restore-keys: rust-hydro-
       - uses: actions/setup-node@v7
         with:
-          node-version: 22
+          node-version: 24
       - name: Test the viewer and JavaScript model
         run: node --test tests/*.test.js
       - name: Build and test flood
@@ -62,26 +62,8 @@ jobs:
           s=$(date +%s); flood hydrology config/brisbane.json work/b > b.log; tb=$(( $(date +%s) - s ))
           echo "::notice::geolibre program: ${ta} s; in flood: ${tb} s ($(tail -1 b.log))"
       - name: Compare
-        run: |
-          pip install --quiet rasterio numpy
-          python - <<'EOF'
-          import numpy as np, rasterio
-          failures = []
-          for name in ["dem_breached", "dem_cond", "d8", "acc", "streams", "hand"]:
-              a, b = rasterio.open(f"work/a/{name}.tif"), rasterio.open(f"work/b/{name}.tif")
-              x, y = a.read(1).astype("float64"), b.read(1).astype("float64")
-              same_grid = a.shape == b.shape and a.transform == b.transform and a.crs == b.crs
-              if x.shape != y.shape:
-                  print(f"::error::{name}: grid {x.shape} vs {y.shape}"); failures.append(name); continue
-              exact = int((x == y).sum()) + int((np.isnan(x) & np.isnan(y)).sum())
-              d = np.abs(x - y); d = d[np.isfinite(d)]
-              matches = exact == x.size and same_grid and a.nodata == b.nodata and a.dtypes == b.dtypes
-              if not matches: failures.append(name)
-              level = "notice" if matches else "error"
-              print(f"::{level}::{name}: {exact} of {x.size} cells identical; grid/CRS match {same_grid}; max diff {d.max() if d.size else 0:.6g}; nodata {a.nodata} vs {b.nodata}; dtype {a.dtypes[0]} vs {b.dtypes[0]}")
-          if failures: raise SystemExit("Raster comparison failed: " + ", ".join(failures))
-          EOF
+        run: flood compare-hydrology work/a work/b
       - name: Export from the in-process run
         run: |
           flood export config/brisbane.json work/b site/data
-          python -c "import json; m = json.load(open('site/data/brisbane/meta.json')); print('::notice::processedWith:', m['processedWith'], '| gauge', m['gauge'])"
+          node -e "const m = require('./site/data/brisbane/meta.json'); console.log('::notice::processedWith:', m.processedWith, '| gauge', m.gauge)"

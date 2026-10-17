@@ -1,0 +1,95 @@
+name: Lint and dependency security
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  schedule:
+    - cron: '20 21 * * 0'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: quality-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  javascript:
+    name: JavaScript lint and tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npm run lint
+      - run: npm test
+
+  rust-lint:
+    name: Rust Clippy
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - run: rustup component add clippy
+      - uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            rust/target
+          key: clippy-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml', 'rust/Cargo.lock') }}
+      - name: Lint workspace code (correctness findings are errors)
+        run: cargo clippy --locked --manifest-path rust/Cargo.toml --workspace --all-targets --no-deps -- -D clippy::correctness
+
+  npm-security:
+    name: JavaScript dependency security
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npm run check:security
+
+  rust-security:
+    name: Rust dependency security
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install pinned auditor
+        run: cargo install cargo-audit --version 0.22.2 --locked
+      - run: cargo audit --file rust/Cargo.lock
+
+  outdated:
+    name: Outdated dependency report
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - name: Report outdated npm packages
+        run: node scripts/report-outdated.js
+      - name: Install pinned Rust update checker
+        run: cargo install cargo-outdated --version 0.19.0 --locked
+      - name: Report outdated Rust dependencies
+        run: node scripts/report-cargo-outdated.js
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: dependency-reports
+          path: '*-outdated.txt'

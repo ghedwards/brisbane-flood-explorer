@@ -11,14 +11,14 @@ name = "flood"
 path = "src/main.rs"
 
 [dependencies]
-ureq = "2.12"
+ureq = "3.4"
 serde = "1"
 serde_json = { version = "1", features = ["preserve_order"] }
-tiff = "0.9"
-png = "0.17"
-miniz_oxide = "0.8"
+tiff = "0.11"
+png = "0.18"
+miniz_oxide = "0.9"
 regex = "1"
 # The RustGIS / GeoLibre hydrology tools (whitebox_next_gen), pinned to the
-# commit inside GeoLibre 1.6.0. Not on crates.io (publish = false).
-wbcore = { git = "https://github.com/opengeos/whitebox-wasm", rev = "6b2a6eb99743b5f1602c7b7a1ff724fea6ee1b23" }
-wbtools_oss = { git = "https://github.com/opengeos/whitebox-wasm", rev = "6b2a6eb99743b5f1602c7b7a1ff724fea6ee1b23" }
+# upstream revision. Not on crates.io (publish = false).
+wbcore = { git = "https://github.com/opengeos/whitebox-wasm", rev = "f0076c2383ebd9248454b32f13cd002fa27f21b0" }
+wbtools_oss = { git = "https://github.com/opengeos/whitebox-wasm", rev = "f0076c2383ebd9248454b32f13cd002fa27f21b0" }

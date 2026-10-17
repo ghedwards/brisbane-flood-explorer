@@ -17,8 +17,9 @@
  *      water through 4-connected wet cells
  */
 (function (root, factory) {
-  if (typeof module === 'object' && module.exports) module.exports = factory();
-  else root.FloodCore = factory();
+  const api = factory();
+  if (typeof module === 'object' && module.exports) module.exports = api;
+  if (typeof self !== 'undefined') root.FloodCore = api;
 })(typeof self !== 'undefined' ? self : this, function () {
   'use strict';
 
@@ -793,7 +794,7 @@
   function betweenGauges(a, w, g, speedKmh, others) {
     const { N, rec, chain, order, nOrder, stream } = a;
     const cms = speedKmh * 1000;
-    const span = w.hi - w.lo, base = w.gaugeAt(w.tStart), pk = Math.max(...Array.from({ length: 200 }, (_, i) => w.gaugeAt(w.tStart + ((w.tEnd - w.tStart) * i) / 199)));
+    const base = w.gaugeAt(w.tStart), pk = Math.max(...Array.from({ length: 200 }, (_, i) => w.gaugeAt(w.tStart + ((w.tEnd - w.tStart) * i) / 199)));
     const rng = Math.max(0.01, pk - base);
     const rel = [(t) => (w.gaugeAt(t) - base) / rng];
     const cells = [g], used = [];

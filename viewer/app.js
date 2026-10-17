@@ -365,7 +365,7 @@
     if (worker === false) return null;
     if (!worker) {
       try {
-        worker = new Worker('flood-worker.js');
+        worker = new Worker(new URL('./flood-worker.js', import.meta.url), { type: 'module' });
         worker.onmessage = (e) => {
           const job = workerJobs.get(e.data.id);
           if (!job) return;
@@ -562,12 +562,9 @@
   function loadGeoTiffLib() {
     if (window.GeoTIFF) return Promise.resolve();
     if (!geotiffPromise) {
-      geotiffPromise = new Promise((resolve, reject) => {
-        const s = document.createElement('script');
-        s.src = 'https://cdn.jsdelivr.net/npm/geotiff@2.1.3/dist-browser/geotiff.js';
-        s.onload = () => resolve();
-        s.onerror = () => { geotiffPromise = null; reject(new Error('Could not load the GeoTIFF reader. Check your connection, or use an ASCII grid (.asc).')); };
-        document.head.appendChild(s);
+      geotiffPromise = import('geotiff').then((lib) => { window.GeoTIFF = lib; }).catch((err) => {
+        geotiffPromise = null;
+        throw new Error('Could not load the GeoTIFF reader. Check your connection, or use an ASCII grid (.asc).', { cause: err });
       });
     }
     return geotiffPromise;
@@ -943,7 +940,6 @@
   // GDA2020 / MGA56, whose grid north is within 0.02° of true north at
   // Brisbane, so a lat/lon-aligned overlay lines up to a few metres.
 
-  const LEAFLET = 'https://unpkg.com/leaflet@1.9.4/dist/';
   const TILES = {
     light: 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',
     dark: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
@@ -1276,9 +1272,9 @@
   // tiles and model terrain that have been used, so the site still opens
   // and saved places still rebuild when the signal drops.
   status.offline = { supported: 'serviceWorker' in navigator, registered: false, online: navigator.onLine };
-  if ('serviceWorker' in navigator && location.protocol === 'https:') {
+  if (import.meta.env.PROD && 'serviceWorker' in navigator && window.isSecureContext) {
     window.addEventListener('load', () => {
-      navigator.serviceWorker.register('sw.js').then(() => { status.offline.registered = true; }).catch((err) => { status.offline.error = String(err); });
+      navigator.serviceWorker.register(new URL('sw.js', document.baseURI).href).then(() => { status.offline.registered = true; }).catch((err) => { status.offline.error = String(err); });
     });
   }
   function showConnection() {
@@ -1296,22 +1292,9 @@
   function loadLeaflet() {
     if (window.L && window.L.map) return Promise.resolve();
     if (!leafletPromise) {
-      leafletPromise = new Promise((resolve, reject) => {
-        const css = document.createElement('link');
-        css.rel = 'stylesheet'; css.href = LEAFLET + 'leaflet.css';
-        document.head.appendChild(css);
-        const js = document.createElement('script');
-        js.src = LEAFLET + 'leaflet.js';
-        js.onload = () => {
-          // esri-leaflet reads the council's ArcGIS feature layers; optional
-          const ej = document.createElement('script');
-          ej.src = 'https://unpkg.com/esri-leaflet@3.0.12/dist/esri-leaflet.js';
-          ej.onload = () => resolve();
-          ej.onerror = () => resolve();
-          document.head.appendChild(ej);
-        };
-        js.onerror = () => { leafletPromise = null; reject(new Error('The street map could not load.')); };
-        document.head.appendChild(js);
+      leafletPromise = import('./map-libs.js').catch((err) => {
+        leafletPromise = null;
+        throw new Error('The street map could not load.', { cause: err });
       });
     }
     return leafletPromise;
@@ -1966,8 +1949,6 @@
     box.querySelectorAll('[data-model]').forEach((b) => b.addEventListener('click', () => placeAction(b.dataset.model, u.n)));
   }
 
-  const EYE = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/></svg>';
-  const EYE_OFF = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 3l18 18"/><path d="M10.6 5.1A10 10 0 0 1 12 5c6.5 0 10 7 10 7a17 17 0 0 1-3.2 4.2M6.6 6.6A17 17 0 0 0 2 12s3.5 7 10 7a9.6 9.6 0 0 0 4.4-1"/></svg>';
   window.__floodPlaces = () => Array.from(new Set([...reports.map((r) => r.n), ...Array.from(areaReg.values()).map((a) => a.n), ...pins.map((p) => p.n)])).sort((a, b) => a - b).map((n) => {
     const a = areaByNumber(n), r = reports.find((x) => x.n === n), pin = pins.find((x) => x.n === n);
     return { n, report: !!r, area: !!a, pin: !!pin, hidden: hiddenNums.has(n), onMap: !!(a && state.lmap && state.lmap.hasLayer(a.overlay)), reportName: r && r.name, areaName: a && a.name, pinName: pin && pin.name };
@@ -3338,7 +3319,7 @@
     for (const f of gaugesInModel()) {
       const p = f.properties, c = classFor(p);
       if (!c || c.zero == null) continue;
-      let v = null;
+      let v;
       if (which === 'now') { const r = nat.readings.level && nat.readings.level[p.station]; v = r ? r.latest[1] : null; } else v = c[which];
       if (v == null) continue;
       const cell = streamCellAt(f.geometry.coordinates[1], f.geometry.coordinates[0]);
@@ -3530,7 +3511,7 @@
     if (state.areaKey !== key) return null;
     // compare on the satellite grid: "seen wet" = water in at least 1% of
     // clear observations, ignoring the sea and permanent water (over 80%)
-    let sat = 0, mod = 0, hit = 0, perm = 0;
+    let sat = 0, mod = 0, hit = 0;
     for (let y = 0; y < fh; y++) {
       const ym = Math.min(a.H - 1, Math.floor(((y + 0.5) / fh) * a.H));
       for (let x = 0; x < fw; x++) {
@@ -3538,7 +3519,7 @@
         const xm = Math.min(a.W - 1, Math.floor(((x + 0.5) / fw) * a.W));
         const c = ym * a.W + xm;
         if (a.ocean && a.ocean[c]) continue;
-        if (Number.isFinite(f) && f > 0.8) { perm++; continue; }
+        if (Number.isFinite(f) && f > 0.8) { continue; }
         const s0 = Number.isFinite(f) && f >= 0.01 && f <= 1, m0 = run.wet[c] === 1;
         if (s0) sat++;
         if (m0) mod++;
@@ -3707,7 +3688,7 @@
       try { await restoreSession(JSON.parse(unb64(m[1])), 'link'); } catch (e) { say('That link could not be read.'); }
       return;
     }
-    let saved = null;
+    let saved;
     try { saved = JSON.parse(localStorage.getItem(SESSION_KEY) || 'null'); } catch (e) { saved = null; }
     if (saved) await restoreSession(saved, 'saved');
   }
@@ -5036,7 +5017,6 @@
     const tl = area && area.timeline;
     if (!tl) { box.innerHTML = ''; return; }
     const ac = tl.access, K = tl.steps;
-    const toH = (k) => Math.round(tl.t0 + k * tl.step);
     // small chart: gauge level, and buildings flooded / cut off
     const W = 300, H = 90, gmin = Math.min(...tl.gauge), gmax = Math.max(...tl.gauge);
     const x = (k) => (k / (K - 1)) * W;
@@ -5129,14 +5109,14 @@
     let r = null;
     for (let attempt = 0; attempt < 3; attempt++) {
       if (attempt) await new Promise((ok) => setTimeout(ok, 1500 * attempt));
-      try { r = await fetch(url); } catch (err) { r = null; if (attempt === 2) throw new Error('the elevation service could not be reached; try again shortly'); continue; }
+      try { r = await fetch(url); } catch (err) { r = null; if (attempt === 2) throw new Error('the elevation service could not be reached; try again shortly', { cause: err }); continue; }
       if (r.ok || r.status < 500) break;
     }
     if (!r.ok) throw new Error(`the elevation service returned ${r.status}`);
     const type = r.headers.get('content-type') || '';
     if (!/tiff/i.test(type)) throw new Error('the elevation service did not return elevation data for this place');
     const buf = await r.arrayBuffer();
-    let iw, ih, data, nd, tiffBounds = null;
+    let iw, ih, data, nd, tiffBounds;
     try {
       // GA's service leaves all-sea tiles out ("sparse" tiles); this reader
       // handles that, unlike the general GeoTIFF library
@@ -5753,7 +5733,7 @@
   async function renderDataStatus() {
     const box = $('dataStatus');
     if (!box) return null;
-    let st = null;
+    let st;
     try { const r = await fetch('data/status.json', { cache: 'no-cache' }); st = r.ok ? await r.json() : null; } catch (err) { st = null; }
     if (!st || !st.sources) { box.innerHTML = '<p class="hint">No status from the build yet.</p>'; return null; }
     const label = { ok: 'OK', cached: 'From an earlier build', problem: 'Problem', missing: 'Not available' };

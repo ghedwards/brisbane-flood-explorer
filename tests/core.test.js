@@ -111,7 +111,6 @@ function buildTiff(W, H, tile, value, sparse) {
   ];
   const ifdAt = 8, ifdSize = 2 + entries.length * 12 + 4;
   let extra = ifdAt + ifdSize;
-  const extras = [];
   const place = (bytes) => { const at = extra; extra += bytes; if (extra % 2) extra++; return at; };
   const offsAt = place(nt * 4), cntsAt = place(nt * 4), scaleAt = place(24), tieAt = place(48), ndAt = place(8);
   const dataAt = extra;
@@ -413,9 +412,9 @@ test('hazard for a river flood: deeper and faster water ranks higher, areas add 
   const g = a.defaultGauge;
   const run = F.inundate(a, scenario(a.dem[g] + 4));
   const h = F.hazard(a, run);
-  let wet = 0, sum = 0;
+  let wet = 0;
   for (let c = 0; c < a.N; c++) if (run.wet[c] && !a.ocean[c] && run.depth[c] > 0) { wet++; assert.ok(h.cls[c] >= 1 && h.cls[c] <= 6); }
-  sum = h.km2.reduce((x, y) => x + y, 0);
+  const sum = h.km2.reduce((x, y) => x + y, 0);
   assert.ok(Math.abs(sum - (wet * a.cell * a.cell) / 1e6) < 1e-6);
   // the channel is deeper and faster than the edge of the flood
   let ch = 0, chN = 0, fp = 0, fpN = 0;

@@ -63,7 +63,7 @@ flowchart LR
   D --> E[Browser viewer<br/>flood model in Rust,<br/>compiled to WebAssembly]
 ```
 
-GitHub Actions runs the whole pipeline on every push to `main`, publishes the viewer and data to GitHub Pages, then loads the live site in a headless browser to check the interactive map works ([`.github/workflows/build.yml`](.github/workflows/build.yml), [`tests/smoke_live.py`](tests/smoke_live.py)). The check's results appear as annotations on the workflow run, with a screenshot attached.
+GitHub Actions runs the whole pipeline on every push to `main`, publishes the viewer and data to GitHub Pages, then loads the live site in a headless browser to check the interactive map works ([`.github/workflows/build.yml`](.github/workflows/build.yml), [`tests/smoke_live.js`](tests/smoke_live.js)). The check's results appear as annotations on the workflow run, with a screenshot attached.
 
 ### 1. Terrain (`flood dem`)
 
@@ -71,7 +71,7 @@ Downloads the Copernicus GLO-30 tiles covering the area in [`config/brisbane.jso
 
 ### 2. Hydrology with the RustGIS tools (`flood hydrology`)
 
-`flood hydrology` runs the same tools as GeoLibre 1.6.0 in-process, pinned to whitebox-wasm commit `6b2a6eb`. It records the tool versions and arguments in `hydrology.json`. The pipeline runs:
+`flood hydrology` runs the hydrology tools in-process, pinned to whitebox-wasm commit `f0076c2` with a [raster archive security patch](rust/vendor/wbraster/PATCHES.md). It records the tool versions and arguments in `hydrology.json`. The pipeline runs:
 
 | Step | Tool | Output |
 |---|---|---|
@@ -143,10 +143,11 @@ For full hydrodynamic modelling, the outputs here are a starting point for [ANUG
 
 ## Run it yourself
 
-The viewer is plain HTML and JavaScript with no build step:
+The viewer uses Vite for development and production builds. Install Node.js and Rustup, then:
 
 ```sh
-python3 -m http.server -d viewer 8000   # then open http://localhost:8000
+npm ci
+npm run serve   # then open http://localhost:8000
 ```
 
 If the map library can't load (offline), it falls back to an illustrative sample terrain, which isn't otherwise in the menu. You can also load your own GeoTIFF or ASCII grid DEM in the page, optionally with a `d8.tif` from the pipeline.
@@ -160,18 +161,13 @@ flood dem config/brisbane.json work/brisbane
 flood hydrology config/brisbane.json work/brisbane
 flood export config/brisbane.json work/brisbane viewer/data
 flood national viewer/data/national     # gauges, dams and readings
-python3 -m http.server -d viewer 8000
+npm ci
+npm run serve
 ```
 
-To build the browser model, add the WebAssembly target and copy the module next to the page:
+Both `npm run serve` and `npm run build` compile the browser model using the pinned Rust toolchain. To compile only the WebAssembly input, run `npm run build:wasm`.
 
-```sh
-rustup target add wasm32-unknown-unknown
-cargo build --locked --release --manifest-path rust/Cargo.toml -p flood-wasm --target wasm32-unknown-unknown
-cp rust/target/wasm32-unknown-unknown/release/flood_wasm.wasm viewer/flood.wasm
-```
-
-Keep `rust/Cargo.lock`: the pinned hydrology tools depend on a yanked `zip` version that Cargo can still use from the lockfile. Do not regenerate it from scratch.
+Commit both lockfiles and `rust-toolchain.toml` when upgrading dependencies. The raster archive dependency patch is documented in `rust/vendor/wbraster/PATCHES.md`.
 
 Where crates.io can't be reached, the [`rust-vendor`](../../tree/rust-vendor) branch holds every crate the pipeline uses and its `Cargo.lock` (see [`.github/workflows/vendor.yml`](.github/workflows/vendor.yml)).
 
@@ -180,6 +176,40 @@ Where crates.io can't be reached, the [`rust-vendor`](../../tree/rust-vendor) br
 **Another river:** copy `config/brisbane.json`, change the bounding box, CRS, gauge and `brisbane_gauge_events: false`, and add the area to the workflow.
 
 ## Tests
+
+Rust builds use the toolchain pinned in `rust-toolchain.toml` (Rust 1.99.1, Cargo, Clippy, rustfmt and the WebAssembly target). Rustup installs it automatically for local and CI builds.
+
+Frontend builds and browser checks use Node.js 22.13+ (CI uses Node 24 LTS) and Playwright (the browser version is pinned in `package-lock.json`):
+
+```sh
+npm ci
+npx playwright install chromium
+npm test
+npm run build
+npm run test:build
+SMOKE_PRESETS=quick npm run test:smoke -- https://ghedwards.github.io/brisbane-flood-explorer/
+npm run test:sources -- https://ghedwards.github.io/brisbane-flood-explorer/
+```
+
+Lint and dependency checks run on pull requests, pushes to main, and weekly:
+
+```sh
+npm run lint                  # ESLint for the viewer and tooling
+npm run check:security        # audit all browser and development packages
+npm run check:outdated        # returns 1 when newer npm releases exist
+cargo clippy --locked --manifest-path rust/Cargo.toml --workspace --all-targets --no-deps -- -D clippy::correctness
+cargo install cargo-audit --version 0.22.2 --locked
+cargo audit --file rust/Cargo.lock
+cargo install cargo-outdated --version 0.19.0 --locked
+node scripts/report-cargo-outdated.js
+```
+
+ESLint errors, Clippy correctness findings, and known dependency vulnerabilities fail their CI jobs. Other Clippy suggestions remain warnings. Outdated versions are reported in the workflow summary and artifacts; available updates alone do not fail that report. Registry or dependency-resolution errors do fail it. Dependabot opens weekly updates for npm, Cargo and GitHub Actions once this configuration is on the default branch.
+
+Vite bundles Leaflet, Esri Leaflet, GeoTIFF, fonts, workers and the Rust WebAssembly model from pinned dependencies. `npm run build` compiles the model and writes the deployable site to `site/`; `npm run preview` serves that build. `npm run serve` starts the development server. The development server uses `viewer/data` when present; preview uses `site/data`. If that directory is absent, the server proxies `/data` to the published dataset for local testing. Production assets use relative URLs (`base: "./"`) and require no library or font CDN. Vite generates the service worker cache list from emitted assets, including lazy chunks. Live data and map tiles still come from their source services.
+
+The comparison workflow uses `flood compare-hydrology <reference-directory> <candidate-directory>` to check all six hydrology rasters. It compares pixels (including matching NaNs), sample types, dimensions and geospatial metadata, and exits unsuccessfully if a file is missing, unreadable or different.
+
 
 ```sh
 node --test tests/*.test.js                                   # the model (JavaScript) and the app
@@ -190,7 +220,7 @@ FLOOD_IMPL=wasm node tests/parity.js > w.txt && node tests/parity.js w.txt   # s
 
 The tests check routing (every cell drains), monotonic flooding, water levels at the gauge and mouth, connectivity, and that Whitebox D8 pointers from the pipeline reproduce the browser's own routing exactly.
 
-After every deploy, a live check (`tests/smoke_live.py`) opens the published site in a headless browser and uses it: reports, river, coastal and storm models, area studies, level points, impact counts, recorded-flood checks, share links phone scrolling, keyboard use of the map, and first-load size and time. It builds a quick sample of four presets on each change; every preset is built nightly (2:43 am Brisbane time) or when you run the workflow by hand from the Actions tab (*Run workflow*, with "build all 58 presets" ticked).
+After every deploy, a live check (`tests/smoke_live.js`) opens the published site in a headless browser and uses it: reports, river, coastal and storm models, area studies, level points, impact counts, recorded-flood checks, share links phone scrolling, keyboard use of the map, and first-load size and time. It builds a quick sample of four presets on each change; every preset is built nightly (2:43 am Brisbane time) or when you run the workflow by hand from the Actions tab (*Run workflow*, with "build all 58 presets" ticked).
 
 ## Repository layout
 

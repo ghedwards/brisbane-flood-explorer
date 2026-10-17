@@ -26,7 +26,8 @@ fn download(url: &str, dest: &Path) -> R<bool> {
     if dest.metadata().map_or(false, |m| m.len() > 0) {
         return Ok(true);
     }
-    match net::get(url, &[], 120) {
+    // Large DEM tiles get a ten-minute transfer budget with ureq 3.
+    match net::get(url, &[], 600) {
         Ok(r) => {
             std::fs::write(dest, r.body).map_err(err)?;
             Ok(true)

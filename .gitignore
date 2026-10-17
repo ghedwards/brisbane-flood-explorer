@@ -1,9 +1,16 @@
 work/
 site/
 viewer/data/
-__pycache__/
-*.pyc
+node_modules/
+smoke*.png
 .DS_Store
 rust/target/
 work-*
 *.node
+
+# Dependency reports generated locally or in CI
+npm-outdated.txt
+cargo-outdated.txt
+
+# WebAssembly input compiled for Vite
+viewer/flood.wasm
