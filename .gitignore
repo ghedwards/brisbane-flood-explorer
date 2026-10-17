@@ -7,3 +7,7 @@ smoke*.png
 rust/target/
 work-*
 *.node
+
+# Dependency reports generated locally or in CI
+npm-outdated.txt
+cargo-outdated.txt

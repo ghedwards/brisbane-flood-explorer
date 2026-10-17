@@ -183,7 +183,7 @@ Where crates.io can't be reached, the [`rust-vendor`](../../tree/rust-vendor) br
 
 ## Tests
 
-Browser checks use Node.js 22+ and Playwright (the browser version is pinned in `package-lock.json`):
+Browser checks use Node.js 22.13+ and Playwright (the browser version is pinned in `package-lock.json`):
 
 ```sh
 npm ci
@@ -192,6 +192,23 @@ npm test
 SMOKE_PRESETS=quick npm run test:smoke -- https://ghedwards.github.io/brisbane-flood-explorer/
 npm run test:sources -- https://ghedwards.github.io/brisbane-flood-explorer/
 ```
+
+Lint and dependency checks run on pull requests, pushes to main, and weekly:
+
+```sh
+npm run lint                  # ESLint and CDN/lockfile version consistency
+npm run check:security        # npm audit, including browser CDN libraries
+npm run check:outdated        # returns 1 when newer npm releases exist
+cargo clippy --locked --manifest-path rust/Cargo.toml --workspace --all-targets --no-deps -- -D clippy::correctness
+cargo install cargo-audit --version 0.22.2 --locked
+cargo audit --file rust/Cargo.lock
+cargo install cargo-outdated --version 0.19.0 --locked
+(cd rust && cargo outdated --workspace)
+```
+
+ESLint errors, Clippy correctness findings, and known dependency vulnerabilities fail their CI jobs. Other Clippy suggestions remain warnings. Outdated versions are reported in the workflow summary and artifacts; available updates alone do not fail that report. Registry or dependency-resolution errors do fail it. Dependabot opens weekly updates for npm, Cargo and GitHub Actions once this configuration is on the default branch.
+
+The browser still loads Leaflet, Esri Leaflet and GeoTIFF from CDNs. Their exact versions are also in `package.json` and `package-lock.json` for auditing. When upgrading them, update the matching URLs in `viewer/app.js` and `viewer/sw.js`; lint checks that they agree.
 
 The comparison workflow uses `flood compare-hydrology <reference-directory> <candidate-directory>` to check all six hydrology rasters. It compares pixels (including matching NaNs), sample types, dimensions and geospatial metadata, and exits unsuccessfully if a file is missing, unreadable or different.
 

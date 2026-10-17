@@ -78,7 +78,9 @@ const JS = async ([url, range]) => {
       )
         .replace(/\s+/g, " ")
         .slice(0, 300);
-    } catch (e) {}
+    } catch (e) {
+      /* An unavailable body is reported by the probe below. */
+    }
     return {
       ok: r.ok,
       status: r.status,

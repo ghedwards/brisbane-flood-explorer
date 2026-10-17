@@ -173,7 +173,7 @@ async function main() {
         );
       }
       await page.mouse.move(640, 450);
-      for (var _ = 0; _ < 3; _++) {
+      for (_ = 0; _ < 3; _++) {
         await page.mouse.wheel(0, 120);
         await page.waitForTimeout(60);
       }
@@ -290,7 +290,7 @@ async function main() {
         `Dam report water history ${formatValue(JSON.stringify(wb))}: ${formatValue(dam.slice(0, 300))}`,
       );
       await page.screenshot({ path: "smoke-dam.png" });
-      var rep = get(await status(), "report", {});
+      rep = get(await status(), "report", {});
       if (get(rep, "count", 0) < 2) {
         failures.push(`expected two reports side by side: ${formatValue(rep)}`);
       }
@@ -598,7 +598,7 @@ async function main() {
         await page.waitForSelector(".leaflet-popup-content", { timeout: 5000 });
         var popup = await page.innerText(".leaflet-popup-content");
       } catch (error) {
-        var popup = "";
+        popup = "";
         failures.push("tapping the map did not open a popup");
       }
       var before = await status();
@@ -641,7 +641,7 @@ async function main() {
       var names = await page.evaluate(
         "Object.keys(window.__floodStatus.basemaps || {})",
       );
-      for (var name of names) {
+      for (name of names) {
         await page.evaluate(async (...args) => {
           await ((n) => window.__floodSetBasemap(n))(...args);
         }, name);
@@ -654,10 +654,7 @@ async function main() {
         } catch (error) {
           // A timeout is assessed by the checks below.
         }
-        var st = await page.evaluate(
-          (n) => window.__floodStatus.basemaps[n],
-          name,
-        );
+        st = await page.evaluate((n) => window.__floodStatus.basemaps[n], name);
         note(
           "notice",
           `Basemap ${formatValue(name)}: ${formatValue(st["loaded"])} tiles loaded, ${formatValue(st["errors"])} errors`,
@@ -683,7 +680,7 @@ async function main() {
           window.__floodTestZoom(-27.47, 153.02, 11));
       });
       await page.waitForTimeout(1500);
-      for (var name of [
+      for (name of [
         "Creek flooding likelihood (council)",
         "Overland flow likelihood (council)",
       ]) {
@@ -694,7 +691,7 @@ async function main() {
           [name],
         );
         await page.waitForTimeout(5000);
-        var st = await page.evaluate(
+        st = await page.evaluate(
           (n) => window.__floodStatus.overlays[n] || {},
           name,
         );
@@ -707,7 +704,7 @@ async function main() {
             `council layer '${formatValue(name)}' did not show its zoomed-out image`,
           );
         }
-        var safe = Array.from(name.toLowerCase())
+        safe = Array.from(name.toLowerCase())
           .map((ch) => (truth(/^[\p{L}\p{N}]+$/u.test(ch)) ? ch : "-"))
           .join("")
           .slice(0, 30);
@@ -742,7 +739,7 @@ async function main() {
       if (!truth(ov)) {
         failures.push("no council flood layers were offered");
       }
-      for (var name of ov) {
+      for (name of ov) {
         await page.evaluate(
           async (...args) => {
             await (([n]) => window.__floodSetOverlay(n, true))(...args);
@@ -750,10 +747,7 @@ async function main() {
           [name],
         );
         await page.waitForTimeout(8000);
-        var st = await page.evaluate(
-          (n) => window.__floodStatus.overlays[n],
-          name,
-        );
+        st = await page.evaluate((n) => window.__floodStatus.overlays[n], name);
         note(
           "notice",
           `Layer ${formatValue(name)}: ${formatValue(st["features"])} features, ${formatValue(st["errors"])} errors`,
@@ -763,7 +757,7 @@ async function main() {
             `council layer '${formatValue(name)}' drew no features (${formatValue(st["errors"])} errors)`,
           );
         }
-        var safe = Array.from(name.toLowerCase())
+        safe = Array.from(name.toLowerCase())
           .map((ch) => (truth(/^[\p{L}\p{N}]+$/u.test(ch)) ? ch : "-"))
           .join("")
           .slice(0, 40);
@@ -809,7 +803,7 @@ async function main() {
         } catch (error) {
           // A timeout is assessed by the checks below.
         }
-        var st =
+        st =
           (await page.evaluate(
             (n) => window.__floodStatus.overlays[n],
             c["name"],
@@ -834,7 +828,7 @@ async function main() {
       await page.click("#events .chip:nth-child(3)");
       await page.waitForTimeout(800);
     } else {
-      var [popup, after] = ["", s1];
+      [popup, after] = ["", s1];
     }
     // ---- a pin dropped on the map becomes a place; modelling it keeps its number
     await page.selectOption("#area", "australia");
@@ -905,9 +899,9 @@ async function main() {
       failures.push(
         "tapping an empty spot did not offer the add-a-place button",
       );
-      var pin_n = await page.evaluate("window.__floodAddPin(-27.62, 152.76)");
+      pin_n = await page.evaluate("window.__floodAddPin(-27.62, 152.76)");
     }
-    var before = get(get(await status(), "local") || {}, "key");
+    before = get(get(await status(), "local") || {}, "key");
     // its model options sit at the top of the Scenario panel, not in Places
     await page.waitForTimeout(300);
     if (
@@ -966,7 +960,7 @@ async function main() {
       try {
         var sat = await page.evaluate("window.__floodSatCheck()");
       } catch (e) {
-        var sat = { ok: false, error: String(e).slice(0, 200) };
+        sat = { ok: false, error: String(e).slice(0, 200) };
       }
       note(
         truth(sat) && truth(get(sat, "ok")) ? "notice" : "warning",
@@ -1030,16 +1024,16 @@ async function main() {
     if (truth(pin_place) && truth(pin_place[0]["area"])) {
       var ext = null;
       try {
-        var ext = await page.evaluate("window.__floodExtendModel()");
+        ext = await page.evaluate("window.__floodExtendModel()");
         await page.waitForFunction(
           "window.__floodAreaInfo().every(a => a.drawn)",
           null,
           { timeout: 30000 },
         );
       } catch (e) {
-        var ext = `error: ${formatValue(e)}`;
+        ext = `error: ${formatValue(e)}`;
       }
-      var loc = get(await status(), "local") || {};
+      loc = get(await status(), "local") || {};
       var ext_place = (await page.evaluate("window.__floodPlaces()"))
         .filter((p) => truth(p["n"] === pin_n))
         .map((p) => p);
@@ -1064,7 +1058,7 @@ async function main() {
         "window.__floodStudyArea(-28.95, 153.10, -28.65, 153.45)",
       );
     } catch (e) {
-      var study = { ok: false, error: String(e).slice(0, 300) };
+      study = { ok: false, error: String(e).slice(0, 300) };
     }
     console.log(`Area study: ${formatValue(study)}`);
     note(
@@ -1084,7 +1078,7 @@ async function main() {
     await page.screenshot({ path: "smoke-study.png" });
     // neighbouring models in the study can be joined into one water surface
     try {
-      var infos = await page.evaluate("window.__floodAreaInfo()");
+      infos = await page.evaluate("window.__floodAreaInfo()");
       if (truth(infos)) {
         await page.evaluate(async (...args) => {
           await ((k) => window.__floodActivateArea(k))(...args);
@@ -1093,7 +1087,7 @@ async function main() {
       }
       var joined = await page.evaluate("window.__floodJoinNeighbours()");
     } catch (e) {
-      var joined = `error: ${formatValue(e)}`;
+      joined = `error: ${formatValue(e)}`;
     }
     note("notice", `Joined overlapping models: ${formatValue(joined)}`);
     if (!truth(Number.isInteger(joined)) || joined < 1) {
@@ -1295,7 +1289,7 @@ async function main() {
     await p2.screenshot({ path: "smoke-share.png" });
     await p2.close();
     // ---- impact counts and recorded-flood accuracy at Rockhampton
-    var before = get(get(await status(), "local") || {}, "key");
+    before = get(get(await status(), "local") || {}, "key");
     await page.selectOption("#area", "preset:rockhampton");
     try {
       await page.waitForFunction(
@@ -1309,7 +1303,7 @@ async function main() {
     try {
       var recs = await page.evaluate("window.__floodFindRecorded()");
     } catch (e) {
-      var recs = `error: ${formatValue(e)}`;
+      recs = `error: ${formatValue(e)}`;
     }
     note("notice", `Recorded floods at Rockhampton: ${formatValue(recs)}`);
     if (!truth(truth(Array.isArray(recs)) && truth(recs))) {
@@ -1323,7 +1317,7 @@ async function main() {
           recs[0],
         );
       } catch (e) {
-        var fit = { error: String(e).slice(0, 200) };
+        fit = { error: String(e).slice(0, 200) };
       }
       note(
         "notice",
@@ -1338,7 +1332,7 @@ async function main() {
     try {
       var imp = await page.evaluate("window.__floodCountImpact()");
     } catch (e) {
-      var imp = { error: String(e).slice(0, 200) };
+      imp = { error: String(e).slice(0, 200) };
     }
     note(
       truth(imp) && truth(get(imp, "buildings")) ? "notice" : "warning",
@@ -1364,7 +1358,7 @@ async function main() {
     try {
       var tlr = await page.evaluate("window.__floodRunTimeline()");
     } catch (e) {
-      var tlr = { error: String(e).slice(0, 300) };
+      tlr = { error: String(e).slice(0, 300) };
     }
     note(
       "notice",
@@ -1409,7 +1403,7 @@ async function main() {
       await page.evaluate(async () => {
         await window.__floodColorMode("depth");
       });
-      var spot = await page.evaluate(
+      spot = await page.evaluate(
         "window.__floodGaugeLatLng ? window.__floodGaugeLatLng() : null",
       );
       if (truth(spot)) {
@@ -1492,7 +1486,7 @@ async function main() {
     });
     await mp.waitForTimeout(800);
     var cdp = await mctx.newCDPSession(mp);
-    var box = await mp.locator("#panel-layers").boundingBox();
+    box = await mp.locator("#panel-layers").boundingBox();
     var body = mp.locator("#panel-layers > .sheet-body");
     var [sh, chh] = await body.evaluate((e) => [
       e.scrollHeight,
@@ -1535,7 +1529,7 @@ async function main() {
     var quick = ["lismore", "echuca", "carnarvon", "goldcoast"];
     var presets = await page.evaluate("window.__floodPresets || []");
     if (which !== "all") {
-      var presets = presets
+      presets = presets
         .filter((x) => truth(quick.includes(x["id"])))
         .map((x) => x);
     }
@@ -1545,7 +1539,7 @@ async function main() {
     );
     var seas = [];
     for (var pre of presets) {
-      var before = get(get(await status(), "local") || {}, "key");
+      before = get(get(await status(), "local") || {}, "key");
       await page.selectOption("#area", `preset:${formatValue(pre["id"])}`);
       try {
         await page.waitForFunction(
@@ -1556,9 +1550,9 @@ async function main() {
       } catch (error) {
         // A timeout is assessed by the checks below.
       }
-      var loc = get(await status(), "local") || {};
+      loc = get(await status(), "local") || {};
       var snap = get(await status(), "snap") || {};
-      var stats = truth(get(loc, "ok"))
+      stats = truth(get(loc, "ok"))
         ? (await page.innerText("#stats")).replaceAll(
             `
 `,
@@ -1609,7 +1603,7 @@ async function main() {
             await window.__floodLeveesFail(false);
           });
         } catch (e) {
-          var [fd, dl, ff, st_in, st_out] = [
+          [fd, dl, ff, st_in, st_out] = [
             { error: String(e).slice(0, 300) },
             null,
             null,
@@ -1693,7 +1687,7 @@ async function main() {
         try {
           var vrec = await page.evaluate("window.__floodFindRecorded()");
         } catch (e) {
-          var vrec = `error: ${formatValue(e)}`;
+          vrec = `error: ${formatValue(e)}`;
         }
         note(
           "notice",
@@ -1724,7 +1718,7 @@ async function main() {
               evs[0],
             );
           } catch (e) {
-            var tle = { error: String(e).slice(0, 300) };
+            tle = { error: String(e).slice(0, 300) };
           }
           note(
             "notice",
@@ -1807,7 +1801,7 @@ async function main() {
         { timeout: 60000 },
       );
       await page.waitForTimeout(20000);
-      var st = await status();
+      st = await status();
       Object.assign(off, {
         gauges: get(get(st, "national") || {}, "gauges"),
         pill: await page.isVisible("#offlinePill"),
@@ -1828,9 +1822,7 @@ async function main() {
     if (truth(get(off, "sw")) && !truth(get(off, "gauges"))) {
       failures.push(`site did not open offline: ${formatValue(off)}`);
     }
-    var errors = errors
-      .filter((e) => truth(!e.includes("favicon")))
-      .map((e) => e);
+    errors = errors.filter((e) => truth(!e.includes("favicon"))).map((e) => e);
     // A third-party service that drops a request shows up as a browser network
     // log (CORS-less error reply / ERR_FAILED); the app retries and reports it,
     // so note these rather than failing the build on someone else's outage
@@ -1842,9 +1834,7 @@ async function main() {
         ),
       )
       .map((e) => e);
-    var errors = errors
-      .filter((e) => truth(!network.includes(e)))
-      .map((e) => e);
+    errors = errors.filter((e) => truth(!network.includes(e))).map((e) => e);
     if (truth(network)) {
       note(
         "warning",
@@ -1870,7 +1860,7 @@ async function main() {
       // GitHub cuts long annotations short: split the key results into a
       // few notes of about 3,500 characters (it shows 10 notes per step)
       var [chunks, cur] = [[], ""];
-      for (var k of KEY) {
+      for (k of KEY) {
         var line = k.replaceAll("%", "%25").replaceAll(
           `
 `,
@@ -1878,16 +1868,14 @@ async function main() {
         );
         if (truth(cur) && cur.length + line.length > 3500) {
           chunks.push(cur);
-          var cur = "";
+          cur = "";
         }
-        var cur = truth(cur)
-          ? `${formatValue(cur)}%0A${formatValue(line)}`
-          : line;
+        cur = truth(cur) ? `${formatValue(cur)}%0A${formatValue(line)}` : line;
       }
       if (truth(cur)) {
         chunks.push(cur);
       }
-      for (var [i, c] of chunks.slice(0, 6).entries()) {
+      for (let [i, c] of chunks.slice(0, 6).entries()) {
         console.log(
           `::notice title=Key results ${formatValue(i + 1)} of ${formatValue(Math.min(6, chunks.length))}::` +
             c,

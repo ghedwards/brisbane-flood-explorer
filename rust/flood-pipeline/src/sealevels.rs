@@ -185,7 +185,7 @@ impl MsqSource {
             let names: Vec<String> = resources.iter().take(4).map(|r| format!("{} [{}]", s_or_empty(r.get("name")), s_or_empty(r.get("format")))).collect();
             return Err(format!("no {} file among {} ({})", year, resources.len(), names.join("; ")));
         }
-        for r in pick.into_iter().take(2) {
+        if let Some(r) = pick.into_iter().next() {
             let url = s_or_empty(r.get("url"));
             let (mut body, mut ctype) = (Vec::new(), String::new());
             for attempt in 0..3u64 {
