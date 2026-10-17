@@ -132,11 +132,31 @@ and when roads close and how long places stay cut off (flood over time).
 - **Preset audit.** The live check lists which Bureau gauge each river
   preset is anchored to; review any presets that aren't anchored or sit
   far from their gauge.
-- **Rust in RustGIS.** The model (`rust/flood-core`) and pipeline are in
-  Rust; the hydrology still calls GeoLibre as a separate program. If
-  geolibre-rust exposes its tools as a library crate, `flood` could run
-  breach, fill, D8 and HAND in-process; and the model could be offered to
-  RustGIS as a tool working on a DEM and D8 opened there.
+- **Hydrology inside `flood` (in progress, branch `hydrology-inprocess`).**
+  `flood hydrology <config> <work>` runs the same six RustGIS tools as
+  `pipeline/run_hydrology.sh` (breach, fill, D8 pointer, accumulation,
+  streams, HAND) in-process through `wbtools_oss` from
+  opengeos/whitebox-wasm, pinned to commit 6b2a6eb, the code inside the
+  GeoLibre 1.6.0 release the build uses; `flood tool <id> --k=v` runs any
+  tool of the suite. Its tests pass, including a real run on a test
+  valley. Notes:
+  - `rust/Cargo.lock` was seeded from GeoLibre 1.6.0's lockfile because
+    whitebox-wasm at that commit needs `zip` 8.5.1+, which is yanked on
+    crates.io; Cargo still uses a yanked version pinned in a lockfile.
+    Keep the lockfile; don't regenerate it from scratch.
+  - Run the vendor workflow on the branch (Actions > Vendor Rust crates,
+    or the REST dispatch with `ref=hydrology-inprocess`) to refresh the
+    `rust-vendor` branch for offline builds.
+  - Next: `.github/workflows/hydrology-compare.yml` (runs on pushes to the
+    branch) runs the Brisbane hydrology with both the geolibre program
+    and `flood hydrology` and compares every raster. If they match, switch
+    `build.yml` to `flood hydrology`, drop `install_geolibre.sh` and
+    `run_hydrology.sh`, and merge. A release build with LTO takes over
+    ten minutes because of the whole tool suite; consider a lighter
+    profile for the pipeline.
+- **The model inside RustGIS.** `rust/flood-core` has no dependencies and
+  builds to WebAssembly; it could be offered to RustGIS as a tool working
+  on a DEM and D8 opened there.
 - **Faster single runs.** In the browser one inundation costs about the
   same in Rust as in JavaScript, because the results are copied out of
   WebAssembly memory. Returning only what the map draws (or sharing
