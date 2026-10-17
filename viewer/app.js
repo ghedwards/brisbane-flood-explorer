@@ -669,7 +669,7 @@ import './inertial-grid.js';
 
   let impactT = 0, timelineSeq = 0;
   function runScenario() {
-    resetInertial();
+    if (typeof resetInertial === 'function') resetInertial();
     timelineSeq++; // discard timelines still computing for the previous scenario
     const a = state.a;
     if (!a) return;
