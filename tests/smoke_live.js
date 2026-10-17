@@ -188,9 +188,16 @@ async function main() {
       );
     }
     // zoomed out over Australia: the stitched water image and scaled DEA tiles
-    await page.evaluate("window.__floodTestZoom(-26.5, 134, 5)");
+    await page.evaluate(async () => {
+      await window.__floodTestZoom(-26.5, 134, 5);
+    });
     var name = "Water seen by satellite since 1987 (DEA)";
-    await page.evaluate(([n]) => window.__floodSetOverlay(n, true), [name]);
+    await page.evaluate(
+      async (...args) => {
+        await (([n]) => window.__floodSetOverlay(n, true))(...args);
+      },
+      [name],
+    );
     await page.waitForTimeout(6000);
     var st = await page.evaluate(
       (n) => window.__floodStatus.overlays[n] || {},
@@ -202,9 +209,16 @@ async function main() {
       );
     }
     await page.screenshot({ path: "smoke-z5-water.png" });
-    await page.evaluate(([n]) => window.__floodSetOverlay(n, false), [name]);
+    await page.evaluate(
+      async (...args) => {
+        await (([n]) => window.__floodSetOverlay(n, false))(...args);
+      },
+      [name],
+    );
     var dea = "Latest satellite, infrared (DEA)";
-    await page.evaluate((n) => window.__floodSetBasemap(n), dea);
+    await page.evaluate(async (...args) => {
+      await ((n) => window.__floodSetBasemap(n))(...args);
+    }, dea);
     try {
       await page.waitForFunction(
         `window.__floodStatus.basemaps[${formatValue(JSON.stringify(dea))}].loaded > 0`,
@@ -219,7 +233,9 @@ async function main() {
       failures.push(`DEA basemap drew nothing at zoom 5: ${formatValue(bst)}`);
     }
     await page.screenshot({ path: "smoke-z5-dea.png" });
-    await page.evaluate((n) => window.__floodSetBasemap(n), "Satellite (Esri)");
+    await page.evaluate(async (...args) => {
+      await ((n) => window.__floodSetBasemap(n))(...args);
+    }, "Satellite (Esri)");
     console.log(
       `Zoomed-out checks: water image ${formatValue(st)}, DEA basemap ${formatValue(bst)}`,
     );
@@ -281,11 +297,14 @@ async function main() {
       console.log(`Reports open: ${formatValue(rep)}`);
     }
     // NSW flood planning layer over Sydney's Parramatta River
+    await page.evaluate(async () => {
+      await (window.__floodTestZoom &&
+        window.__floodTestZoom(-33.815, 151.0, 14));
+    });
     await page.evaluate(
-      "window.__floodTestZoom && window.__floodTestZoom(-33.815, 151.0, 14)",
-    );
-    await page.evaluate(
-      ([n]) => window.__floodSetOverlay(n, true),
+      async (...args) => {
+        await (([n]) => window.__floodSetOverlay(n, true))(...args);
+      },
       ["NSW flood planning areas (state)"],
     );
     await page.waitForTimeout(8000);
@@ -304,7 +323,9 @@ async function main() {
     await page.screenshot({ path: "smoke-nsw.png" });
     // and zoomed out to the Sydney region, beyond the server's own limit
     var before_nsw = truth(nsw) ? get(nsw, "features", 0) : 0;
-    await page.evaluate("window.__floodTestZoom(-33.8, 151.0, 9)");
+    await page.evaluate(async () => {
+      await window.__floodTestZoom(-33.8, 151.0, 9);
+    });
     await page.waitForTimeout(8000);
     var nsw9 = await page.evaluate(
       "window.__floodStatus.overlays['NSW flood planning areas (state)'] || null",
@@ -317,7 +338,9 @@ async function main() {
     }
     await page.screenshot({ path: "smoke-nsw-z9.png" });
     await page.evaluate(
-      ([n]) => window.__floodSetOverlay(n, false),
+      async (...args) => {
+        await (([n]) => window.__floodSetOverlay(n, false))(...args);
+      },
       ["NSW flood planning areas (state)"],
     );
     for (var [label, args] of [
@@ -325,8 +348,10 @@ async function main() {
       ["coast", [-27.37, 153.17, { kind: "coast", name: "Brisbane Bar" }]],
     ]) {
       var before_updates = get(await status(), "overlayUpdates", 0);
-      await page.evaluate(([la, lo, o]) => {
-        window.__floodModelHere(la, lo, o);
+      await page.evaluate(async (...args) => {
+        await (([la, lo, o]) => {
+          window.__floodModelHere(la, lo, o);
+        })(...args);
       }, args);
       try {
         await page.waitForFunction(
@@ -367,10 +392,9 @@ async function main() {
       failures.push(`expected two drawn modelled areas: ${formatValue(areas)}`);
     }
     if (truth(areas)) {
-      await page.evaluate(
-        (k) => window.__floodActivateArea(k),
-        areas[0]["key"],
-      );
+      await page.evaluate(async (...args) => {
+        await ((k) => window.__floodActivateArea(k))(...args);
+      }, areas[0]["key"]);
       await page.waitForTimeout(800);
       var after_switch = await page.evaluate("window.__floodAreaInfo()");
       if (!truth(after_switch[0]["active"])) {
@@ -411,7 +435,9 @@ async function main() {
     }
     // ---- a model started from a report shares the report's number,
     //      and the number can be hidden and shown from Places
-    await page.evaluate("window.__floodOpenPanel('panel-report')");
+    await page.evaluate(async () => {
+      await window.__floodOpenPanel("panel-report");
+    });
     var dam_btn = page
       .locator(".report-card", { hasText: "Wivenhoe" })
       .locator(".js-model");
@@ -445,11 +471,15 @@ async function main() {
         );
       } else {
         var n = linked[0]["n"];
-        await page.evaluate((n) => window.__floodSetPlaceHidden(n, true), n);
+        await page.evaluate(async (...args) => {
+          await ((n) => window.__floodSetPlaceHidden(n, true))(...args);
+        }, n);
         var hid = (await page.evaluate("window.__floodPlaces()"))
           .filter((p) => truth(p["n"] === n))
           .map((p) => p)[0];
-        await page.evaluate((n) => window.__floodSetPlaceHidden(n, false), n);
+        await page.evaluate(async (...args) => {
+          await ((n) => window.__floodSetPlaceHidden(n, false))(...args);
+        }, n);
         var shown = (await page.evaluate("window.__floodPlaces()"))
           .filter((p) => truth(p["n"] === n))
           .map((p) => p)[0];
@@ -462,12 +492,16 @@ async function main() {
           `Places: ${formatValue(places)}; hide->${formatValue(hid)}; show->${formatValue(shown)}`,
         );
         // the Places panel reaches the report and the flood scenario
-        await page.evaluate("window.__floodSetPlacesCollapsed(false)");
+        await page.evaluate(async () => {
+          await window.__floodSetPlacesCollapsed(false);
+        });
         await page.waitForTimeout(300);
         if (!truth(await page.locator("#areaList").isVisible())) {
           failures.push("the Places list is not visible");
         }
-        await page.evaluate("window.__floodOpenPanel('panel-layers')");
+        await page.evaluate(async () => {
+          await window.__floodOpenPanel("panel-layers");
+        });
         await page
           .locator(
             `#placesCard [data-act='report'][data-n='${formatValue(n)}']`,
@@ -507,14 +541,18 @@ async function main() {
         );
         appendSummary(`- Places: ${formatValue(JSON.stringify(places))}\n`);
       }
-      await page.evaluate("window.__floodOpenPanel('panel-scenario')");
+      await page.evaluate(async () => {
+        await window.__floodOpenPanel("panel-scenario");
+      });
       await page.screenshot({ path: "smoke-places.png" });
     } else {
       failures.push("no Wivenhoe report card to model from");
     }
     // ---- detailed Brisbane model
     await page.selectOption("#area", "brisbane");
-    await page.evaluate("window.__floodOpenPanel('panel-scenario')");
+    await page.evaluate(async () => {
+      await window.__floodOpenPanel("panel-scenario");
+    });
     try {
       await page.waitForFunction(
         "window.__floodStatus && window.__floodStatus.area === 'brisbane' && window.__floodStatus.mode === 'map' && window.__floodAreaInfo().some(a => a.key === 'brisbane' && a.active && a.drawn)",
@@ -553,7 +591,9 @@ async function main() {
     );
     if (get(s1, "mode") === "map") {
       var box = await page.locator("#lmap").boundingBox();
-      await page.evaluate("window.__floodTapAt(-27.52, 152.98)");
+      await page.evaluate(async () => {
+        await window.__floodTapAt(-27.52, 152.98);
+      });
       try {
         await page.waitForSelector(".leaflet-popup-content", { timeout: 5000 });
         var popup = await page.innerText(".leaflet-popup-content");
@@ -580,9 +620,13 @@ async function main() {
         );
       }
       // moving the gauge onto a small creek must not be possible
-      await page.evaluate("window.__floodOpenPanel('panel-layers')");
+      await page.evaluate(async () => {
+        await window.__floodOpenPanel("panel-layers");
+      });
       await page.check("#moveGauge");
-      await page.evaluate("window.__floodTapAt(-27.52, 152.98)");
+      await page.evaluate(async () => {
+        await window.__floodTapAt(-27.52, 152.98);
+      });
       await page.waitForTimeout(500);
       var moved = await page.innerText("#readout");
       note("notice", `Tap with gauge moving on: ${formatValue(moved)}`);
@@ -590,13 +634,17 @@ async function main() {
         failures.push(`gauge moved onto dry ground: ${formatValue(moved)}`);
       }
       await page.uncheck("#moveGauge");
-      await page.evaluate("window.__floodOpenPanel('panel-scenario')");
+      await page.evaluate(async () => {
+        await window.__floodOpenPanel("panel-scenario");
+      });
       // every basemap in the switcher should load tiles at Brisbane
       var names = await page.evaluate(
         "Object.keys(window.__floodStatus.basemaps || {})",
       );
       for (var name of names) {
-        await page.evaluate((n) => window.__floodSetBasemap(n), name);
+        await page.evaluate(async (...args) => {
+          await ((n) => window.__floodSetBasemap(n))(...args);
+        }, name);
         try {
           await page.waitForFunction(
             `window.__floodStatus.basemaps[${formatValue(JSON.stringify(name))}].loaded > 0`,
@@ -625,18 +673,26 @@ async function main() {
         await page.screenshot({ path: `smoke-${formatValue(safe)}.png` });
       }
       if (truth(names)) {
-        await page.evaluate((n) => window.__floodSetBasemap(n), names[0]);
+        await page.evaluate(async (...args) => {
+          await ((n) => window.__floodSetBasemap(n))(...args);
+        }, names[0]);
       }
       // council likelihood layers zoomed out: pre-rendered images
-      await page.evaluate(
-        "window.__floodTestZoom && window.__floodTestZoom(-27.47, 153.02, 11)",
-      );
+      await page.evaluate(async () => {
+        await (window.__floodTestZoom &&
+          window.__floodTestZoom(-27.47, 153.02, 11));
+      });
       await page.waitForTimeout(1500);
       for (var name of [
         "Creek flooding likelihood (council)",
         "Overland flow likelihood (council)",
       ]) {
-        await page.evaluate(([n]) => window.__floodSetOverlay(n, true), [name]);
+        await page.evaluate(
+          async (...args) => {
+            await (([n]) => window.__floodSetOverlay(n, true))(...args);
+          },
+          [name],
+        );
         await page.waitForTimeout(5000);
         var st = await page.evaluate(
           (n) => window.__floodStatus.overlays[n] || {},
@@ -657,14 +713,17 @@ async function main() {
           .slice(0, 30);
         await page.screenshot({ path: `smoke-z11-${formatValue(safe)}.png` });
         await page.evaluate(
-          ([n]) => window.__floodSetOverlay(n, false),
+          async (...args) => {
+            await (([n]) => window.__floodSetOverlay(n, false))(...args);
+          },
           [name],
         );
       }
       // council flood layers close in: switch each one on
-      await page.evaluate(
-        "window.__floodTestZoom && window.__floodTestZoom(-27.47, 153.02, 15)",
-      );
+      await page.evaluate(async () => {
+        await (window.__floodTestZoom &&
+          window.__floodTestZoom(-27.47, 153.02, 15));
+      });
       await page.waitForTimeout(2000);
       var elsewhere = [
         ...new Set(
@@ -684,7 +743,12 @@ async function main() {
         failures.push("no council flood layers were offered");
       }
       for (var name of ov) {
-        await page.evaluate(([n]) => window.__floodSetOverlay(n, true), [name]);
+        await page.evaluate(
+          async (...args) => {
+            await (([n]) => window.__floodSetOverlay(n, true))(...args);
+          },
+          [name],
+        );
         await page.waitForTimeout(8000);
         var st = await page.evaluate(
           (n) => window.__floodStatus.overlays[n],
@@ -705,7 +769,9 @@ async function main() {
           .slice(0, 40);
         await page.screenshot({ path: `smoke-layer-${formatValue(safe)}.png` });
         await page.evaluate(
-          ([n]) => window.__floodSetOverlay(n, false),
+          async (...args) => {
+            await (([n]) => window.__floodSetOverlay(n, false))(...args);
+          },
           [name],
         );
       }
@@ -719,13 +785,19 @@ async function main() {
         }
         var [lat, lon] = c["test"];
         await page.evaluate(
-          ([la, lo, z]) =>
-            window.__floodTestZoom && window.__floodTestZoom(la, lo, z),
+          async (...args) => {
+            await (([la, lo, z]) =>
+              window.__floodTestZoom && window.__floodTestZoom(la, lo, z))(
+              ...args,
+            );
+          },
           [lat, lon, Math.max(14, (get(c, "minZoom") || 12) + 2)],
         );
         await page.waitForTimeout(1500);
         await page.evaluate(
-          ([n]) => window.__floodSetOverlay(n, true),
+          async (...args) => {
+            await (([n]) => window.__floodSetOverlay(n, true))(...args);
+          },
           [c["name"]],
         );
         try {
@@ -752,7 +824,9 @@ async function main() {
           );
         }
         await page.evaluate(
-          ([n]) => window.__floodSetOverlay(n, false),
+          async (...args) => {
+            await (([n]) => window.__floodSetOverlay(n, false))(...args);
+          },
           [c["name"]],
         );
       }
@@ -799,18 +873,20 @@ async function main() {
     // adding a place while another flood scenario is active switches the Scenario panel to it
     var infos = await page.evaluate("window.__floodAreaInfo()");
     if (truth(infos)) {
-      await page.evaluate(
-        (k) => window.__floodActivateArea(k),
-        infos[0]["key"],
-      );
+      await page.evaluate(async (...args) => {
+        await ((k) => window.__floodActivateArea(k))(...args);
+      }, infos[0]["key"]);
       await page.waitForTimeout(500);
     }
     // tapping an empty spot offers a single add-a-place button
-    await page.evaluate(
-      "window.__floodTestZoom && window.__floodTestZoom(-27.62, 152.76, 11)",
-    );
+    await page.evaluate(async () => {
+      await (window.__floodTestZoom &&
+        window.__floodTestZoom(-27.62, 152.76, 11));
+    });
     await page.waitForTimeout(800);
-    await page.evaluate("window.__floodTapAt(-27.62, 152.76)");
+    await page.evaluate(async () => {
+      await window.__floodTapAt(-27.62, 152.76);
+    });
     await page.waitForTimeout(400);
     var spot = page.locator(".spot-popup .spot-add");
     await page.screenshot({ path: "smoke-spot-popup.png" });
@@ -843,7 +919,9 @@ async function main() {
       failures.push(
         `Scenario panel did not offer to model new place ${formatValue(pin_n)}: ${formatValue(get(await status(), "modelOptions"))}`,
       );
-      await page.evaluate((n) => window.__floodPlaceAction("model", n), pin_n);
+      await page.evaluate(async (...args) => {
+        await ((n) => window.__floodPlaceAction("model", n))(...args);
+      }, pin_n);
     } else {
       await page.locator("#scenarioModel [data-model='model']").click();
     }
@@ -875,7 +953,9 @@ async function main() {
     // ---- a level point pins the surface along the river
     if (truth(pin_place) && truth(pin_place[0]["area"])) {
       var lp0 = get(await status(), "levelPoints", 0) || 0;
-      await page.evaluate("window.__floodAddLevelPoint(-27.60, 152.80)");
+      await page.evaluate(async () => {
+        await window.__floodAddLevelPoint(-27.6, 152.8);
+      });
       await page.waitForTimeout(600);
       var lp1 = get(await status(), "levelPoints", 0) || 0;
       if (lp1 !== lp0 + 1) {
@@ -920,7 +1000,9 @@ async function main() {
       );
       var fb = await page.evaluate("window.__floodSetStorm('both', 80, 1)");
       await page.screenshot({ path: "smoke-storm.png" });
-      await page.evaluate("window.__floodSetStorm('river')");
+      await page.evaluate(async () => {
+        await window.__floodSetStorm("river");
+      });
       note(
         "notice",
         `Storm 80 mm in 1 h: ${formatValue(JSON.stringify(fl))} | ${formatValue(stats_fl.slice(0, 140))}`,
@@ -1004,10 +1086,9 @@ async function main() {
     try {
       var infos = await page.evaluate("window.__floodAreaInfo()");
       if (truth(infos)) {
-        await page.evaluate(
-          (k) => window.__floodActivateArea(k),
-          infos.at(-1)["key"],
-        );
+        await page.evaluate(async (...args) => {
+          await ((k) => window.__floodActivateArea(k))(...args);
+        }, infos.at(-1)["key"]);
         await page.waitForTimeout(1500);
       }
       var joined = await page.evaluate("window.__floodJoinNeighbours()");
@@ -1054,11 +1135,15 @@ async function main() {
       "window.__floodCouncilLayers ? window.__floodCouncilLayers() : []",
     )) {
       await page.evaluate(
-        ([la, lo, z]) => window.__floodTestZoom(la, lo, z),
+        async (...args) => {
+          await (([la, lo, z]) => window.__floodTestZoom(la, lo, z))(...args);
+        },
         [cl["test"][0], cl["test"][1], Math.max(14, cl["minZoom"] + 1)],
       );
       await page.evaluate(
-        ([n]) => window.__floodSetOverlay(n, true),
+        async (...args) => {
+          await (([n]) => window.__floodSetOverlay(n, true))(...args);
+        },
         [cl["name"]],
       );
       await page.waitForTimeout(8000);
@@ -1074,7 +1159,9 @@ async function main() {
         path: `smoke-council-${formatValue(cl["name"].trim().split(/\s+/)[0].toLowerCase())}.png`,
       });
       await page.evaluate(
-        ([n]) => window.__floodSetOverlay(n, false),
+        async (...args) => {
+          await (([n]) => window.__floodSetOverlay(n, false))(...args);
+        },
         [cl["name"]],
       );
     }
@@ -1110,7 +1197,9 @@ async function main() {
         `Rain radar: ${formatValue(JSON.stringify(rd))}`,
       );
       await page.evaluate(
-        ([n]) => window.__floodSetOverlay(n, false),
+        async (...args) => {
+          await (([n]) => window.__floodSetOverlay(n, false))(...args);
+        },
         ["Rain radar, latest (RainViewer)"],
       );
     } else {
@@ -1133,7 +1222,9 @@ async function main() {
       truth(srch) && truth(get(srch, "results")) ? "notice" : "warning",
       `Address search: ${formatValue(JSON.stringify(srch))}`,
     );
-    await page.evaluate("window.__floodGoTo(-28.809, 153.2765, 'Lismore')");
+    await page.evaluate(async () => {
+      await window.__floodGoTo(-28.809, 153.2765, "Lismore");
+    });
     await page.waitForTimeout(1500);
     var hit = get(await status(), "searchHit");
     if (!truth(truth(hit) && truth(get(hit, "inModel")))) {
@@ -1302,14 +1393,22 @@ async function main() {
       var lvl0 = await page.evaluate(
         "parseFloat(document.getElementById('gaugeLevel').value)",
       );
-      await page.evaluate("window.__floodPin()");
-      await page.evaluate((v) => window.__floodSetLevel(v), lvl0 + 1.0);
+      await page.evaluate(async () => {
+        await window.__floodPin();
+      });
+      await page.evaluate(async (...args) => {
+        await ((v) => window.__floodSetLevel(v))(...args);
+      }, lvl0 + 1.0);
       await page.waitForTimeout(1500);
       var cmp = await page.evaluate("window.__floodColorMode('compare')");
       extra["compare"] = get(cmp, "compare");
       await page.screenshot({ path: "smoke-compare.png" });
-      await page.evaluate((v) => window.__floodSetLevel(v), lvl0);
-      await page.evaluate("window.__floodColorMode('depth')");
+      await page.evaluate(async (...args) => {
+        await ((v) => window.__floodSetLevel(v))(...args);
+      }, lvl0);
+      await page.evaluate(async () => {
+        await window.__floodColorMode("depth");
+      });
       var spot = await page.evaluate(
         "window.__floodGaugeLatLng ? window.__floodGaugeLatLng() : null",
       );
@@ -1325,10 +1424,14 @@ async function main() {
         );
         await page.screenshot({ path: "smoke-property.png" });
       }
-      await page.evaluate("window.__floodRelease(40, 10, 36)");
+      await page.evaluate(async () => {
+        await window.__floodRelease(40, 10, 36);
+      });
       var rel = await page.evaluate("window.__floodRunTimeline()");
       extra["release"] = truth(rel) ? get(rel, "release") : null;
-      await page.evaluate("window.__floodRelease(0, 10, 36)");
+      await page.evaluate(async () => {
+        await window.__floodRelease(0, 10, 36);
+      });
     } catch (e) {
       extra["error"] = String(e).slice(0, 300);
     }
@@ -1384,7 +1487,9 @@ async function main() {
     } catch (error) {
       // A timeout is assessed by the checks below.
     }
-    await mp.evaluate("window.__floodOpenPanel('panel-layers')");
+    await mp.evaluate(async () => {
+      await window.__floodOpenPanel("panel-layers");
+    });
     await mp.waitForTimeout(800);
     var cdp = await mctx.newCDPSession(mp);
     var box = await mp.locator("#panel-layers").boundingBox();
@@ -1500,7 +1605,9 @@ async function main() {
 `,
             " ",
           );
-          await page.evaluate("window.__floodLeveesFail(false)");
+          await page.evaluate(async () => {
+            await window.__floodLeveesFail(false);
+          });
         } catch (e) {
           var [fd, dl, ff, st_in, st_out] = [
             { error: String(e).slice(0, 300) },
