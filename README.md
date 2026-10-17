@@ -6,7 +6,7 @@ For the processed Brisbane area the flood layer sits on a pan-and-zoom street ma
 
 The heavy terrain work is done by the hydrology tools that power [RustGIS](https://github.com/opengeos/RustGIS) (Whitebox tools compiled into the `flood` command). A small browser viewer then runs the flood scenarios instantly.
 
-**Live site:** https://ghedwards.github.io/brisbane-flood-explorer/ (after GitHub Pages is switched on, see [Setup](#setup)).
+**Live site:** https://ghedwards.github.io/flood-explorer/ (after GitHub Pages is switched on, see [Setup](#setup)).
 
 > **Not for emergency or property decisions.** This is a screening model built on a 30 m surface model. Use [Brisbane City Council Flood Awareness Maps](https://fam.brisbane.qld.gov.au/) and [Bureau of Meteorology warnings](https://www.bom.gov.au/qld/warnings/) for real flood risk.
 
@@ -187,8 +187,8 @@ npx playwright install chromium
 npm test
 npm run build
 npm run test:build
-SMOKE_PRESETS=quick npm run test:smoke -- https://ghedwards.github.io/brisbane-flood-explorer/
-npm run test:sources -- https://ghedwards.github.io/brisbane-flood-explorer/
+SMOKE_PRESETS=quick npm run test:smoke -- https://ghedwards.github.io/flood-explorer/
+npm run test:sources -- https://ghedwards.github.io/flood-explorer/
 ```
 
 Lint and dependency checks run on pull requests, pushes to main, and weekly:

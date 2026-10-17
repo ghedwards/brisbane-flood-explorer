@@ -1,5 +1,5 @@
 {
-  "name": "brisbane-flood-explorer",
+  "name": "flood-explorer",
   "private": true,
   "scripts": {
     "test": "node --test tests/*.test.js",
