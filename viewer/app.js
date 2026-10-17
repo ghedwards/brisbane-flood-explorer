@@ -291,7 +291,7 @@
     return best;
   }
 
-  async function loadArea(id) {
+  async function loadArea(id, opts) {
     if (areaReg.has(id)) { activateArea(id, { fit: true }); return; }
     if (id.startsWith('preset:')) {
       const p = PRESETS.find((x) => `preset:${x.id}` === id);
@@ -327,6 +327,8 @@
         await useGrid(g, 'sample', { events: true });
       } else {
         const meta = await (await fetch(`data/${id}/meta.json`, { cache: 'no-cache' })).json();
+        if (opts && opts.keepN != null) meta.keepN = opts.keepN;
+        if (opts && Number.isFinite(opts.streamAreaKm2) && opts.streamAreaKm2 > 0) meta.streamAreaKm2 = opts.streamAreaKm2;
         const [demBuf, d8Buf] = await Promise.all([
           fetch(`data/${id}/${meta.files.dem}`).then(okBuf),
           fetch(`data/${id}/${meta.files.d8}`).then(okBuf),
@@ -573,8 +575,9 @@
 
   /* -------------------------------------------------------------- model */
 
-  let impactT = 0;
+  let impactT = 0, timelineSeq = 0;
   function runScenario() {
+    timelineSeq++; // discard timelines still computing for the previous scenario
     const a = state.a;
     if (!a) return;
     // a changed scenario makes the flood-over-time result stale
@@ -3593,14 +3596,16 @@
     out.areas = [];
     for (const a of areaReg.values()) {
       const meta = a.areaMeta || {};
-      if (!meta.local || !meta.gaugeLatLon) continue;
+      const detailed = !meta.local && a.areaId && meta.bounds_lonlat && !meta.upload && !meta.synthetic;
+      if (!detailed && (!meta.local || !meta.gaugeLatLon)) continue;
       const live = a.key === state.areaKey;
       const ctlv = live ? Object.fromEntries(CTL_KEYS.map((k) => [k, ctl[k].value])) : a.ctl;
       const ctrls = (live ? state.controls : a.controls) || [];
       const grid = live ? state.grid : a.grid, geo = live ? state.geo : a.geo;
       const points = modelPoints(grid, geo, live ? state.gauge : a.gauge, ctrls);
       out.areas.push({
-        n: a.n, name: a.name, kind: meta.kind, g: meta.gaugeLatLon.map(r5), c: (meta.centerLatLon || meta.gaugeLatLon).map(r5), h: meta.halfKm || 10,
+        id: detailed ? a.areaId : undefined,
+        n: a.n, name: a.name, kind: meta.kind, g: meta.gaugeLatLon && meta.gaugeLatLon.map(r5), c: (meta.centerLatLon || meta.gaugeLatLon || []).map(r5), h: meta.halfKm || 10,
         rid: meta.reportId || null, pin: meta.pinN != null ? meta.pinN : null, pre: meta.presetId || null, ctl: ctlv,
         gp: points.gp, cp: points.cp, sa: live ? state.streamAreaKm2 : a.streamAreaKm2,
         def: a.defences && (a.defences.levees.length || a.defences.gates.length) ? a.defences : null,
@@ -3655,7 +3660,11 @@
         // Older links stored only the slider; restore its catchment threshold
         // before analysing terrain or snapping the saved level points.
         const sa = a.sa ?? (a.ctl && a.ctl.streamArea != null ? streamFromSlider(Number(a.ctl.streamArea)) : undefined);
-        const ok = await modelHere(a.g[0], a.g[1], {
+        let ok;
+        if (a.id) {
+          await loadArea(a.id, { keepN: a.n, streamAreaKm2: sa });
+          ok = state.areaId === a.id;
+        } else ok = await modelHere(a.g[0], a.g[1], {
           kind: a.kind, name: a.name, reportId: rep ? rep.id : null, pinN: a.pin, presetId: a.pre,
           halfKm: size[0], cellM: size[1], center: a.c, keepN: a.n, quiet: true,
           streamAreaKm2: Number.isFinite(sa) && sa > 0 ? sa : undefined,
@@ -4871,9 +4880,12 @@
     }
   }
   async function runTimeline(eventId) {
-    const area = state.areaKey && areaReg.get(state.areaKey), a = state.a;
+    const key = state.areaKey, area = key && areaReg.get(key), a = state.a;
     if (!area || !a || state.gauge < 0) return null;
+    const seq = ++timelineSeq;
+    const current = () => timelineSeq === seq && state.areaKey === key && state.a === a && areaReg.get(key) === area;
     await ensureHistory();
+    if (!current()) return null;
     if (eventId !== undefined) { renderShapeChoices(); $('floodShape').value = eventId || ''; renderShapeChoices(); }
     const box = $('timelineBox');
     box.innerHTML = '<p class="hint">Working out the flood hour by hour…</p>';
@@ -4881,13 +4893,14 @@
     const s = scenario(), opts = timeOpts();
     if (!opts.hydro && s.gaugeLevel <= opts.baseLevel + 0.1) { box.innerHTML = '<p class="hint">Set a peak above the river\'s normal level first.</p>'; return null; }
     if (area.impact == null) await countImpact();   // roads and buildings for closures
-    const key = state.areaKey;
+    if (!current()) return null;
     let tl;
     try { tl = await timelineAsync(a, Object.assign({}, s, { controls: s.controls }), opts); } catch (err) {
+      if (!current()) return null;
       box.innerHTML = `<p class="hint">Couldn't run the flood over time: ${escapeHtml(err.message || String(err))}.</p>`;
       return null;
     }
-    if (state.areaKey !== key) return null;
+    if (!current()) return null;
     tl.opts = opts; tl.s = s;
     tl.event = opts.eventId ? nat.events.find((e) => e.id === opts.eventId) : null;
     if (tl.event) tl.boardShift = s.gaugeLevel - tl.event.peak.level;

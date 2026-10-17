@@ -128,6 +128,109 @@ test('restoring current and older links analyses with the saved stream threshold
   }
 });
 
+test('detailed Brisbane sessions round-trip through the published terrain loader', async () => {
+  const ctx = modelFixture();
+  const area = ctx.areaReg.get('old');
+  area.areaId = 'brisbane';
+  area.n = 7;
+  area.areaMeta = { id: 'brisbane', bounds_lonlat: [0, 0, 1, 1], brisbaneGauge: true };
+  ctx.state.areaId = area.areaId;
+  ctx.state.areaMeta = area.areaMeta;
+  const saved = plain(ctx.sessionState());
+  assert.equal(saved.areas.length, 1);
+  assert.equal(saved.areas[0].id, 'brisbane');
+  assert.equal(saved.active, 7);
+  ctx.areaReg.clear();
+  ctx.nextFrame = async () => {};
+  ctx.renderEvents = noop;
+  ctx.okBuf = (r) => r.arrayBuffer();
+  ctx.showError = (s) => assert.fail(s);
+  ctx.fetch = async (url) => ({
+    json: async () => ({ id: 'brisbane', W: 4, H: 4, cell: 40, bounds_lonlat: [0, 0, 1, 1],
+      files: { dem: 'dem.f32', d8: 'd8.u8' }, brisbaneGauge: true, streamAreaKm2: 4 }),
+    arrayBuffer: async () => url.endsWith('.f32') ? new Float32Array(16).fill(2).buffer : new Uint8Array(16).buffer,
+  });
+  ctx.useGrid = async (grid, id, opts) => {
+    assert.equal(opts.events, true, 'retain Brisbane event levels');
+    assert.equal(grid.d8.length, 16, 'load the published flow directions');
+    assert.equal(ctx.state.areaMeta.streamAreaKm2, 2.5, 'restore threshold before analysis');
+    Object.assign(ctx.state, { grid, areaId: id, areaKey: id, geo, gauge: 0, controls: [], streamAreaKm2: ctx.state.areaMeta.streamAreaKm2 });
+    ctx.areaReg.set(id, { key: id, n: ctx.state.areaMeta.keepN });
+  };
+  ctx.modelHere = () => assert.fail('detailed terrain must not be rebuilt from live DEM services');
+  viewer(['loadArea'], ctx);
+  ctx.ctl.gaugeLevel.value = '1';
+  assert.equal(await ctx.restoreSession(saved, 'test'), true, JSON.stringify(ctx.status));
+  assert.equal(ctx.areaReg.get('brisbane').n, 7);
+  assert.equal(ctx.ctl.gaugeLevel.value, '5');
+  assert.equal(ctx.state.gauge, 5);
+  assert.deepEqual(plain(ctx.state.controls), [{ cell: 10, level: 4, label: 'Bridge' }]);
+});
+
+function deferred() {
+  let resolve, reject;
+  const promise = new Promise((yes, no) => { resolve = yes; reject = no; });
+  return { promise, resolve, reject };
+}
+
+function timelineFixture(stage) {
+  const pending = deferred(), entered = deferred();
+  const area = { impact: null }, box = { innerHTML: '' };
+  let calls = 0;
+  const pause = () => { entered.resolve(); return pending.promise; };
+  const ctx = viewer(['runTimeline'], {
+    state: { areaKey: 'A', a: {}, gauge: 0 }, areaReg: new Map([['A', area]]), timelineSeq: 0,
+    ensureHistory: stage === 'history' ? pause : async () => {},
+    countImpact: stage === 'impact' ? pause : async () => {},
+    timelineAsync: () => { calls++; return stage === 'worker' ? pause() : Promise.resolve({ gauge: [1, 2], steps: 2, step: 1 }); },
+    $: () => box, renderTideRow: noop, scenario: () => ({ gaugeLevel: 5 }), timeOpts: () => ({ baseLevel: 0 }),
+    F: { waveSetup: () => ({ routed: null }) }, timelineAccess: () => null,
+    renderTimeline: noop, showTimeStep: noop, status: {}, escapeHtml: String,
+  });
+  return { ctx, area, box, pending, entered, calls: () => calls };
+}
+
+for (const stage of ['history', 'impact', 'worker']) {
+  test(`timeline abandons a place switched while awaiting ${stage}`, async () => {
+    const f = timelineFixture(stage), job = f.ctx.runTimeline();
+    await f.entered.promise;
+    f.ctx.state.areaKey = 'B';
+    f.ctx.state.a = {};
+    f.pending.resolve({ gauge: [1, 2] });
+    assert.equal(await job, null);
+    assert.equal(f.calls(), stage === 'worker' ? 1 : 0);
+    assert.equal(f.area.timeline, undefined, 'discard stale results');
+    assert.equal(f.ctx.status.timeline, undefined);
+  });
+}
+
+test('a changed scenario discards a pending timeline and its errors', async () => {
+  for (const fails of [false, true]) {
+    const f = timelineFixture('worker'), job = f.ctx.runTimeline();
+    await f.entered.promise;
+    // runScenario invalidates pending work even if the place stays the same.
+    viewer(['runScenario'], f.ctx);
+    const a = f.ctx.state.a;
+    f.ctx.state.a = null;
+    f.ctx.runScenario();
+    f.ctx.state.a = a;
+    f.box.innerHTML = 'new scenario';
+    if (fails) f.pending.reject(new Error('stale failure'));
+    else f.pending.resolve({ gauge: [1, 2] });
+    assert.equal(await job, null);
+    assert.equal(f.box.innerHTML, 'new scenario');
+    assert.equal(f.area.timeline, undefined);
+  }
+});
+
+test('a timeline for an unchanged model completes', async () => {
+  const f = timelineFixture('worker'), job = f.ctx.runTimeline();
+  await f.entered.promise;
+  f.pending.resolve({ gauge: [1, 2], steps: 2, step: 1 });
+  assert.equal((await job).steps, 2);
+  assert.equal(f.area.timeline.steps, 2);
+});
+
 test('population estimates use only the covered share of a census area', () => {
   const ctx = viewer(['cellOf', 'ringsKm2', 'computeImpact'], {
     state: { areaKey: 'a', a: { W: 2, H: 2, N: 4, cell: 1000, ocean: new Uint8Array(4) }, geo,
