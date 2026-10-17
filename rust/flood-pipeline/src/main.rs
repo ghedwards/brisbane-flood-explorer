@@ -19,6 +19,7 @@
 //!   flood dea <out_dir>
 //!   flood dem <config.json> <work_dir>
 //!   flood hydrology <config.json> <work_dir>
+//!   flood compare-hydrology <left_dir> <right_dir>
 //!   flood tool <list|tool-id> [--key=value ...]
 //!   flood export <config.json> <work_dir> <data_dir>
 //!   flood config <config.json> <key>
@@ -33,6 +34,7 @@ mod floodhub;
 mod floodinfo;
 mod geo;
 mod hydrology;
+mod compare;
 mod levees;
 mod national;
 mod net;
@@ -83,6 +85,7 @@ fn run(args: &[String]) -> R<String> {
         Some("dea") => dea::run(a(1)?),
         Some("dem") => dem::run(a(1)?, a(2)?),
         Some("hydrology") => hydrology::run(a(1)?, a(2)?),
+        Some("compare-hydrology") => compare::run(a(1)?, a(2)?),
         Some("tool") => hydrology::tool(&args[1..]),
         Some("export") => export::run(a(1)?, a(2)?, a(3)?),
         Some("config") => {

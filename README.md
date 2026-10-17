@@ -63,7 +63,7 @@ flowchart LR
   D --> E[Browser viewer<br/>flood model in Rust,<br/>compiled to WebAssembly]
 ```
 
-GitHub Actions runs the whole pipeline on every push to `main`, publishes the viewer and data to GitHub Pages, then loads the live site in a headless browser to check the interactive map works ([`.github/workflows/build.yml`](.github/workflows/build.yml), [`tests/smoke_live.py`](tests/smoke_live.py)). The check's results appear as annotations on the workflow run, with a screenshot attached.
+GitHub Actions runs the whole pipeline on every push to `main`, publishes the viewer and data to GitHub Pages, then loads the live site in a headless browser to check the interactive map works ([`.github/workflows/build.yml`](.github/workflows/build.yml), [`tests/smoke_live.js`](tests/smoke_live.js)). The check's results appear as annotations on the workflow run, with a screenshot attached.
 
 ### 1. Terrain (`flood dem`)
 
@@ -146,7 +146,8 @@ For full hydrodynamic modelling, the outputs here are a starting point for [ANUG
 The viewer is plain HTML and JavaScript with no build step:
 
 ```sh
-python3 -m http.server -d viewer 8000   # then open http://localhost:8000
+npm ci
+npm run serve   # then open http://localhost:8000
 ```
 
 If the map library can't load (offline), it falls back to an illustrative sample terrain, which isn't otherwise in the menu. You can also load your own GeoTIFF or ASCII grid DEM in the page, optionally with a `d8.tif` from the pipeline.
@@ -160,7 +161,8 @@ flood dem config/brisbane.json work/brisbane
 flood hydrology config/brisbane.json work/brisbane
 flood export config/brisbane.json work/brisbane viewer/data
 flood national viewer/data/national     # gauges, dams and readings
-python3 -m http.server -d viewer 8000
+npm ci
+npm run serve
 ```
 
 To build the browser model, add the WebAssembly target and copy the module next to the page:
@@ -181,6 +183,19 @@ Where crates.io can't be reached, the [`rust-vendor`](../../tree/rust-vendor) br
 
 ## Tests
 
+Browser checks use Node.js 22+ and Playwright (the browser version is pinned in `package-lock.json`):
+
+```sh
+npm ci
+npx playwright install chromium
+npm test
+SMOKE_PRESETS=quick npm run test:smoke -- https://ghedwards.github.io/brisbane-flood-explorer/
+npm run test:sources -- https://ghedwards.github.io/brisbane-flood-explorer/
+```
+
+The comparison workflow uses `flood compare-hydrology <reference-directory> <candidate-directory>` to check all six hydrology rasters. It compares pixels (including matching NaNs), sample types, dimensions and geospatial metadata, and exits unsuccessfully if a file is missing, unreadable or different.
+
+
 ```sh
 node --test tests/*.test.js                                   # the model (JavaScript) and the app
 cargo test --manifest-path rust/Cargo.toml --workspace          # the model and pipeline in Rust (services mocked)
@@ -190,7 +205,7 @@ FLOOD_IMPL=wasm node tests/parity.js > w.txt && node tests/parity.js w.txt   # s
 
 The tests check routing (every cell drains), monotonic flooding, water levels at the gauge and mouth, connectivity, and that Whitebox D8 pointers from the pipeline reproduce the browser's own routing exactly.
 
-After every deploy, a live check (`tests/smoke_live.py`) opens the published site in a headless browser and uses it: reports, river, coastal and storm models, area studies, level points, impact counts, recorded-flood checks, share links phone scrolling, keyboard use of the map, and first-load size and time. It builds a quick sample of four presets on each change; every preset is built nightly (2:43 am Brisbane time) or when you run the workflow by hand from the Actions tab (*Run workflow*, with "build all 58 presets" ticked).
+After every deploy, a live check (`tests/smoke_live.js`) opens the published site in a headless browser and uses it: reports, river, coastal and storm models, area studies, level points, impact counts, recorded-flood checks, share links phone scrolling, keyboard use of the map, and first-load size and time. It builds a quick sample of four presets on each change; every preset is built nightly (2:43 am Brisbane time) or when you run the workflow by hand from the Actions tab (*Run workflow*, with "build all 58 presets" ticked).
 
 ## Repository layout
 

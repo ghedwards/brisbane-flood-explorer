@@ -1,0 +1,14 @@
+{
+  "name": "brisbane-flood-explorer",
+  "private": true,
+  "scripts": {
+    "test": "node --test tests/*.test.js",
+    "test:smoke": "node tests/smoke_live.js",
+    "test:sources": "node tests/probe_sources.js",
+    "serve": "http-server viewer -p 8000 -c-1"
+  },
+  "devDependencies": {
+    "http-server": "14.1.1",
+    "playwright": "1.55.1"
+  }
+}

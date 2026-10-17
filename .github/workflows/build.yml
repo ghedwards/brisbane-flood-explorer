@@ -392,28 +392,7 @@ jobs:
 
   smoke-test:
     needs: deploy
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
-        with:
-          python-version: "3.12"
-      - name: Install browser
-        run: |
-          pip install playwright==1.48.0
-          python -m playwright install --with-deps chromium
-      - name: Check the live interactive map
-        env:
-          # every preset nightly or when asked; a quick sample otherwise
-          SMOKE_PRESETS: ${{ ((github.event_name == 'schedule' && github.event.schedule == '43 16 * * *') || (github.event_name == 'workflow_dispatch' && inputs.all_presets)) && 'all' || 'quick' }}
-        run: |
-          sleep 20  # let Pages finish propagating
-          python tests/smoke_live.py "https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/"
-      - name: Probe national data sources from the browser
-        if: always()
-        run: python tests/probe_sources.py "https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/"
-      - uses: actions/upload-artifact@v7
-        if: always()
-        with:
-          name: smoke-screenshots
-          path: smoke*.png
+    uses: ./.github/workflows/browser-tests.yml
+    with:
+      site_url: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/
+      presets: ${{ ((github.event_name == 'schedule' && github.event.schedule == '43 16 * * *') || (github.event_name == 'workflow_dispatch' && inputs.all_presets)) && 'all' || 'quick' }}
