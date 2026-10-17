@@ -23,6 +23,23 @@ would add, how it could be built from open data, and what to watch for.
 
 ## Modelling
 
+### On-demand Copernicus GLO-30 + hydrology (proposed)
+- **Goal:** Let the on-demand model (20 km squares) optionally use Copernicus GLO-30 with the full hydrology pipeline (breach, fill, D8, flow accumulation, streams, HAND) instead of only DEM-H.
+- **Why:** GLO-30 covers areas DEM-H doesn't, and matches the detailed Brisbane pipeline; consistent tooling across detailed and on-demand models.
+- **Challenges:**
+  - Hydrology tools (Whitebox) must run in the browser; ship `whitebox-wasm` to the client and run breach/fill/D8/flow-acc in a worker.
+  - Download and mosaic GLO-30 tiles client-side (CORS, tile size, memory for 20 km squares at 30 m).
+  - GLO-30 is a surface model (buildings/trees), so results differ from bare-earth DEM-H; document this.
+  - Performance: hydrology on a ~667x667 grid in WASM must stay interactive.
+- **Steps:**
+  1. Prototype downloading one GLO-30 tile and running D8 in the browser.
+  2. Port `flood hydrology` stages to a browser worker using `whitebox-wasm`.
+  3. Add a toggle in the on-demand flow: DEM-H (default) vs GLO-30 + hydrology.
+  4. Cache intermediate rasters in IndexedDB; fall back to DEM-H on failure.
+  5. Update tests (parity between pipeline and browser hydrology) and docs.
+- **Status:** Not started. Large effort; consider as a major release item.
+
+
 - **Flood routing, further.** Below the gauge the flood is routed
   (Muskingum–Cunge) with tributary inflows, measured ratings where the
   gauge has flow records, and tides; recorded floods follow other gauges
