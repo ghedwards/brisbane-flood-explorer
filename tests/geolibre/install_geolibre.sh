@@ -3,7 +3,7 @@
 # Whitebox and GeoLibre terrain and hydrology tools. Downloads the release
 # archive that RustGIS's own installer uses and checks its SHA-256.
 #
-# Usage: pipeline/install_geolibre.sh [install-dir]
+# Usage: tests/geolibre/install_geolibre.sh [install-dir]
 # Env:   GEOLIBRE_TAG (default below), GH_TOKEN for the GitHub CLI.
 set -euo pipefail
 

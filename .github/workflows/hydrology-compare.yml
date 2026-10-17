@@ -1,11 +1,13 @@
 name: Compare in-process hydrology with GeoLibre
 
 # Runs the Brisbane hydrology twice on the same dem.tif: with the separate
-# geolibre program (pipeline/run_hydrology.sh) and inside flood (`flood
+# geolibre program (tests/geolibre/run_hydrology.sh) and inside flood (`flood
 # hydrology`), and compares every raster cell by cell.
 on:
   push:
     branches: [hydrology-inprocess]
+  pull_request:
+    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -25,23 +27,38 @@ jobs:
             rust/target
           key: rust-hydro-${{ hashFiles('rust/**/*.rs', 'rust/**/Cargo.toml', 'rust/Cargo.lock') }}
           restore-keys: rust-hydro-
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - name: Test the viewer and JavaScript model
+        run: node --test tests/*.test.js
       - name: Build and test flood
         working-directory: rust
         run: |
-          cargo test --release -p flood-pipeline 2> test.log || { grep -E "^error|panicked|FAILED" -A3 test.log | head -20 | sed 's/^/::error::/'; exit 1; }
-          cargo build --release -p flood-pipeline
+          cargo test --locked --release --workspace 2> test.log || { grep -E "^error|panicked|FAILED" -A3 test.log | head -20 | sed 's/^/::error::/'; exit 1; }
+          cargo build --locked --release -p flood-pipeline
           echo "$PWD/target/release" >> "$GITHUB_PATH"
+      - name: Build and test WebAssembly parity
+        run: |
+          rustup target add wasm32-unknown-unknown
+          cargo build --locked --release --manifest-path rust/Cargo.toml -p flood-wasm --target wasm32-unknown-unknown
+          export FLOOD_WASM="$PWD/rust/target/wasm32-unknown-unknown/release/flood_wasm.wasm"
+          FLOOD_IMPL=wasm node --test tests/core.test.js
+          FLOOD_IMPL=wasm node tests/parity.js > work-parity-wasm.txt
+          node tests/parity.js work-parity-wasm.txt
+          cargo run --locked -q --release --manifest-path rust/Cargo.toml -p flood-core --example parity > work-parity-rust.txt
+          node tests/parity.js work-parity-rust.txt
       - name: GeoLibre runner
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          pipeline/install_geolibre.sh "$HOME/.local/bin"
+          tests/geolibre/install_geolibre.sh "$HOME/.local/bin"
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
       - name: Hydrology both ways
         run: |
           flood dem config/brisbane.json work/a
           mkdir -p work/b && cp work/a/dem.tif work/b/
-          s=$(date +%s); pipeline/run_hydrology.sh config/brisbane.json work/a > a.log; ta=$(( $(date +%s) - s ))
+          s=$(date +%s); tests/geolibre/run_hydrology.sh config/brisbane.json work/a > a.log; ta=$(( $(date +%s) - s ))
           s=$(date +%s); flood hydrology config/brisbane.json work/b > b.log; tb=$(( $(date +%s) - s ))
           echo "::notice::geolibre program: ${ta} s; in flood: ${tb} s ($(tail -1 b.log))"
       - name: Compare
@@ -49,16 +66,20 @@ jobs:
           pip install --quiet rasterio numpy
           python - <<'EOF'
           import numpy as np, rasterio
+          failures = []
           for name in ["dem_breached", "dem_cond", "d8", "acc", "streams", "hand"]:
               a, b = rasterio.open(f"work/a/{name}.tif"), rasterio.open(f"work/b/{name}.tif")
               x, y = a.read(1).astype("float64"), b.read(1).astype("float64")
               same_grid = a.shape == b.shape and a.transform == b.transform and a.crs == b.crs
               if x.shape != y.shape:
-                  print(f"::warning::{name}: grid {x.shape} vs {y.shape}"); continue
+                  print(f"::error::{name}: grid {x.shape} vs {y.shape}"); failures.append(name); continue
               exact = int((x == y).sum()) + int((np.isnan(x) & np.isnan(y)).sum())
               d = np.abs(x - y); d = d[np.isfinite(d)]
-              level = "notice" if exact == x.size and same_grid else "warning"
+              matches = exact == x.size and same_grid and a.nodata == b.nodata and a.dtypes == b.dtypes
+              if not matches: failures.append(name)
+              level = "notice" if matches else "error"
               print(f"::{level}::{name}: {exact} of {x.size} cells identical; grid/CRS match {same_grid}; max diff {d.max() if d.size else 0:.6g}; nodata {a.nodata} vs {b.nodata}; dtype {a.dtypes[0]} vs {b.dtypes[0]}")
+          if failures: raise SystemExit("Raster comparison failed: " + ", ".join(failures))
           EOF
       - name: Export from the in-process run
         run: |

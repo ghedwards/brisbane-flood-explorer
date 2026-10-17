@@ -1,5 +1,5 @@
 //! Terrain hydrology with the RustGIS tools, run inside `flood` (was
-//! pipeline/run_hydrology.sh calling the separate `geolibre` program).
+//! tests/geolibre/run_hydrology.sh calling the separate `geolibre` program).
 //!
 //! Usage: flood hydrology <config.json> <work_dir>
 //!        flood tool <tool-id> [--key=value ...]
@@ -124,7 +124,7 @@ pub fn tool(argv: &[String]) -> R<String> {
 
 /// The pipeline's steps: (tool, arguments). File names are in the work folder.
 fn steps(cell: f64, area_km2: f64, breach: i64) -> Vec<(&'static str, Vec<(&'static str, Value)>)> {
-    let thresh = (area_km2 * 1e6 / (cell * cell)).round_ties_even() as i64;
+    let thresh = (area_km2 * 1e6 / (cell * cell)).round() as i64;
     let s = |v: &str| Value::String(v.to_string());
     vec![
         // carve through road embankments and bridges a surface model shows as dams, then fill the rest
@@ -190,6 +190,7 @@ mod tests {
         assert_eq!(a["zero_background"], true);
         assert_eq!(a["x"], 1.5);
         assert_eq!(steps(40.0, 1.0, 60)[4].1[1].1, 625, "stream threshold in cells");
+        assert_eq!(steps(100.0, 0.025, 60)[4].1[1].1, 3, "half-cell thresholds round up like the shell runner");
     }
 
     #[test]

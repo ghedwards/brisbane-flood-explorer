@@ -132,28 +132,13 @@ and when roads close and how long places stay cut off (flood over time).
 - **Preset audit.** The live check lists which Bureau gauge each river
   preset is anchored to; review any presets that aren't anchored or sit
   far from their gauge.
-- **Hydrology inside `flood` (in progress, branch `hydrology-inprocess`).**
-  `flood hydrology <config> <work>` runs the same six RustGIS tools as
-  `pipeline/run_hydrology.sh` (breach, fill, D8 pointer, accumulation,
-  streams, HAND) in-process through `wbtools_oss` from
-  opengeos/whitebox-wasm, pinned to commit 6b2a6eb, the code inside the
-  GeoLibre 1.6.0 release the build uses; `flood tool <id> --k=v` runs any
-  tool of the suite. Its tests pass, including a real run on a test
-  valley. Notes:
-  - `rust/Cargo.lock` was seeded from GeoLibre 1.6.0's lockfile because
-    whitebox-wasm at that commit needs `zip` 8.5.1+, which is yanked on
-    crates.io; Cargo still uses a yanked version pinned in a lockfile.
-    Keep the lockfile; don't regenerate it from scratch.
-  - Run the vendor workflow on the branch (Actions > Vendor Rust crates,
-    or the REST dispatch with `ref=hydrology-inprocess`) to refresh the
-    `rust-vendor` branch for offline builds.
-  - Next: `.github/workflows/hydrology-compare.yml` (runs on pushes to the
-    branch) runs the Brisbane hydrology with both the geolibre program
-    and `flood hydrology` and compares every raster. If they match, switch
-    `build.yml` to `flood hydrology`, drop `install_geolibre.sh` and
-    `run_hydrology.sh`, and merge. A release build with LTO takes over
-    ten minutes because of the whole tool suite; consider a lighter
-    profile for the pipeline.
+- **Hydrology inside `flood` (implemented).** Production uses `flood hydrology`
+  with the six RustGIS tools pinned to whitebox-wasm commit 6b2a6eb (GeoLibre
+  1.6.0). All six Brisbane rasters matched the separate runner exactly.
+  The comparison workflow retains that runner under `tests/geolibre` and
+  fails on raster or metadata differences. Keep `rust/Cargo.lock` because
+  the tools use a yanked `zip` version. Release builds with LTO take over
+  ten minutes; a lighter pipeline build profile remains worth investigating.
 - **The model inside RustGIS.** `rust/flood-core` has no dependencies and
   builds to WebAssembly; it could be offered to RustGIS as a tool working
   on a DEM and D8 opened there.

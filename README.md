@@ -4,7 +4,7 @@ A screening tool for river and coastal flooding anywhere in Australia. Pick a ri
 
 For the processed Brisbane area the flood layer sits on a pan-and-zoom street map: tap anywhere for ground level and water depth, tap the river to move the gauge, or jump to your location. It opens on Esri satellite imagery; switch between satellite, street, Queensland Government aerial and topographic, and other basemaps with the layer button. Satellite layers from Digital Earth Australia work anywhere in Australia: the latest Landsat/Sentinel-2 imagery in true colour or false-colour infrared, where water stands out dark against vegetation, and a map of how often satellites have seen water at each spot since 1987. Brisbane City Council's creek and overland-flow flood likelihood maps and the recorded 1974, 2011 and 2022 flood extents can be switched on from the same button, to compare the model with the council's studies and with what actually happened.
 
-The heavy terrain work is done by the hydrology tools that power [RustGIS](https://github.com/opengeos/RustGIS) (the [GeoLibre](https://github.com/opengeos/geolibre-rust) runner, built on Whitebox). A small browser viewer then runs the flood scenarios instantly.
+The heavy terrain work is done by the hydrology tools that power [RustGIS](https://github.com/opengeos/RustGIS) (Whitebox tools compiled into the `flood` command). A small browser viewer then runs the flood scenarios instantly.
 
 **Live site:** https://ghedwards.github.io/brisbane-flood-explorer/ (after GitHub Pages is switched on, see [Setup](#setup)).
 
@@ -69,9 +69,9 @@ GitHub Actions runs the whole pipeline on every push to `main`, publishes the vi
 
 Downloads the Copernicus GLO-30 tiles covering the area in [`config/brisbane.json`](config/brisbane.json) and resamples them (bilinear, as GDAL's warp does) to GDA2020 / MGA zone 56 at 40 m. No login is needed.
 
-### 2. Hydrology with the RustGIS tools (`pipeline/run_hydrology.sh`)
+### 2. Hydrology with the RustGIS tools (`flood hydrology`)
 
-`pipeline/install_geolibre.sh` installs the same `geolibre` runner that RustGIS downloads for its Analyze > GeoLibre toolboxes (pinned release, SHA-256 checked). The pipeline then runs:
+`flood hydrology` runs the same tools as GeoLibre 1.6.0 in-process, pinned to whitebox-wasm commit `6b2a6eb`. It records the tool versions and arguments in `hydrology.json`. The pipeline runs:
 
 | Step | Tool | Output |
 |---|---|---|
@@ -151,14 +151,13 @@ python3 -m http.server -d viewer 8000   # then open http://localhost:8000
 
 If the map library can't load (offline), it falls back to an illustrative sample terrain, which isn't otherwise in the menu. You can also load your own GeoTIFF or ASCII grid DEM in the page, optionally with a `d8.tif` from the pipeline.
 
-The data pipeline is one Rust command, `flood` ([`rust/flood-pipeline`](rust/flood-pipeline); `flood` with no arguments lists its steps). To run it locally (Linux or macOS, needs Rust and the GitHub CLI):
+The data pipeline is one Rust command, `flood` ([`rust/flood-pipeline`](rust/flood-pipeline); `flood` with no arguments lists its steps). To run it locally (Linux or macOS, needs Rust):
 
 ```sh
-cargo build --release --manifest-path rust/Cargo.toml -p flood-pipeline
+cargo build --locked --release --manifest-path rust/Cargo.toml -p flood-pipeline
 export PATH="$PWD/rust/target/release:$PATH"
-pipeline/install_geolibre.sh ~/.local/bin
 flood dem config/brisbane.json work/brisbane
-pipeline/run_hydrology.sh config/brisbane.json work/brisbane
+flood hydrology config/brisbane.json work/brisbane
 flood export config/brisbane.json work/brisbane viewer/data
 flood national viewer/data/national     # gauges, dams and readings
 python3 -m http.server -d viewer 8000
@@ -168,9 +167,11 @@ To build the browser model, add the WebAssembly target and copy the module next 
 
 ```sh
 rustup target add wasm32-unknown-unknown
-cargo build --release --manifest-path rust/Cargo.toml -p flood-wasm --target wasm32-unknown-unknown
+cargo build --locked --release --manifest-path rust/Cargo.toml -p flood-wasm --target wasm32-unknown-unknown
 cp rust/target/wasm32-unknown-unknown/release/flood_wasm.wasm viewer/flood.wasm
 ```
+
+Keep `rust/Cargo.lock`: the pinned hydrology tools depend on a yanked `zip` version that Cargo can still use from the lockfile. Do not regenerate it from scratch.
 
 Where crates.io can't be reached, the [`rust-vendor`](../../tree/rust-vendor) branch holds every crate the pipeline uses and its `Cargo.lock` (see [`.github/workflows/vendor.yml`](.github/workflows/vendor.yml)).
 
@@ -197,9 +198,9 @@ After every deploy, a live check (`tests/smoke_live.py`) opens the published sit
 config/brisbane.json         area, CRS, cell size, gauge, thresholds
 rust/flood-core/             the flood model (no outside crates)
 rust/flood-wasm/             its WebAssembly interface for the browser
-rust/flood-pipeline/         `flood`: data fetchers, DEM download and export
+rust/flood-pipeline/         `flood`: data fetchers, DEM download, hydrology and export
 rust/flood-node/             the WebAssembly interface as a Node addon, for tests
-pipeline/                    GeoLibre (RustGIS) install + hydrology script
+tests/geolibre/              reference GeoLibre runner for raster comparison
 viewer/                      static web app: index.html (markup), styles.css, app.js,
                              flood-wasm.js (Rust model), flood-core.js (JavaScript model),
                              flood-worker.js (background analysis)
