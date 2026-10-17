@@ -1007,7 +1007,21 @@
       let D = 0;
       for (let kk = k0; kk < k1; kk++) D += 0.3 * cms * depth(path[kk]) / slopeAt(kk);
       D = Math.min(D / Math.max(1, k1 - k0), 5e8);
-      const K = L / cms;
+      // Floodplain storage: widen K by floodplain area near the reach.
+      let fpCells = 0;
+      const bed = a.dem[path[k0]];
+      for (let kk = k0; kk <= k1; kk++) {
+        const c = path[kk], cx = c % a.W, cy = (c - cx) / a.W;
+        for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) {
+          const nx = cx + dx, ny = cy + dy;
+          if (nx < 0 || ny < 0 || nx >= a.W || ny >= a.H) continue;
+          const nn = ny * a.W + nx;
+          if (!a.valid[nn]) continue;
+          if (Math.abs(a.dem[nn] - bed) <= 2) fpCells++;
+        }
+      }
+      const fpRatio = fpCells / Math.max(1, k1 - k0 + 1);
+      const K = (L / cms) * (1 + 0.3 * fpRatio);
       const X = Math.max(0, Math.min(0.5 - D / (cms * L), (cms * dt) / (2 * L), 0.5));
       const den = K * (1 - X) + dt / 2;
       const C0 = (dt / 2 - K * X) / den, C1 = (dt / 2 + K * X) / den, C2 = (K * (1 - X) - dt / 2) / den;

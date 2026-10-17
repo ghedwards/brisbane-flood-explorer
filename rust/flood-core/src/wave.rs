@@ -794,7 +794,25 @@ fn route_down(a: &Analysis, w: &Wave, g: usize, speed_kmh: f64, rating: Option<(
             dsum += 0.3 * cms * depth(cell) / slope_at(kk);
         }
         let dd = jmin(dsum / jmax(1.0, (k1 - k0) as f64), 5e8);
-        let kq = l / cms;
+        // Floodplain storage: estimate floodplain area (cells within 2 m of the
+        // channel bed along this reach) and widen the storage coefficient K so
+        // the peak is attenuated/delayed in proportion to the floodplain.
+        let mut fp_cells = 0usize;
+        let bed = a.dem[path[k0]] as f64;
+        for &cc in path.iter().take(k1 + 1).skip(k0) {
+            let (cx, cy) = (cc % a.w, cc / a.w);
+            for dy in -2..=2i64 {
+                for dx in -2..=2i64 {
+                    let (nx, ny) = (cx as i64 + dx, cy as i64 + dy);
+                    if nx < 0 || ny < 0 || nx >= a.w as i64 || ny >= a.h as i64 { continue; }
+                    let nn = ny as usize * a.w + nx as usize;
+                    if a.valid[nn] == 0 { continue; }
+                    if (a.dem[nn] as f64 - bed).abs() <= 2.0 { fp_cells += 1; }
+                }
+            }
+        }
+        let fp_ratio = (fp_cells as f64) / jmax(1.0, (k1 - k0 + 1) as f64);
+        let kq = (l / cms) * (1.0 + 0.3 * fp_ratio);
         let x = jmax(0.0, jmin(jmin(0.5 - dd / (cms * l), (cms * dt) / (2.0 * l)), 0.5));
         let den = kq * (1.0 - x) + dt / 2.0;
         let c0 = (dt / 2.0 - kq * x) / den;
