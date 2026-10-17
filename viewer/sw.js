@@ -62,7 +62,9 @@ async function networkFirst(req, name, waitMs) {
     return res;
   });
   try {
-    return await Promise.race([net, new Promise((_, rej) => setTimeout(() => rej(new Error('slow')), waitMs))]);
+    const res = await Promise.race([net, new Promise((_, rej) => setTimeout(() => rej(new Error('slow')), waitMs))]);
+    if (!res.ok && res.type !== 'opaque') throw new Error(`HTTP ${res.status}`);
+    return res;
   } catch (err) {
     const hit = await c.match(req, { ignoreVary: true }) || (name === APP ? await c.match(req, { ignoreSearch: true }) : null);
     // no copy: a slow network that eventually answers still wins over nothing
