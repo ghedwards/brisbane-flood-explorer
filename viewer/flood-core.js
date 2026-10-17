@@ -614,6 +614,22 @@
     // river's level rather than its own drain's.
     const lev = s.levee || null;
     const carried = lev ? new Uint8Array(N) : null;
+    const cellArea = a.cell * a.cell;
+    let budget = Infinity, spent = 0;
+    if (lev) {
+      let b = 0;
+      for (let c = 0; c < N; c++) {
+        if (!lev[c]) continue;
+        const stage = level[c];
+        const crest = dem[c];
+        const do_ = stage - crest;
+        if (do_ > 0) {
+          const q = 0.6 * (2/3) * Math.sqrt(2*9.81) * a.cell * Math.pow(do_, 1.5);
+          b += q * (24*3600);
+        }
+      }
+      if (b > 0) budget = b;
+    }
     while (qh < qt) {
       const c = q[qh++], cx = c % W, cy = (c - cx) / W;
       for (let k = 0; k < 4; k++) {
@@ -622,10 +638,14 @@
         const n = ny * W + nx;
         if (wet[n] || !valid[n]) continue;
         let L = level[n];
-        if (lev && (lev[n] || carried[c]) && level[c] > L) L = level[c];
+        let carry = false;
+        if (lev && (lev[n] || carried[c]) && level[c] > L) {
+          const vol = (level[c] - L) * cellArea;
+          if (spent + vol <= budget) { L = level[c]; carry = true; }
+        }
         if (dem[n] < L) {
           wet[n] = 1;
-          if (lev && L > level[n]) { level[n] = L; carried[n] = 1; }
+          if (carry) { level[n] = L; carried[n] = 1; spent += (L - dem[n]) * cellArea; }
           q[qt++] = n;
         }
       }

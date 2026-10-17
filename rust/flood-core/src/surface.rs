@@ -176,6 +176,28 @@ pub(crate) fn inundate_with(a: &Analysis, s: &Scenario, wse: Vec<f64>, on_path: 
     }
     let lev = s.levee.as_deref();
     let mut carried = if lev.is_some() { vec![0u8; n] } else { Vec::new() };
+    // Volume budget for water carried past levees: broad-crested weir
+    // discharge over a 24 h duration, summed over overtopped levee cells.
+    let cell_area = (a.cell * a.cell) as f64;
+    let mut budget = f64::INFINITY;
+    let mut spent = 0.0f64;
+    if let Some(lev) = lev {
+        let cd = 0.6f64;
+        let g = 9.81f64;
+        let t = 24.0 * 3600.0;
+        let mut b = 0.0f64;
+        for c in 0..n {
+            if lev[c] == 0 { continue; }
+            let stage = if level[c].is_finite() { level[c] as f64 } else { 0.0 };
+            let crest = a.dem[c] as f64;
+            let do_ = stage - crest;
+            if do_ > 0.0 {
+                let q = cd * (2.0/3.0) * (2.0*g).sqrt() * (a.cell as f64) * do_.powf(1.5);
+                b += q * t;
+            }
+        }
+        if b > 0.0 { budget = b; }
+    }
     while qh < qt {
         let c = q[qh];
         qh += 1;
@@ -190,16 +212,22 @@ pub(crate) fn inundate_with(a: &Analysis, s: &Scenario, wse: Vec<f64>, on_path: 
                 continue;
             }
             let mut l = level[nn];
+            let mut carry = false;
             if let Some(lev) = lev {
                 if (lev[nn] != 0 || carried[c] != 0) && level[c] > l {
-                    l = level[c];
+                    let vol = (level[c] as f64 - l as f64) * cell_area;
+                    if spent + vol <= budget {
+                        l = level[c];
+                        carry = true;
+                    }
                 }
             }
             if a.dem[nn] < l {
                 wet[nn] = 1;
-                if lev.is_some() && l > level[nn] {
+                if carry {
                     level[nn] = l;
                     carried[nn] = 1;
+                    spent += (l as f64 - a.dem[nn] as f64) * cell_area;
                 }
                 q[qt] = nn;
                 qt += 1;
