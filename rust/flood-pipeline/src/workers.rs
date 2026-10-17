@@ -13,7 +13,7 @@ use serde_json::{Map, Value};
 
 const BASE: &str = "https://www.abs.gov.au/census/find-census-data/datapacks/download/";
 const NAMES: [&str; 3] = ["2021_WPP_SA2_for_AUS_short-header.zip", "2021_WPP_SA2_for_AUS_long-header.zip", "2021_WPP_all_for_AUS_short-header.zip"];
-const BROWSER_UA: &str = "Mozilla/5.0 (compatible; brisbane-flood-explorer; github.com/ghedwards/brisbane-flood-explorer)";
+const BROWSER_UA: &str = "Mozilla/5.0 (compatible; flood-explorer; github.com/ghedwards/flood-explorer)";
 
 fn download() -> R<(String, Vec<u8>)> {
     let mut why = Vec::new();

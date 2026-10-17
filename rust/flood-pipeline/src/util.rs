@@ -6,7 +6,7 @@ use std::path::Path;
 
 pub type R<T> = Result<T, String>;
 
-pub const UA: &str = "brisbane-flood-explorer (github.com/ghedwards/brisbane-flood-explorer)";
+pub const UA: &str = "flood-explorer (github.com/ghedwards/flood-explorer)";
 
 /// Any error as a string.
 pub fn err<E: std::fmt::Display>(e: E) -> String {

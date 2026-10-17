@@ -1,5 +1,5 @@
 /*
- * Brisbane Flood Explorer — model core
+ * Flood Explorer — model core
  *
  * Pure functions, no DOM. Works in the browser (global `FloodCore`)
  * and in Node (`require('./src/flood-core.js')`) for tests.

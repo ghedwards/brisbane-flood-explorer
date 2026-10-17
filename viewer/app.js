@@ -1,4 +1,4 @@
-/* Brisbane Flood Explorer — viewer
+/* Flood Explorer — viewer
  *
  * Loads a terrain (sample, a pipeline-processed area, or the user's own DEM),
  * runs FloodCore for the chosen scenario and draws the map, stats and river

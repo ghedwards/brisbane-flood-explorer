@@ -21,7 +21,7 @@ export default defineConfig({
       ? undefined
       : {
           "/data": {
-            target: "https://ghedwards.github.io/brisbane-flood-explorer",
+            target: "https://ghedwards.github.io/flood-explorer",
             changeOrigin: true,
           },
         },
@@ -31,7 +31,7 @@ export default defineConfig({
     port: 8000,
     proxy: {
       "/data": {
-        target: "https://ghedwards.github.io/brisbane-flood-explorer",
+        target: "https://ghedwards.github.io/flood-explorer",
         changeOrigin: true,
       },
     },
