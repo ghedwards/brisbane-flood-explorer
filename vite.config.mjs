@@ -17,12 +17,14 @@ export default defineConfig({
   server: {
     host: "127.0.0.1",
     port: 8000,
-    proxy: {
-      "/data": {
-        target: "https://ghedwards.github.io/brisbane-flood-explorer",
-        changeOrigin: true,
-      },
-    },
+    proxy: fs.existsSync(path.join(root, "viewer/data"))
+      ? undefined
+      : {
+          "/data": {
+            target: "https://ghedwards.github.io/brisbane-flood-explorer",
+            changeOrigin: true,
+          },
+        },
   },
   preview: {
     host: "127.0.0.1",

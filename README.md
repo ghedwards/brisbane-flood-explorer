@@ -143,7 +143,7 @@ For full hydrodynamic modelling, the outputs here are a starting point for [ANUG
 
 ## Run it yourself
 
-The viewer is plain HTML and JavaScript with no build step:
+The viewer uses Vite for development and production builds. Install Node.js and Rustup, then:
 
 ```sh
 npm ci
@@ -165,15 +165,9 @@ npm ci
 npm run serve
 ```
 
-To build the browser model, add the WebAssembly target and copy the module next to the page:
+Both `npm run serve` and `npm run build` compile the browser model using the pinned Rust toolchain. To compile only the WebAssembly input, run `npm run build:wasm`.
 
-```sh
-rustup target add wasm32-unknown-unknown
-cargo build --locked --release --manifest-path rust/Cargo.toml -p flood-wasm --target wasm32-unknown-unknown
-cp rust/target/wasm32-unknown-unknown/release/flood_wasm.wasm viewer/flood.wasm
-```
-
-Keep `rust/Cargo.lock`: the pinned hydrology tools depend on a yanked `zip` version that Cargo can still use from the lockfile. Do not regenerate it from scratch.
+Commit both lockfiles and `rust-toolchain.toml` when upgrading dependencies. The raster archive dependency patch is documented in `rust/vendor/wbraster/PATCHES.md`.
 
 Where crates.io can't be reached, the [`rust-vendor`](../../tree/rust-vendor) branch holds every crate the pipeline uses and its `Cargo.lock` (see [`.github/workflows/vendor.yml`](.github/workflows/vendor.yml)).
 
@@ -212,7 +206,7 @@ node scripts/report-cargo-outdated.js
 
 ESLint errors, Clippy correctness findings, and known dependency vulnerabilities fail their CI jobs. Other Clippy suggestions remain warnings. Outdated versions are reported in the workflow summary and artifacts; available updates alone do not fail that report. Registry or dependency-resolution errors do fail it. Dependabot opens weekly updates for npm, Cargo and GitHub Actions once this configuration is on the default branch.
 
-Vite bundles Leaflet, Esri Leaflet, GeoTIFF, fonts, workers and the Rust WebAssembly model from pinned dependencies. `npm run build` compiles the model and writes the deployable site to `site/`; `npm run preview` serves that build. `npm run serve` starts the development server. Both servers proxy `/data` to the published dataset for local testing. Production assets use relative URLs (`base: "./"`) and require no library or font CDN. Vite generates the service worker cache list from emitted assets, including lazy chunks. Live data and map tiles still come from their source services.
+Vite bundles Leaflet, Esri Leaflet, GeoTIFF, fonts, workers and the Rust WebAssembly model from pinned dependencies. `npm run build` compiles the model and writes the deployable site to `site/`; `npm run preview` serves that build. `npm run serve` starts the development server. The development server uses `viewer/data` when present; preview uses `site/data`. If that directory is absent, the server proxies `/data` to the published dataset for local testing. Production assets use relative URLs (`base: "./"`) and require no library or font CDN. Vite generates the service worker cache list from emitted assets, including lazy chunks. Live data and map tiles still come from their source services.
 
 The comparison workflow uses `flood compare-hydrology <reference-directory> <candidate-directory>` to check all six hydrology rasters. It compares pixels (including matching NaNs), sample types, dimensions and geospatial metadata, and exits unsuccessfully if a file is missing, unreadable or different.
 
