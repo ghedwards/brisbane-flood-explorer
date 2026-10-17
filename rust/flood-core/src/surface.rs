@@ -235,7 +235,7 @@ pub fn stats(a: &Analysis, run: &Run, base: Option<&Run>) -> Stats {
             continue;
         }
         land += 1;
-        if base.map_or(false, |b| b.wet[c] != 0) {
+        if base.is_some_and(|b| b.wet[c] != 0) {
             continue;
         }
         extra += 1;
@@ -335,7 +335,7 @@ pub fn hazard(a: &Analysis, run: &Run) -> Hazard {
             continue;
         }
         let d = run.depth[c] as f64;
-        if !(d > 0.0) {
+        if d.partial_cmp(&0.0) != Some(std::cmp::Ordering::Greater) {
             continue;
         }
         let kind = run.kind.as_ref().map_or(0, |k| k[c]);

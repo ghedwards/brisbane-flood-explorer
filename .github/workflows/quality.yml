@@ -45,8 +45,8 @@ jobs:
             ~/.cargo/git
             rust/target
           key: clippy-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml', 'rust/Cargo.lock') }}
-      - name: Lint workspace code (correctness findings are errors)
-        run: cargo clippy --locked --manifest-path rust/Cargo.toml --workspace --all-targets --no-deps -- -D clippy::correctness
+      - name: Lint workspace code (warnings are errors)
+        run: cargo clippy --locked --manifest-path rust/Cargo.toml --workspace --all-targets --no-deps -- -D warnings
 
   npm-security:
     name: JavaScript dependency security

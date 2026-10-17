@@ -10,7 +10,7 @@ use wbprojection::{
     EpochPolicy,
     EpochTransformOptions,
 };
-use wide::{f64x4, CmpNe};
+use wide::f64x4;
 
 use crate::error::{Result, RasterError};
 use crate::formats::RasterFormat;
@@ -3177,12 +3177,12 @@ impl Raster {
 
             let not_nodata = values.simd_ne(nd_v);
 
-            let values_for_min = not_nodata.blend(values, inf_v);
-            let values_for_max = not_nodata.blend(values, neg_inf_v);
+            let values_for_min = not_nodata.select(values, inf_v);
+            let values_for_max = not_nodata.select(values, neg_inf_v);
             simd_min = simd_min.min(values_for_min);
             simd_max = simd_max.max(values_for_max);
 
-            let masked_values = not_nodata.blend(values, zero_v);
+            let masked_values = not_nodata.select(values, zero_v);
             simd_sum = simd_sum + masked_values;
             simd_sum_sq = simd_sum_sq + masked_values * masked_values;
 
@@ -3254,12 +3254,12 @@ impl Raster {
             ]);
 
             let not_nodata = values.simd_ne(nd_v);
-            let values_for_min = not_nodata.blend(values, inf_v);
-            let values_for_max = not_nodata.blend(values, neg_inf_v);
+            let values_for_min = not_nodata.select(values, inf_v);
+            let values_for_max = not_nodata.select(values, neg_inf_v);
             simd_min = simd_min.min(values_for_min);
             simd_max = simd_max.max(values_for_max);
 
-            let masked_values = not_nodata.blend(values, zero_v);
+            let masked_values = not_nodata.select(values, zero_v);
             simd_sum = simd_sum + masked_values;
             simd_sum_sq = simd_sum_sq + masked_values * masked_values;
 

@@ -51,7 +51,7 @@ pub struct FlashSummary {
 /// Rainfall uplift for a climate `warming_c` degrees warmer (draft ARR:
 /// about 15%/°C for an hour's storm, 8%/°C for a day's, log-interpolated).
 pub fn storm_uplift(hours: f64, warming_c: f64) -> f64 {
-    if !(warming_c > 0.0) {
+    if warming_c.partial_cmp(&0.0) != Some(std::cmp::Ordering::Greater) {
         return 1.0;
     }
     let h = jmax(1.0, jmin(24.0, or(hours, 1.0)));
@@ -107,7 +107,7 @@ pub fn flash_flood(a: &Analysis, o: &Storm) -> Run {
     };
     let mut rise = vec![0f32; n];
     if cc > 0.0 {
-        for c in 0..n {
+        for (c, cell_rise) in rise.iter_mut().enumerate() {
             if a.stream[c] == 0 || a.valid[c] == 0 || a.ocean[c] != 0 {
                 continue;
             }
@@ -115,7 +115,7 @@ pub fn flash_flood(a: &Analysis, o: &Storm) -> Run {
             let akm2 = area / 1e6;
             let q = cc * i_at(akm2) * area;
             let wd = jmax(cell, 20.0 * akm2.powf(0.4));
-            rise[c] = jmin(max_rise, ((q * n_ch) / (wd * slope_at(c).sqrt())).powf(0.6)) as f32;
+            *cell_rise = jmin(max_rise, ((q * n_ch) / (wd * slope_at(c).sqrt())).powf(0.6)) as f32;
         }
     }
     let mut level = vec![f32::NAN; n];
@@ -152,7 +152,7 @@ pub fn flash_flood(a: &Analysis, o: &Storm) -> Run {
                 continue;
             }
             let nn = ny as usize * w + nx as usize;
-            if wet[nn] != 0 || a.valid[nn] == 0 || !(dem[nn] < level[nn]) {
+            if wet[nn] != 0 || a.valid[nn] == 0 || dem[nn].partial_cmp(&level[nn]) != Some(std::cmp::Ordering::Less) {
                 continue;
             }
             let r = a.recv_stream[nn];

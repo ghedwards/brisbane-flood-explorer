@@ -197,14 +197,14 @@ Lint and dependency checks run on pull requests, pushes to main, and weekly:
 npm run lint                  # ESLint for the viewer and tooling
 npm run check:security        # audit all browser and development packages
 npm run check:outdated        # returns 1 when newer npm releases exist
-cargo clippy --locked --manifest-path rust/Cargo.toml --workspace --all-targets --no-deps -- -D clippy::correctness
+cargo clippy --locked --manifest-path rust/Cargo.toml --workspace --all-targets --no-deps -- -D warnings
 cargo install cargo-audit --version 0.22.2 --locked
 cargo audit --file rust/Cargo.lock
 cargo install cargo-outdated --version 0.19.0 --locked
 node scripts/report-cargo-outdated.js
 ```
 
-ESLint errors, Clippy correctness findings, and known dependency vulnerabilities fail their CI jobs. Other Clippy suggestions remain warnings. Outdated versions are reported in the workflow summary and artifacts; available updates alone do not fail that report. Registry or dependency-resolution errors do fail it. Dependabot opens weekly updates for npm, Cargo and GitHub Actions once this configuration is on the default branch.
+ESLint errors, Rust workspace warnings (including Clippy), and known dependency vulnerabilities fail their CI jobs. Outdated versions are reported in the workflow summary and artifacts; available updates alone do not fail that report. Registry or dependency-resolution errors do fail it. Dependabot opens weekly updates for npm, Cargo and GitHub Actions once this configuration is on the default branch.
 
 Vite bundles Leaflet, Esri Leaflet, GeoTIFF, fonts, workers and the Rust WebAssembly model from pinned dependencies. `npm run build` compiles the model and writes the deployable site to `site/`; `npm run preview` serves that build. `npm run serve` starts the development server. The development server uses `viewer/data` when present; preview uses `site/data`. If that directory is absent, the server proxies `/data` to the published dataset for local testing. Production assets use relative URLs (`base: "./"`) and require no library or font CDN. Vite generates the service worker cache list from emitted assets, including lazy chunks. Live data and map tiles still come from their source services.
 

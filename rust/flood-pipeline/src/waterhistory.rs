@@ -127,7 +127,9 @@ pub fn monthly_series(text: &str) -> Option<Map<String, Value>> {
 }
 
 /// (storage id, series or None, why not)
-fn one(g: Get, feature: &Value) -> Result<(String, Option<Map<String, Value>>, Option<&'static str>), String> {
+type HistoryResult = (String, Option<Map<String, Value>>, Option<&'static str>);
+
+fn one(g: Get, feature: &Value) -> Result<HistoryResult, String> {
     let id = py_str(&feature["properties"]["id"]);
     let c = &feature["geometry"]["coordinates"];
     let (lon, lat) = (c[0].as_f64().unwrap_or(f64::NAN), c[1].as_f64().unwrap_or(f64::NAN));
@@ -168,7 +170,7 @@ pub fn run(national_dir: &str, previous: &str, g: Get) -> R<String> {
     };
     let fresh = |out: &Map<String, Value>, sid: &str| -> bool {
         match out.get(sid).and_then(|h| get_str(h, "fetched")) {
-            Some(f) => days_between(f, &today).map_or(false, |n| n < 7),
+            Some(f) => days_between(f, &today).is_some_and(|n| n < 7),
             None => false,
         }
     };
@@ -204,7 +206,7 @@ pub fn run(national_dir: &str, previous: &str, g: Get) -> R<String> {
             }
             Ok((id, None, why)) => {
                 misses += 1;
-                let had_missing = out.get(&id).map_or(true, |h| truthy(h.get("missing")));
+                let had_missing = out.get(&id).is_none_or(|h| truthy(h.get("missing")));
                 if had_missing {
                     // remember the miss so it isn't retried for a week
                     out.insert(id, json!({"missing": why.unwrap_or(""), "fetched": today}));

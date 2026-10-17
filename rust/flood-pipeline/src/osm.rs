@@ -222,7 +222,7 @@ pub fn run(app_js: &str, out_dir: &str, max_n: usize, days: f64, budget_s: f64, 
         sleep(2.0); // be gentle with the shared service
     }
     let ids: HashSet<&str> = ps.iter().map(|p| p.id.as_str()).collect();
-    let mut files: Vec<_> = std::fs::read_dir(out).map_err(err)?.filter_map(|e| e.ok()).map(|e| e.path()).filter(|p| p.extension().map_or(false, |x| x == "json")).collect();
+    let mut files: Vec<_> = std::fs::read_dir(out).map_err(err)?.filter_map(|e| e.ok()).map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "json")).collect();
     files.sort();
     let mut index = Vec::new();
     for path in files {

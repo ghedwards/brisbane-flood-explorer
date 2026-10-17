@@ -60,7 +60,7 @@ pub fn candidates<'a>(ev: &Value, gauges: &'a [Value]) -> Vec<(f64, &'a Value, f
         }
         let (lon, lat) = lonlat(f);
         let d = km(elat, elon, lat, lon);
-        if !(d <= 8.0) {
+        if !matches!(d.partial_cmp(&8.0), Some(std::cmp::Ordering::Less | std::cmp::Ordering::Equal)) {
             continue;
         }
         let named = pat.is_match(&label(p));
@@ -74,7 +74,7 @@ pub fn candidates<'a>(ev: &Value, gauges: &'a [Value]) -> Vec<(f64, &'a Value, f
 pub fn pick_gauge<'a>(ev: &Value, gauges: &'a [Value]) -> Option<(f64, &'a Value, f64)> {
     let mut best: Option<(f64, &Value, f64)> = None;
     for c in candidates(ev, gauges) {
-        if best.map_or(true, |b| c.0 < b.0) {
+        if best.is_none_or(|b| c.0 < b.0) {
             best = Some(c);
         }
     }

@@ -77,7 +77,7 @@ pub fn fit(pairs: &[(f64, f64)]) -> Option<Map<String, Value>> {
         let st: f64 = ys.iter().map(|y| (y - my).powi(2)).sum();
         let st = if st == 0.0 { 1e-9 } else { st };
         let r2 = 1.0 - ss / st;
-        if best.map_or(true, |bb| r2 > bb.3) {
+        if best.is_none_or(|bb| r2 > bb.3) {
             best = Some((la.exp(), b, h0, r2));
         }
     }
@@ -176,7 +176,7 @@ mod tests {
 
     #[test]
     fn fit_rejects_too_little_or_flat_data() {
-        assert!(fit(&vec![(1.0, 5.0); 10]).is_none());
+        assert!(fit(&[(1.0, 5.0); 10]).is_none());
         assert!(fit(&(0..100).map(|i| (1.0 + i as f64 * 0.001, 5.0 + i as f64)).collect::<Vec<_>>()).is_none());
     }
 

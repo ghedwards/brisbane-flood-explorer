@@ -107,8 +107,8 @@ pub fn analyse(g: &Grid, stream_area_km2: f64) -> Analysis {
         }
     }
     let mut chain = vec![0f64; n];
-    for j in 0..n_order {
-        let c = order[j] as usize;
+    for &cell_index in order.iter().take(n_order) {
+        let c = cell_index as usize;
         chain[c] = if rec[c] >= 0 { chain[rec[c] as usize] + rec_dist[c] as f64 } else { 0.0 };
     }
 
@@ -121,8 +121,8 @@ pub fn analyse(g: &Grid, stream_area_km2: f64) -> Analysis {
         }
     }
     let mut recv_stream = vec![-1i32; n];
-    for j in 0..n_order {
-        let c = order[j] as usize;
+    for &cell_index in order.iter().take(n_order) {
+        let c = cell_index as usize;
         if stream[c] != 0 {
             recv_stream[c] = c as i32;
         } else if rec[c] >= 0 {
@@ -347,9 +347,9 @@ fn topo_order(rec: &[i32], valid: &[u8], n: usize) -> (Vec<i32>, usize) {
 /// Receivers as Whitebox D8 codes (-32768 for no data, 0 for an outlet).
 pub fn encode_whitebox_d8(a: &Analysis) -> Vec<i16> {
     let mut out = vec![0i16; a.n];
-    for c in 0..a.n {
+    for (c, code) in out.iter_mut().enumerate() {
         if a.valid[c] == 0 {
-            out[c] = -32768;
+            *code = -32768;
             continue;
         }
         let r = a.rec[c];
@@ -360,7 +360,7 @@ pub fn encode_whitebox_d8(a: &Analysis) -> Vec<i16> {
         let dy = (r as i64 / a.w as i64) - (c as i64 / a.w as i64);
         for k in 0..8 {
             if WBT_DX[k] == dx && WBT_DY[k] == dy {
-                out[c] = WBT_CODES[k];
+                *code = WBT_CODES[k];
                 break;
             }
         }

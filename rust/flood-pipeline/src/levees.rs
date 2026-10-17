@@ -181,7 +181,7 @@ mod tests {
     #[test]
     fn zipped_shapefile_in_mga_comes_out_in_lonlat() {
         let proj = Proj::from_epsg(28356).unwrap();
-        let (a, b) = (proj.from_lonlat(153.0, -28.8), proj.from_lonlat(153.01, -28.81));
+        let (a, b) = (proj.project_lonlat(153.0, -28.8), proj.project_lonlat(153.01, -28.81));
         let mut rec = Vec::new();
         rec.extend(3i32.to_le_bytes());
         rec.extend([0u8; 32]);

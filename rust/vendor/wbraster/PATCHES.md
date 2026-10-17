@@ -5,3 +5,5 @@ Source: https://github.com/opengeos/whitebox-wasm/tree/f0076c2383ebd9248454b32f1
 This crate is vendored to use zip 9 and ruzstd 0.9.1. Upstream still requires vulnerable zip 8 and ruzstd 0.8. Sibling Whitebox crates remain pinned to the same upstream Git revision. The manifest also removes the reference to an absent README. Source code is retained unchanged unless API adaptations are listed below.
 
 Keep the upstream MIT/Apache licensing files with this copy. Remove this patch once upstream supports fixed archive releases, then rerun the six-raster hydrology comparison.
+
+API adaptations: `raster.rs` uses the inherent SIMD comparison and mask `select` methods from wide 1.7, removing the deprecated `CmpNe` import and six `blend` calls. The masks come directly from `simd_ne`, so selection preserves the previous no-data filtering behavior.

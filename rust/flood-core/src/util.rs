@@ -156,7 +156,7 @@ impl Mulberry32 {
     pub fn new(seed: u32) -> Self {
         Mulberry32 { a: seed }
     }
-    pub fn next(&mut self) -> f64 {
+    pub fn next_f64(&mut self) -> f64 {
         self.a = self.a.wrapping_add(0x6d2b_79f5);
         let mut t = self.a;
         t = (t ^ (t >> 15)).wrapping_mul(t | 1);
@@ -175,7 +175,7 @@ impl ValueNoise {
 
     pub fn new(seed: u32) -> Self {
         let mut rnd = Mulberry32::new(seed);
-        let vals = (0..(Self::P * Self::P)).map(|_| rnd.next()).collect();
+        let vals = (0..(Self::P * Self::P)).map(|_| rnd.next_f64()).collect();
         ValueNoise { vals }
     }
 
@@ -287,9 +287,9 @@ mod tests {
     #[test]
     fn mulberry_is_deterministic_and_in_range() {
         let mut r = Mulberry32::new(1974);
-        let a: Vec<f64> = (0..5).map(|_| r.next()).collect();
+        let a: Vec<f64> = (0..5).map(|_| r.next_f64()).collect();
         let mut r2 = Mulberry32::new(1974);
-        let b: Vec<f64> = (0..5).map(|_| r2.next()).collect();
+        let b: Vec<f64> = (0..5).map(|_| r2.next_f64()).collect();
         assert_eq!(a, b);
         assert!(a.iter().all(|&x| (0.0..1.0).contains(&x)));
     }

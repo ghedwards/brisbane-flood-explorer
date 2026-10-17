@@ -49,7 +49,7 @@ pub fn run(config_path: &str, work_dir: &str, data_dir: &str) -> R<String> {
     for i in 0..n {
         let v = dem.data[i] as f32;
         let p = d8.data[i];
-        let bad = !v.is_finite() || dem.nodata.map_or(false, |nd| v == nd as f32) || d8.nodata.map_or(false, |nd| p == nd);
+        let bad = !v.is_finite() || dem.nodata.is_some_and(|nd| v == nd as f32) || (d8.nodata == Some(p));
         let code = if [0.0, 1.0, 2.0, 4.0, 8.0, 16.0, 32.0, 64.0, 128.0].contains(&p) { p as u8 } else { 255 };
         codes.push(if bad { 255 } else { code });
         f32s.extend_from_slice(&(if bad { f32::NAN } else { v }).to_le_bytes());
@@ -59,7 +59,7 @@ pub fn run(config_path: &str, work_dir: &str, data_dir: &str) -> R<String> {
     let epsg = dem.epsg.ok_or("dem.tif has no EPSG code")?;
     let proj = Proj::from_epsg(epsg).ok_or_else(|| format!("unsupported CRS EPSG:{}", epsg))?;
     let g = cfg.get("gauge").cloned().unwrap_or(json!({}));
-    let (gx, gy) = proj.from_lonlat(get_f64(&g, "lon").ok_or("no gauge lon")?, get_f64(&g, "lat").ok_or("no gauge lat")?);
+    let (gx, gy) = proj.project_lonlat(get_f64(&g, "lon").ok_or("no gauge lon")?, get_f64(&g, "lat").ok_or("no gauge lat")?);
     let row = ((dem.y0 - gy) / dem.dy).floor() as i64;
     let col = ((gx - dem.x0) / dem.dx).floor() as i64;
     let mut rasters = Vec::new();
@@ -112,7 +112,7 @@ mod tests {
         let (work, data) = (d.join("work"), d.join("data"));
         std::fs::create_dir_all(&work).unwrap();
         let proj = Proj::from_epsg(7856).unwrap();
-        let (gx, gy) = proj.from_lonlat(153.0305, -27.4741);
+        let (gx, gy) = proj.project_lonlat(153.0305, -27.4741);
         let (x0, y0) = ((gx / 40.0).floor() * 40.0 - 80.0, (gy / 40.0).ceil() * 40.0 + 40.0);
         let dem: Vec<f32> = vec![1.0, 2.0, -9999.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0];
         let d8: Vec<f32> = vec![1.0, 2.0, 4.0, 3.0, 8.0, 16.0, 32.0, 64.0, 128.0, 0.0, 1.0, 2.0];

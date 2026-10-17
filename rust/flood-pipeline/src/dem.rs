@@ -23,7 +23,7 @@ pub fn tile_name(lat: i64, lon: i64) -> String {
 
 /// Download a tile unless it's already there; false if it doesn't exist.
 fn download(url: &str, dest: &Path) -> R<bool> {
-    if dest.metadata().map_or(false, |m| m.len() > 0) {
+    if dest.metadata().is_ok_and(|m| m.len() > 0) {
         return Ok(true);
     }
     // Large DEM tiles get a ten-minute transfer budget with ureq 3.
@@ -145,7 +145,7 @@ pub fn run(config_path: &str, out_dir: &str) -> R<String> {
     for k in 0..=22 {
         let f = k as f64 / 22.0;
         for (lon, lat) in [(w + (e - w) * f, s), (w + (e - w) * f, n), (w, s + (n - s) * f), (e, s + (n - s) * f)] {
-            let (x, y) = dst.from_lonlat(lon, lat);
+            let (x, y) = dst.project_lonlat(lon, lat);
             minx = minx.min(x);
             maxx = maxx.max(x);
             miny = miny.min(y);

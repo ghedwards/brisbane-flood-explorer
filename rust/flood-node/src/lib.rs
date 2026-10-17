@@ -48,6 +48,11 @@ unsafe extern "C" fn run(env: Env, info: Info) -> Value {
     res
 }
 
+/// Register the native module with Node.js.
+///
+/// # Safety
+/// Node.js must supply a live N-API environment and an exports object belonging
+/// to that environment, on its JavaScript thread.
 #[no_mangle]
 pub unsafe extern "C" fn napi_register_module_v1(env: Env, exports: Value) -> Value {
     let mut f = std::ptr::null_mut();

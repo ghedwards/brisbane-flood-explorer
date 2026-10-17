@@ -89,7 +89,7 @@ pub fn pick<'a>(files: &'a [(String, u64)], words: &[&str]) -> Option<&'a (Strin
     let pool = if whole.is_empty() { cands } else { whole };
     let mut best: Option<&(String, u64)> = None;
     for f in pool {
-        if best.map_or(true, |b| f.1 > b.1) {
+        if best.is_none_or(|b| f.1 > b.1) {
             best = Some(f);
         }
     }

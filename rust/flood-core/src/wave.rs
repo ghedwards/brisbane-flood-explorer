@@ -503,7 +503,7 @@ pub fn wave_setup(a: &Analysis, s: &Scenario, o: &WaveOpts) -> Wave {
     w.bay = if let Some(sea) = sea.clone() {
         Bay::Recorded(sea)
     } else if amp > 0.0 {
-        Bay::Tide { bay: s.bay_level, amp, t_peak: w.t_peak, low: o.tide.map_or(false, |t| t.1) }
+        Bay::Tide { bay: s.bay_level, amp, t_peak: w.t_peak, low: o.tide.is_some_and(|t| t.1) }
     } else {
         Bay::Fixed(s.bay_level)
     };
@@ -566,8 +566,7 @@ fn between_gauges(a: &Analysis, w: &Wave, g: usize, speed_kmh: f64, others: &[(i
     let (mut k1, mut k2) = (vec![-1i16; n], vec![-1i16; n]);
     let (mut f, mut d1, mut d2) = (vec![0f32; n], vec![0f32; n], vec![0f32; n]);
     let mut down = vec![0u8; n];
-    for k in 0..cells.len() {
-        let u = cells[k];
+    for (k, &u) in cells.iter().enumerate() {
         let mut l = a.rec[u] as i64;
         while l >= 0 && !gi.contains_key(&(l as usize)) {
             l = a.rec[l as usize] as i64;
@@ -598,8 +597,7 @@ fn between_gauges(a: &Analysis, w: &Wave, g: usize, speed_kmh: f64, others: &[(i
             c = a.rec[c] as usize;
         }
     }
-    for k in 1..cells.len() {
-        let c = cells[k];
+    for (k, &c) in cells.iter().enumerate().skip(1) {
         if k1[c] < 0 {
             k1[c] = k as i16;
             k2[c] = -1;
@@ -737,13 +735,13 @@ fn route_down(a: &Analysis, w: &Wave, g: usize, speed_kmh: f64, rating: Option<(
     let qg: Vec<f64> = (0..n_t).map(|i| q_of(w.gauge_at(t0 + i as f64 * dt))).collect();
     let qg_max = js_max(qg.iter().copied());
     let shifted = |lag: f64, scale: f64, out: &mut [f64]| {
-        for i in 0..n_t {
+        for (i, value) in out.iter_mut().enumerate().take(n_t) {
             let x = i as f64 - lag / dt;
             let i0 = x.floor();
             let f = x - i0;
             let at = |j: f64| qg[(j.max(0.0) as usize).min(n_t - 1)];
             let (v0, v1) = (at(i0), at(i0 + 1.0));
-            out[i] += scale * (v0 + (v1 - v0) * f);
+            *value += scale * (v0 + (v1 - v0) * f);
         }
     };
     let depth = |c: usize| jmax(0.5, w.w1[c] - jmin(a.dem[c] as f64 - 1.0, w.w0[c] - 0.5));
@@ -782,8 +780,8 @@ fn route_down(a: &Analysis, w: &Wave, g: usize, speed_kmh: f64, rating: Option<(
         let (k0, k1) = (nodes[nn - 1], nodes[nn]);
         let mut inp = q.clone();
         let mut add = 0.0;
-        for kk in (k0 + 1)..=k1 {
-            for e in &inflow[kk] {
+        for entries in inflow.iter().take(k1 + 1).skip(k0 + 1) {
+            for e in entries {
                 let sc = e.area / ag;
                 shifted(e.lag, sc, &mut inp);
                 add += sc * qg_max;
@@ -792,8 +790,8 @@ fn route_down(a: &Analysis, w: &Wave, g: usize, speed_kmh: f64, rating: Option<(
         q_ref += add;
         let l = jmax(a.cell, a.chain[path[k0]] - a.chain[path[k1]]);
         let mut dsum = 0.0;
-        for kk in k0..k1 {
-            dsum += 0.3 * cms * depth(path[kk]) / slope_at(kk);
+        for (kk, &cell) in path.iter().enumerate().take(k1).skip(k0) {
+            dsum += 0.3 * cms * depth(cell) / slope_at(kk);
         }
         let dd = jmin(dsum / jmax(1.0, (k1 - k0) as f64), 5e8);
         let kq = l / cms;
@@ -917,7 +915,7 @@ pub fn flood_timeline(a: &Analysis, s: &Scenario, o: &WaveOpts) -> Timeline {
     let (mut first_deep, mut last_deep) = (vec![-1i16; n], vec![-1i16; n]);
     let mut wet_count = vec![0i32; steps];
     let mut gauge = vec![0f32; steps];
-    let wps = (n + 31) / 32;
+    let wps = n.div_ceil(32);
     let (mut wet_bits, mut deep_bits) = (vec![0u32; steps * wps], vec![0u32; steps * wps]);
     let mut wse = vec![f64::NAN; n];
     for k in 0..steps {

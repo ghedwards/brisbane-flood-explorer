@@ -195,9 +195,9 @@ impl Out {
 }
 
 thread_local! {
-    static ANALYSES: RefCell<Vec<Option<Analysis>>> = RefCell::new(Vec::new());
-    static WAVES: RefCell<Vec<Option<Wave>>> = RefCell::new(Vec::new());
-    static OUT: RefCell<Vec<u8>> = RefCell::new(Vec::new());
+    static ANALYSES: RefCell<Vec<Option<Analysis>>> = const { RefCell::new(Vec::new()) };
+    static WAVES: RefCell<Vec<Option<Wave>>> = const { RefCell::new(Vec::new()) };
+    static OUT: RefCell<Vec<u8>> = const { RefCell::new(Vec::new()) };
 }
 
 fn store<T>(slots: &RefCell<Vec<Option<T>>>, v: T) -> usize {
@@ -454,7 +454,7 @@ fn put_wave(o: &mut Out, w: &Wave) {
 
 fn levees_of(b: &Bag) -> Vec<Levee> {
     let n = b.num("leveeCount");
-    if !(n >= 1.0) {
+    if !matches!(n.partial_cmp(&1.0), Some(std::cmp::Ordering::Greater | std::cmp::Ordering::Equal)) {
         return Vec::new();
     }
     let cells = b.f64s("leveeCells").unwrap_or_default();

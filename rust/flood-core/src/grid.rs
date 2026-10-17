@@ -360,7 +360,7 @@ pub fn downsample(g: &Grid, max_side: usize) -> Grid {
             for j in 0..f {
                 for i in 0..f {
                     let k = (y * f + j) * g.w + x * f + i;
-                    if g.valid.as_ref().map_or(true, |v| v[k] != 0) {
+                    if g.valid.as_ref().is_none_or(|v| v[k] != 0) {
                         s += g.dem[k] as f64;
                         n += 1;
                     }
@@ -379,10 +379,10 @@ pub fn downsample(g: &Grid, max_side: usize) -> Grid {
 pub fn clean_nodata(g: &mut Grid, nodata: f64) {
     let n = g.w * g.h;
     let mut valid = g.valid.take().unwrap_or_else(|| vec![1u8; n]);
-    for i in 0..n {
+    for (i, valid_cell) in valid.iter_mut().enumerate().take(n) {
         let v = g.dem[i] as f64;
         if !v.is_finite() || v == nodata || v < -500.0 || v > 9000.0 {
-            valid[i] = 0;
+            *valid_cell = 0;
         }
     }
     g.valid = Some(valid);
@@ -498,7 +498,7 @@ pub fn parse_simple_tiff(buf: &[u8]) -> Result<Tiff, String> {
         let th = first(323, 0.0) as usize;
         let offs = nums.get(&324).cloned().unwrap_or_default();
         let cnts = nums.get(&325).cloned().unwrap_or_default();
-        let across = (w + tw - 1) / tw;
+        let across = w.div_ceil(tw);
         for (t, &off) in offs.iter().enumerate() {
             read(off as usize, cnts.get(t).copied().unwrap_or(0.0) as usize, tw, th, (t % across) * tw, (t / across) * th);
         }

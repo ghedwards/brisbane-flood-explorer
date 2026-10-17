@@ -119,7 +119,7 @@ impl Proj {
     }
 
     /// (lon, lat) degrees to projected coordinates.
-    pub fn from_lonlat(&self, lon: f64, lat: f64) -> (f64, f64) {
+    pub fn project_lonlat(&self, lon: f64, lat: f64) -> (f64, f64) {
         match *self {
             Proj::Geographic => (lon, lat),
             Proj::WebMercator => (R_MERC * lon.to_radians(), R_MERC * (PI / 4.0 + lat.to_radians() / 2.0).tan().ln()),
@@ -288,7 +288,7 @@ impl Raster {
         self.data[row * self.w + col]
     }
     pub fn is_nodata(&self, v: f64) -> bool {
-        !v.is_finite() || self.nodata.map_or(false, |n| v == n)
+        !v.is_finite() || (self.nodata == Some(v))
     }
     /// Bilinear sample at a map position (pixel centres as in GDAL),
     /// weighting only cells with data; None where there are none.
@@ -356,6 +356,7 @@ pub fn read_geotiff(bytes: &[u8]) -> R<Raster> {
 }
 
 /// Write a float32 GeoTIFF (deflate) in a projected CRS given by EPSG code.
+#[expect(clippy::too_many_arguments, reason = "GeoTIFF writer takes explicit grid geometry and band metadata")]
 pub fn write_geotiff_f32(path: &std::path::Path, w: usize, h: usize, data: &[f32], x0: f64, y0: f64, cell: f64, epsg: u32, nodata: f64) -> R<()> {
     use tiff::encoder::{colortype, Compression, TiffEncoder};
     use tiff::tags::Tag;
@@ -379,9 +380,12 @@ pub fn write_geotiff_f32(path: &std::path::Path, w: usize, h: usize, data: &[f32
 
 /* ------------------------------------------------------ shapefiles */
 
+/// A shapefile record index and the coordinates of one line part.
+pub type ShapeLine = (usize, Vec<(f64, f64)>);
+
 /// Line parts of a shapefile (.shp): polylines and polygon outlines, with
 /// each record's index. Other shapes are skipped.
-pub fn shp_lines(b: &[u8]) -> R<Vec<(usize, Vec<(f64, f64)>)>> {
+pub fn shp_lines(b: &[u8]) -> R<Vec<ShapeLine>> {
     if b.len() < 100 || u32::from_be_bytes([b[0], b[1], b[2], b[3]]) != 9994 {
         return Err("not a shapefile".into());
     }
@@ -455,6 +459,7 @@ pub fn dbf_records(b: &[u8]) -> R<(Vec<String>, Vec<Vec<String>>)> {
 /// Burn polygons (rings: outer and holes, even-odd) into a grid: a pixel
 /// takes the value when its centre is inside (rasterio's default).
 /// `x0, y0`: top-left corner; `cell`: pixel size.
+#[expect(clippy::too_many_arguments, reason = "Rasterizer takes explicit grid geometry, polygons and burn value")]
 pub fn rasterize(grid: &mut [u8], w: usize, h: usize, x0: f64, y0: f64, cell: f64, rings: &[Vec<(f64, f64)>], value: u8) {
     let mut ymin = f64::INFINITY;
     let mut ymax = f64::NEG_INFINITY;
@@ -568,7 +573,7 @@ pub fn quantize(rgba: &[u8], n: usize) -> (Vec<u8>, Vec<[u8; 3]>, Vec<u8>) {
                 let hi = b.iter().map(|c| c.0[ch]).max().unwrap() as u64;
                 let count: u64 = b.iter().map(|c| c.1 as u64).sum();
                 let score = (hi - lo) * (count as f64).sqrt() as u64 + (hi - lo);
-                if best.map_or(true, |x| score > x.2) {
+                if best.is_none_or(|x| score > x.2) {
                     best = Some((i, ch, score));
                 }
             }
@@ -629,15 +634,15 @@ mod tests {
     fn mga_round_trip_and_known_point() {
         let p = Proj::from_name("EPSG:7856").unwrap();
         // Brisbane City gauge
-        let (x, y) = p.from_lonlat(153.0305, -27.4741);
+        let (x, y) = p.project_lonlat(153.0305, -27.4741);
         assert!((x - 502_990.0).abs() < 50.0 && (y - 6_961_000.0).abs() < 1500.0, "{} {}", x, y);
         let (lon, lat) = p.to_lonlat(x, y);
         assert!((lon - 153.0305).abs() < 1e-9 && (lat + 27.4741).abs() < 1e-9);
         // the central meridian at the equator is the false origin
-        let (x, y) = p.from_lonlat(153.0, 0.0);
+        let (x, y) = p.project_lonlat(153.0, 0.0);
         assert!((x - 500000.0).abs() < 1e-6 && (y - 10000000.0).abs() < 1e-6);
         // one degree of latitude along the meridian, scaled by k0
-        let (_, y1) = p.from_lonlat(153.0, -1.0);
+        let (_, y1) = p.project_lonlat(153.0, -1.0);
         assert!(((10000000.0 - y1) - 0.9996 * 110574.4).abs() < 1.0, "{}", 10000000.0 - y1);
     }
 
@@ -646,9 +651,9 @@ mod tests {
         let wkt = r#"PROJCS["GDA_1994_NSW_Lambert",GEOGCS["GCS_GDA_1994",DATUM["D_GDA_1994",SPHEROID["GRS_1980",6378137.0,298.257222101]],PRIMEM["Greenwich",0.0],UNIT["Degree",0.0174532925199433]],PROJECTION["Lambert_Conformal_Conic"],PARAMETER["False_Easting",9300000.0],PARAMETER["False_Northing",4500000.0],PARAMETER["Central_Meridian",147.0],PARAMETER["Standard_Parallel_1",-30.75],PARAMETER["Standard_Parallel_2",-35.75],PARAMETER["Latitude_Of_Origin",-33.25],UNIT["Meter",1.0]]"#;
         let p = Proj::from_wkt(wkt).unwrap();
         assert_eq!(p, Proj::from_epsg(3308).unwrap());
-        let (x, y) = p.from_lonlat(147.0, -33.25);
+        let (x, y) = p.project_lonlat(147.0, -33.25);
         assert!((x - 9300000.0).abs() < 1e-6 && (y - 4500000.0).abs() < 1e-6);
-        let (lon, lat) = p.to_lonlat(p.from_lonlat(150.9, -30.1).0, p.from_lonlat(150.9, -30.1).1);
+        let (lon, lat) = p.to_lonlat(p.project_lonlat(150.9, -30.1).0, p.project_lonlat(150.9, -30.1).1);
         assert!((lon - 150.9).abs() < 1e-9 && (lat + 30.1).abs() < 1e-9);
         let mga = Proj::from_wkt(r#"PROJCS["GDA_1994_MGA_Zone_56",GEOGCS["GCS_GDA_1994",DATUM["D_GDA_1994",SPHEROID["GRS_1980",6378137.0,298.257222101]]],PROJECTION["Transverse_Mercator"],PARAMETER["False_Easting",500000.0],PARAMETER["False_Northing",10000000.0],PARAMETER["Central_Meridian",153.0],PARAMETER["Scale_Factor",0.9996],PARAMETER["Latitude_Of_Origin",0.0],UNIT["Meter",1.0]]"#).unwrap();
         assert_eq!(mga, Proj::from_epsg(28356).unwrap());

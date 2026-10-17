@@ -81,7 +81,7 @@ pub fn truthy(v: Option<&Value>) -> bool {
     match v {
         None | Some(Value::Null) => false,
         Some(Value::Bool(b)) => *b,
-        Some(Value::Number(n)) => n.as_f64().map_or(false, |x| x != 0.0),
+        Some(Value::Number(n)) => n.as_f64().is_some_and(|x| x != 0.0),
         Some(Value::String(s)) => !s.is_empty(),
         Some(Value::Array(a)) => !a.is_empty(),
         Some(Value::Object(o)) => !o.is_empty(),
@@ -149,7 +149,7 @@ pub fn get_str<'a>(v: &'a Value, k: &str) -> Option<&'a str> {
     v.get(k).and_then(|x| x.as_str())
 }
 
-pub fn arr<'a>(v: Option<&'a Value>) -> &'a [Value] {
+pub fn arr(v: Option<&Value>) -> &[Value] {
     v.and_then(|x| x.as_array()).map(|a| a.as_slice()).unwrap_or(&[])
 }
 
@@ -251,7 +251,7 @@ pub fn parse_iso(s: &str, default_h: i64) -> Option<f64> {
         }
         let rest = &s[11..];
         // the offset: Z, +HH:MM or -HH:MM after the time
-        let (time, tz) = match rest.find(|c| c == 'Z' || c == '+' || c == '-') {
+        let (time, tz) = match rest.find(['Z', '+', '-']) {
             Some(i) => (&rest[..i], Some(&rest[i..])),
             None => (rest, None),
         };
@@ -290,7 +290,7 @@ pub fn iso_offset_h(s: &str, default_h: i64) -> i64 {
     if rest.ends_with('Z') {
         return 0;
     }
-    match rest.rfind(|c| c == '+' || c == '-') {
+    match rest.rfind(['+', '-']) {
         Some(i) => {
             let sign = if rest.as_bytes()[i] == b'-' { -1 } else { 1 };
             rest[i + 1..i + 3].parse::<i64>().map(|h| sign * h).unwrap_or(default_h)

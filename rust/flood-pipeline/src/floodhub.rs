@@ -23,6 +23,7 @@ const ACTIVE: [&str; 3] = ["ABOVE_NORMAL", "SEVERE", "EXTREME"];
 /// (method, path, query parameters, JSON body) -> JSON
 pub type Req<'a> = &'a dyn Fn(&str, &str, &[(String, String)], Option<&Value>) -> R<Value>;
 
+#[expect(clippy::type_complexity, reason = "Returned closure matches the Req transport signature above")]
 pub fn real_req(key: String) -> impl Fn(&str, &str, &[(String, String)], Option<&Value>) -> R<Value> {
     move |method, path, params, body| {
         let mut q: Vec<(String, String)> = params.to_vec();
@@ -116,7 +117,7 @@ fn geometry_bbox(geom: &Value) -> [f64; 4] {
     let (mut xs, mut ys) = (Vec::new(), Vec::new());
     fn walk(c: &Value, xs: &mut Vec<f64>, ys: &mut Vec<f64>) {
         match c.as_array() {
-            Some(a) if a.first().map_or(false, |v| v.is_number()) => {
+            Some(a) if a.first().is_some_and(|v| v.is_number()) => {
                 xs.push(a[0].as_f64().unwrap());
                 ys.push(a[1].as_f64().unwrap_or(f64::NAN));
             }
@@ -213,7 +214,7 @@ pub fn run_with(config_path: &str, data_dir: &str, key: &str, req: Req) -> R<Str
     }
     let severity = |g: &Value| g.get("status").and_then(|s| s.get("severity")).and_then(|s| s.as_str()).map(String::from);
     let modelled: Vec<String> = by_id.iter().filter(|(_, g)| truthy(g.get("hasModel")) || truthy(g.get("status"))).map(|(k, _)| k.clone()).collect();
-    let flagged: Vec<String> = modelled.iter().filter(|gid| severity(&by_id[gid.as_str()]).map_or(false, |s| ACTIVE.contains(&s.as_str()))).cloned().collect();
+    let flagged: Vec<String> = modelled.iter().filter(|gid| severity(&by_id[gid.as_str()]).is_some_and(|s| ACTIVE.contains(&s.as_str()))).cloned().collect();
     for gid in if region_code.is_some() { &flagged } else { &modelled } {
         let m = attempt(&format!("model {}", gid), api.get(&format!("gaugeModels/{}", gid), &[]), Value::Null, &mut log);
         if truthy(Some(&m)) {
@@ -276,7 +277,7 @@ pub fn run_with(config_path: &str, data_dir: &str, key: &str, req: Req) -> R<Str
     let mut seen = Vec::new();
     let kept_events: Vec<Value> = kept.into_iter().filter(|i| if seen.contains(i) { false } else { seen.push(*i); true }).map(|i| flash[i].clone()).collect();
     let n_gauges = by_id.len();
-    let flooding = by_id.values().filter(|g| severity(g).map_or(false, |s| ACTIVE.contains(&s.as_str()))).count();
+    let flooding = by_id.values().filter(|g| severity(g).is_some_and(|s| ACTIVE.contains(&s.as_str()))).count();
     let errs = errors.borrow().clone();
     summary["gauges"] = Value::Array(by_id.into_iter().map(|(_, v)| v).collect());
     summary["flashFloodEvents"] = Value::from(kept_events.clone());
