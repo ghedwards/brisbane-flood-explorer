@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Terrain hydrology with the RustGIS / GeoLibre tools.
 #
-# Usage: pipeline/run_hydrology.sh config/brisbane.json work/brisbane
+# Usage: tests/geolibre/run_hydrology.sh config/brisbane.json work/brisbane
 #
 # Reads  work/<area>/dem.tif
 # Writes work/<area>/

@@ -132,11 +132,16 @@ and when roads close and how long places stay cut off (flood over time).
 - **Preset audit.** The live check lists which Bureau gauge each river
   preset is anchored to; review any presets that aren't anchored or sit
   far from their gauge.
-- **Rust in RustGIS.** The model (`rust/flood-core`) and pipeline are in
-  Rust; the hydrology still calls GeoLibre as a separate program. If
-  geolibre-rust exposes its tools as a library crate, `flood` could run
-  breach, fill, D8 and HAND in-process; and the model could be offered to
-  RustGIS as a tool working on a DEM and D8 opened there.
+- **Hydrology inside `flood` (implemented).** Production uses `flood hydrology`
+  with the six RustGIS tools pinned to whitebox-wasm commit 6b2a6eb (GeoLibre
+  1.6.0). All six Brisbane rasters matched the separate runner exactly.
+  The comparison workflow retains that runner under `tests/geolibre` and
+  fails on raster or metadata differences. Keep `rust/Cargo.lock` because
+  the tools use a yanked `zip` version. Release builds with LTO take over
+  ten minutes; a lighter pipeline build profile remains worth investigating.
+- **The model inside RustGIS.** `rust/flood-core` has no dependencies and
+  builds to WebAssembly; it could be offered to RustGIS as a tool working
+  on a DEM and D8 opened there.
 - **Faster single runs.** In the browser one inundation costs about the
   same in Rust as in JavaScript, because the results are copied out of
   WebAssembly memory. Returning only what the map draws (or sharing

@@ -42,6 +42,7 @@ jobs:
         with:
           path: |
             ~/.cargo/registry
+            ~/.cargo/git
             rust/target
           key: rust-${{ hashFiles('rust/**/*.rs', 'rust/**/Cargo.toml', 'rust/Cargo.lock') }}
           restore-keys: rust-
@@ -53,9 +54,9 @@ jobs:
         working-directory: rust
         run: |
           rustup target add wasm32-unknown-unknown
-          cargo test --release --workspace   # the model, its WebAssembly interface and the pipeline
-          cargo build --release -p flood-wasm --target wasm32-unknown-unknown
-          cargo build --release -p flood-pipeline
+          cargo test --locked --release --workspace   # the model, its WebAssembly interface and the pipeline
+          cargo build --locked --release -p flood-wasm --target wasm32-unknown-unknown
+          cargo build --locked --release -p flood-pipeline
           echo "$PWD/target/release" >> "$GITHUB_PATH"
           cp target/wasm32-unknown-unknown/release/flood_wasm.wasm ../work-flood.wasm
           echo "::notice::flood.wasm: $(wc -c < ../work-flood.wasm) bytes"
@@ -78,14 +79,8 @@ jobs:
         with:
           path: |
             work/brisbane/*.tif
-          key: terrain-${{ hashFiles('config/brisbane.json', 'rust/flood-pipeline/src/dem.rs', 'rust/flood-pipeline/src/geo.rs', 'pipeline/run_hydrology.sh', 'pipeline/install_geolibre.sh') }}
-
-      - name: Install the GeoLibre runner (RustGIS hydrology tools)
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          pipeline/install_geolibre.sh "$HOME/.local/bin"
-          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+            work/brisbane/hydrology.json
+          key: terrain-${{ hashFiles('config/brisbane.json', 'rust/flood-pipeline/src/dem.rs', 'rust/flood-pipeline/src/geo.rs', 'rust/flood-pipeline/src/hydrology.rs', 'rust/flood-pipeline/Cargo.toml', 'rust/Cargo.lock') }}
 
       - name: Cache DEM tiles
         if: steps.terrain.outputs.cache-hit != 'true'
@@ -100,11 +95,11 @@ jobs:
         continue-on-error: true
         run: flood dem config/brisbane.json work/brisbane
 
-      - name: Run hydrology with GeoLibre
+      - name: Run hydrology inside flood
         id: hydro
         if: steps.terrain.outputs.cache-hit != 'true' && steps.dem.outcome == 'success'
         continue-on-error: true
-        run: pipeline/run_hydrology.sh config/brisbane.json work/brisbane
+        run: flood hydrology config/brisbane.json work/brisbane
 
       - name: Assemble site
         run: |
@@ -366,7 +361,7 @@ jobs:
             echo "### Build summary"
             echo "- Terrain from cache: ${{ steps.terrain.outputs.cache-hit || 'false' }}"
             echo "- DEM download: ${{ steps.dem.outcome || 'skipped' }}"
-            echo "- GeoLibre hydrology: ${{ steps.hydro.outcome || 'skipped' }}"
+            echo "- In-process hydrology: ${{ steps.hydro.outcome || 'skipped' }}"
             echo "- National BoM data: ${{ steps.national.outcome }} — $(grep '^National' national.log 2>/dev/null)"
             echo "- Flood Hub: ${{ steps.floodhub.outcome }} — $(tail -n1 floodhub.log 2>/dev/null)"
             du -sh site/data/* 2>/dev/null | sed 's/^/- /' || true

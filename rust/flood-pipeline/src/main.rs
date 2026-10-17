@@ -18,6 +18,8 @@
 //!   flood council <out_dir>
 //!   flood dea <out_dir>
 //!   flood dem <config.json> <work_dir>
+//!   flood hydrology <config.json> <work_dir>
+//!   flood tool <list|tool-id> [--key=value ...]
 //!   flood export <config.json> <work_dir> <data_dir>
 //!   flood config <config.json> <key>
 //!   flood status <site_dir> <log>...
@@ -30,6 +32,7 @@ mod export;
 mod floodhub;
 mod floodinfo;
 mod geo;
+mod hydrology;
 mod levees;
 mod national;
 mod net;
@@ -79,6 +82,8 @@ fn run(args: &[String]) -> R<String> {
         Some("council") => council::run(a(1)?),
         Some("dea") => dea::run(a(1)?),
         Some("dem") => dem::run(a(1)?, a(2)?),
+        Some("hydrology") => hydrology::run(a(1)?, a(2)?),
+        Some("tool") => hydrology::tool(&args[1..]),
         Some("export") => export::run(a(1)?, a(2)?, a(3)?),
         Some("config") => {
             let cfg = util::read_json(a(1)?)?;

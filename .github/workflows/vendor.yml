@@ -7,7 +7,7 @@ name: Vendor Rust crates
 on:
   push:
     branches: [main]
-    paths: ["rust/**/Cargo.toml", ".github/workflows/vendor.yml"]
+    paths: ["rust/**/Cargo.toml", "rust/Cargo.lock", ".github/workflows/vendor.yml"]
   workflow_dispatch:
 
 permissions:
@@ -21,9 +21,11 @@ jobs:
       - name: Vendor
         working-directory: rust
         run: |
-          cargo fetch
+          # problems as annotations (the logs aren't always to hand)
+          report() { grep -E "^(error|warning: |Caused by|  [a-z])" "$1" | head -12 | sed 's/^/::error::/'; }
+          cargo fetch --locked 2> fetch.log || { report fetch.log; exit 1; }
           mkdir -p "$RUNNER_TEMP/out"
-          cargo vendor --versioned-dirs "$RUNNER_TEMP/out/crates" > "$RUNNER_TEMP/out/config.toml"
+          cargo vendor --locked --versioned-dirs "$RUNNER_TEMP/out/crates" > "$RUNNER_TEMP/out/config.toml" 2> vendor.log || { report vendor.log; exit 1; }
           # the printed config points at the vendor folder; make it relative to the branch
           sed -i "s#directory = \".*\"#directory = \"crates\"#" "$RUNNER_TEMP/out/config.toml"
           cp Cargo.lock "$RUNNER_TEMP/out/"
